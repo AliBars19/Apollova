@@ -1,5 +1,8 @@
 Required Libraries
 
-- Flasks
-- pytube
+- yt_dlp
+- ffmpeg
 - requests
+- PIL
+- colorthief
+- matplotlib

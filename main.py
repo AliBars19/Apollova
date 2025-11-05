@@ -1,5 +1,6 @@
-from pytube import YouTube # for audio extraction
-import yt_dlp
+import yt_dlp # for audio extraction
+import ffmpeg
+from pydub import AudioSegment
 
 import requests # for image extraction
 from PIL import Image
@@ -23,6 +24,32 @@ ydl_opts = {
 
 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
     error_code = ydl.download(mp3URL)
+#'''
+#---------------------------------------- TRIMMING AUDIO
+#'''
+def mmss_to_milliseconds(time_str):
+    m, s = map(int, time_str.split(':'))
+    return ((m * 60) + s) * 1000
+ 
+# Load audio file
+song = AudioSegment.from_file("travis.mp3", format="mp3")
+ 
+# Take input from user
+start_time = input("Enter start time (MM:SS): ")
+end_time = input("Enter end time (MM:SS): ")
+ 
+# Convert to milliseconds
+start_ms = mmss_to_milliseconds(start_time)
+end_ms = mmss_to_milliseconds(end_time)
+
+# Slice the audio
+clip = song[start_ms:end_ms]
+ 
+# Export new audio clip
+clip.export("Mid.mp3", format="mp3")
+print("New Audio file is created and saved as Mid.mp3")
+
+
 #'''
 #---------------------------------------- EXTRACTING PNG
 #'''

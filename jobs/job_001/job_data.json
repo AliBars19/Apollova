@@ -4,10 +4,11 @@
     "audio_trimmed": "jobs/job_001/audio_trimmed.wav",
     "cover_image": "jobs/job_001/cover.png",
     "colors": [
-        "#abb0aa",
-        "#253a50",
-        "#752f0f",
-        "#ab7835"
+        "#f77aa7",
+        "#b5363c",
+        "#fad5dd",
+        "#5c0f18"
     ],
-    "lyrics_file": "jobs/job_001/lyrics.txt"
+    "lyrics_file": "jobs/job_001/lyrics.txt",
+    "job_folder": "jobs/job_001"
 }

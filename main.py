@@ -89,69 +89,50 @@ def image_extraction(job_folder):
 
     return colorshex
 #-------------------------------------- Taking in lyrics
+import whisper
 
+def transcribe_audio(job_folder):
+    print("\n Transcribing audio with Whisper...")
 
+    audio_path = os.path.join(job_folder, "audio_trimmed.wav")
+    model = whisper.load_model("small")  # options: tiny, base, small, medium, large
+    result = model.transcribe(audio_path)
 
-
-
-def lyrics(job_folder):
-    
-    def MMSS_Seconds(time_str):# converting from MMSS format to seconds for AE marker compatibility
-        m, s = map(float, time_str.split(':'))
-        return m * 60 + s
-    
-    initial_list = []
+    # Build lyrics data structure compatible with AE JSON
     final_list = []
+    segments = result["segments"]
 
-    print("Enter lyrics in the format 'MM:SS lyric' ")
-    print("When your finished typing lyrics type finish")
-    print("If you mess up lyric input then type reset")
+    for i, seg in enumerate(segments):
+        t = float(seg["start"])  # seconds
+        cur = seg["text"].strip()
 
-    while True:
-        line = input(" >>Enter>> ").strip()
-
-        if line.lower() == 'finish':#self explanatory
-            break
-
-        if line.lower() == 'reset':
-            initial_list.clear()
-            print("List has been reset")
-            continue
-
-        if not line: #skips empty lines
-            continue
-
-        try:   
-            time_str,lyric_text = line.split(" ",1)#split the line ONCE into two sections, the time (before the space) and the lyrics (after)
-            t= MMSS_Seconds(time_str) #assigning a variable to time input from user
-            initial_list.append({'t':t, 'cur': lyric_text}) # appending this final structure to the list
-        except ValueError:
-            print("not the correct format")
-            continue
-        
-    for i, lyric in enumerate(initial_list):
-        prev=initial_list[i-1]["cur"] if i>0 else ""
-        curr = lyric["cur"]
-        next1= initial_list[i+1]["cur"] if i+1 < len(initial_list) else ""
-        next2= initial_list[i+2]["cur"] if i+2 < len(initial_list) else ""
+        prev = segments[i-1]["text"].strip() if i > 0 else ""
+        next1 = segments[i+1]["text"].strip() if i+1 < len(segments) else ""
+        next2 = segments[i+2]["text"].strip() if i+2 < len(segments) else ""
 
         final_list.append({
-            "t": lyric["t"] ,
+            "t": t,
             "lyric_prev": prev,
-            "lyric_current": curr,
+            "lyric_current": cur,
             "lyric_next1": next1,
-            "lyric_next2": next2 ,
+            "lyric_next2": next2,
         })
+
+    # Save lyrics JSON file
     lyrics_path = os.path.join(job_folder, "lyrics.txt")
     with open(lyrics_path, "w", encoding="utf-8") as f:
-        json.dump(final_list, f, indent=4)
+        json.dump(final_list, f, indent=4, ensure_ascii=False)
+
+    print(f" Transcription complete: {len(final_list)} lines saved to {lyrics_path}")
+    return lyrics_path
+
 
 
 
 #-------------------------MAIN----------------------------------------
 
 def batch_generate_jobs():
-    base_jobs = 12  # number of jobs to create
+    base_jobs = 1  # number of jobs to create
     for i in range(1, base_jobs + 1):
         job_id = i
         job_folder = f"jobs/job_{job_id:03}"
@@ -169,7 +150,8 @@ def batch_generate_jobs():
         image_path = image_download(job_folder, imgurl)
 
         colors = image_extraction(job_folder)
-        lyrics(job_folder)
+
+        lyrics_path = transcribe_audio(job_folder)
 
         job_data = {
             "job_id": job_id,
@@ -177,7 +159,7 @@ def batch_generate_jobs():
             "audio_trimmed": clipped_path.replace("\\", "/"),
             "cover_image": image_path.replace("\\", "/"),
             "colors": colors,
-            "lyrics_file": f"{job_folder}/lyrics.txt".replace("\\", "/"),
+            "lyrics_file": lyrics_path.replace("\\", "/"),
             "job_folder": job_folder.replace("\\", "/")
         }
         json_path = os.path.join(job_folder, "job_data.json")

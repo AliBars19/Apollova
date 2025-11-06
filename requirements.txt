@@ -3,6 +3,7 @@ Required Libraries
 - yt_dlp
 - ffmpeg
 - requests
-- PIL
+- pillow
 - colorthief
 - matplotlib
+- openai-whisper

@@ -1,253 +1,106 @@
 [
     {
-        "t": 0.7999999999999903,
+        "t": 0.0,
         "lyric_prev": "",
-        "lyric_current": "Yeah, down by you a",
+        "lyric_current": "But sing for me, dream",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 2.449999999999995,
+        "t": 1.56,
         "lyric_prev": "",
-        "lyric_current": "ragweed, no comparing",
+        "lyric_current": "for me",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 4.1,
+        "t": 3.12,
         "lyric_prev": "",
-        "lyric_current": "And it's motherfucking",
+        "lyric_current": "When I was so first, I",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 5.513333333333333,
+        "t": 5.8100000000000005,
         "lyric_prev": "",
-        "lyric_current": "scary, tryna keep em'",
+        "lyric_current": "pour on a beer for me",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 6.926666666666666,
+        "t": 8.5,
         "lyric_prev": "",
-        "lyric_current": "cause I found em",
+        "lyric_current": "Now I just can't get it",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 8.34,
+        "t": 9.82,
         "lyric_prev": "",
-        "lyric_current": "Let her whole know, I",
+        "lyric_current": "off",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 9.386666666666667,
+        "t": 11.14,
         "lyric_prev": "",
-        "lyric_current": "ain't motherfucking",
+        "lyric_current": "But you're so mean, so",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 10.433333333333334,
+        "t": 12.43,
         "lyric_prev": "",
-        "lyric_current": "sharing",
+        "lyric_current": "mean",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 11.48,
+        "t": 13.72,
         "lyric_prev": "",
-        "lyric_current": "I can take you to the",
+        "lyric_current": "When I was so heavy, pour",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 13.3,
+        "t": 16.41,
         "lyric_prev": "",
-        "lyric_current": "parents, in a parry",
+        "lyric_current": "on a beer for me",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 15.12,
+        "t": 19.1,
         "lyric_prev": "",
-        "lyric_current": "Panin' motherfucking",
+        "lyric_current": "When I'm all alone, all",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 16.333333333333332,
+        "t": 20.950000000000003,
         "lyric_prev": "",
-        "lyric_current": "wedding, you the type of",
+        "lyric_current": "alone, all alone",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 17.546666666666667,
+        "t": 22.8,
         "lyric_prev": "",
-        "lyric_current": "one to marry",
+        "lyric_current": "I'm all alone, all alone",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 18.76,
+        "t": 26.0,
         "lyric_prev": "",
-        "lyric_current": "And keep it married, I",
+        "lyric_current": "Got my beer and drink and",
         "lyric_next1": "",
         "lyric_next2": ""
     },
     {
-        "t": 19.913333333333334,
+        "t": 28.79,
         "lyric_prev": "",
-        "lyric_current": "put the ring on when",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 21.066666666666666,
-        "lyric_prev": "",
-        "lyric_current": "you're ready",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 22.22,
-        "lyric_prev": "",
-        "lyric_current": "We play our fantasies out",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 23.509999999999998,
-        "lyric_prev": "",
-        "lyric_current": "in real life ways",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 24.8,
-        "lyric_prev": "",
-        "lyric_current": "And no final fantasy, can",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 25.726666666666667,
-        "lyric_prev": "",
-        "lyric_current": "we end these games,",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 26.653333333333332,
-        "lyric_prev": "",
-        "lyric_current": "though?",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 27.58,
-        "lyric_prev": "",
-        "lyric_current": "You give me energy, make",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 28.759999999999998,
-        "lyric_prev": "",
-        "lyric_current": "me feel like way",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 29.94,
-        "lyric_prev": "",
-        "lyric_current": "Like I'm birds with a",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 30.68,
-        "lyric_prev": "",
-        "lyric_current": "feather, baby",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 31.42,
-        "lyric_prev": "",
-        "lyric_current": "We real life made for",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 32.370000000000005,
-        "lyric_prev": "",
-        "lyric_current": "each other",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 33.32,
-        "lyric_prev": "",
-        "lyric_current": "And it's hard to keep my",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 34.35,
-        "lyric_prev": "",
-        "lyric_current": "cool",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 35.38,
-        "lyric_prev": "",
-        "lyric_current": "One of the bitches tryna",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 36.66,
-        "lyric_prev": "",
-        "lyric_current": "get with my dude",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 37.94,
-        "lyric_prev": "",
-        "lyric_current": "And one of the chickens",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 39.25,
-        "lyric_prev": "",
-        "lyric_current": "tryna get in my cool",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 40.56,
-        "lyric_prev": "",
-        "lyric_current": "Cause you were one in a",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 41.473333333333336,
-        "lyric_prev": "",
-        "lyric_current": "million, there ain't a",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    },
-    {
-        "t": 42.38666666666666,
-        "lyric_prev": "",
-        "lyric_current": "man like you",
+        "lyric_current": "hide, so high, so high",
         "lyric_next1": "",
         "lyric_next2": ""
     }

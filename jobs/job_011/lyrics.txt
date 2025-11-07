@@ -1,0 +1,79 @@
+[
+    {
+        "t": 0.0,
+        "lyric_prev": "",
+        "lyric_current": "That's why I need a one",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 1.74,
+        "lyric_prev": "",
+        "lyric_current": "dance Got an MC in my",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 3.48,
+        "lyric_prev": "",
+        "lyric_current": "hand",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 5.22,
+        "lyric_prev": "",
+        "lyric_current": "One more time for high go",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 6.993333333333333,
+        "lyric_prev": "",
+        "lyric_current": "High up I was taking a",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 8.766666666666666,
+        "lyric_prev": "",
+        "lyric_current": "hold on me",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 10.54,
+        "lyric_prev": "",
+        "lyric_current": "I need a one dance Got an",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 12.5,
+        "lyric_prev": "",
+        "lyric_current": "MC in my hand",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 14.46,
+        "lyric_prev": "",
+        "lyric_current": "One more time for high go",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 16.22,
+        "lyric_prev": "",
+        "lyric_current": "High up I was taking a",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 17.98,
+        "lyric_prev": "",
+        "lyric_current": "hold on me",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

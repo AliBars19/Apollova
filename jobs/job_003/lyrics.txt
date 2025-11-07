@@ -1,0 +1,58 @@
+[
+    {
+        "t": 0.0,
+        "lyric_prev": "",
+        "lyric_current": "Ever since I was a kid",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 1.63,
+        "lyric_prev": "",
+        "lyric_current": "I've been legit",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 4.5600000000000005,
+        "lyric_prev": "",
+        "lyric_current": "If I was you I would cut",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 5.960000000000001,
+        "lyric_prev": "",
+        "lyric_current": "up my wrists",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 9.26,
+        "lyric_prev": "",
+        "lyric_current": "Exotated all over her",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 10.32,
+        "lyric_prev": "",
+        "lyric_current": "body",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 12.52,
+        "lyric_prev": "",
+        "lyric_current": "She just swallows all and",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 14.07,
+        "lyric_prev": "",
+        "lyric_current": "I don't mind it",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

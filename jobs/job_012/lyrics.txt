@@ -1,0 +1,163 @@
+[
+    {
+        "t": 0.0,
+        "lyric_prev": "",
+        "lyric_current": "Do you recall not long",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 1.18,
+        "lyric_prev": "",
+        "lyric_current": "ago?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 3.14,
+        "lyric_prev": "",
+        "lyric_current": "We will walk on the",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 4.64,
+        "lyric_prev": "",
+        "lyric_current": "sidewalk in the sand",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 6.14,
+        "lyric_prev": "",
+        "lyric_current": "Remember, all we did was",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 8.23,
+        "lyric_prev": "",
+        "lyric_current": "care for each other",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 10.32,
+        "lyric_prev": "",
+        "lyric_current": "But the night was warm,",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 12.379999999999999,
+        "lyric_prev": "",
+        "lyric_current": "we were bold and young",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 14.44,
+        "lyric_prev": "",
+        "lyric_current": "All around the wind",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 16.166666666666668,
+        "lyric_prev": "",
+        "lyric_current": "blows, we would only hold",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 17.893333333333334,
+        "lyric_prev": "",
+        "lyric_current": "on to let go",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 20.2,
+        "lyric_prev": "",
+        "lyric_current": "Look, it's fire gun",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 22.08,
+        "lyric_prev": "",
+        "lyric_current": "We need someone to lean",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 23.32,
+        "lyric_prev": "",
+        "lyric_current": "on",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 25.080000000000002,
+        "lyric_prev": "",
+        "lyric_current": "Look, it's fire gun",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 27.08,
+        "lyric_prev": "",
+        "lyric_current": "All we need is somebody",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 28.229999999999997,
+        "lyric_prev": "",
+        "lyric_current": "to lean on",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 29.98,
+        "lyric_prev": "",
+        "lyric_current": "Look, it's fire gun",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 31.9,
+        "lyric_prev": "",
+        "lyric_current": "We need someone to lean",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 33.17,
+        "lyric_prev": "",
+        "lyric_current": "on",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 34.98,
+        "lyric_prev": "",
+        "lyric_current": "Look, it's fire gun",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 36.86,
+        "lyric_prev": "",
+        "lyric_current": "All we need is somebody",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 38.04,
+        "lyric_prev": "",
+        "lyric_current": "to lean on",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

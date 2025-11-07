@@ -1,0 +1,9 @@
+[
+    {
+        "t": 0.0,
+        "lyric_prev": "",
+        "lyric_current": "Thanks for watching!",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

@@ -1,0 +1,15 @@
+{
+    "job_id": 11,
+    "audio_source": "jobs/job_011/audio_source.mp3",
+    "audio_trimmed": "jobs/job_011/audio_trimmed.wav",
+    "cover_image": "jobs/job_011/cover.png",
+    "colors": [
+        "#3e4950",
+        "#99a0a2",
+        "#7f8c94",
+        "#84949c"
+    ],
+    "lyrics_file": "jobs/job_011/lyrics.txt",
+    "job_folder": "jobs/job_011",
+    "song_title": "dsa"
+}

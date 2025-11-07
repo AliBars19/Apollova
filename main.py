@@ -200,7 +200,8 @@ def batch_generate_jobs():
 
         colors = image_extraction(job_folder)
 
-        
+        song_title = input(f"[Job {job_id}] Enter SONG TITLE (Artist - Song): ")
+
 
         job_data = {
             "job_id": job_id,
@@ -209,7 +210,8 @@ def batch_generate_jobs():
             "cover_image": image_path.replace("\\", "/"),
             "colors": colors,
             "lyrics_file": lyrics_path.replace("\\", "/"),
-            "job_folder": job_folder.replace("\\", "/")
+            "job_folder": job_folder.replace("\\", "/"),
+            "song_title": song_title
         }
         json_path = os.path.join(job_folder, "job_data.json")
         with open(json_path, "w", encoding="utf-8") as f:

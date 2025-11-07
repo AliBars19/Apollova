@@ -79,8 +79,8 @@ function main() {
 
         var audioFile = new File(jobData.audio_trimmed);
         var imageFile = new File(jobData.cover_image);
-        if (!audioFile.exists) { alert("⚠️ Missing audio:\n" + jobData.audio_trimmed); continue; }
-        if (!imageFile.exists) { alert("⚠️ Missing image:\n" + jobData.cover_image); continue; }
+        if (!audioFile.exists) { alert(" Missing audio:\n" + jobData.audio_trimmed); continue; }
+        if (!imageFile.exists) { alert(" Missing image:\n" + jobData.cover_image); continue; }
 
         // Duplicate MAIN
         var template = findCompByName("MAIN");
@@ -93,6 +93,11 @@ function main() {
         // Relink existing imported assets instead of replacing
         relinkFootageByName("AUDIO", jobData.audio_trimmed);
         relinkFootageByName("COVER", jobData.cover_image);
+
+        autoResizeCoverLayer(newComp);
+        setWorkAreaToAudioDuration(jobData.job_id, jobData.audio_trimmed);
+        updateSongTitle(jobData.job_id, jobData.song_title);
+
 
         applyColorsToBackground(jobData.job_id, jobData.colors);
         applyColorsWherePresent(newComp, jobData.colors);
@@ -343,18 +348,16 @@ function parseLyricsFile(p) {
 
     for (var i = 0; i < data.length; i++) {
         var cur = String(data[i].lyric_current || data[i].cur || "");
-        var t = Number(data[i].t || 0);
+        var t   = Number(data[i].t || 0);
 
-        // Split long lines automatically
-        var splitLines = splitLongLines(cur, 25);
-        for (var j = 0; j < splitLines.length; j++) {
-            linesArray.push(splitLines[j]);
-            tAndText.push({ t: t, cur: splitLines[j] });
-        }
+        // Python already chunked to ~25 chars and assigned timestamps.
+        // Do NOT split again here.
+        linesArray.push(cur);
+        tAndText.push({ t: t, cur: cur });
     }
-
     return { linesArray: linesArray, tAndText: tAndText };
 }
+
 
 function wrapTwoLines(s, limit) {
     // make sure any literal "\\r" becomes a real carriage return first
@@ -420,10 +423,10 @@ function ensureAudioLayer(comp) {
 
 function setAudioMarkersFromTArray(lyricComp, tAndText) {
     var audio = ensureAudioLayer(lyricComp);
-    if (!audio) { $.writeln("⚠️ No AUDIO layer found in " + lyricComp.name); return; }
+    if (!audio) { $.writeln(" No AUDIO layer found in " + lyricComp.name); return; }
 
     var mk = audio.property("Marker");
-    if (!mk) { $.writeln("⚠️ No Marker prop on AUDIO in " + lyricComp.name); return; }
+    if (!mk) { $.writeln(" No Marker prop on AUDIO in " + lyricComp.name); return; }
 
     // Clear markers
     for (var i = mk.numKeys; i >= 1; i--) mk.removeKey(i);
@@ -436,7 +439,7 @@ function setAudioMarkersFromTArray(lyricComp, tAndText) {
             mk.setValueAtTime(t, new MarkerValue(name));
             if (t > lastT) lastT = t;
         } catch (e) {
-            $.writeln("⚠️ Marker set failed at " + t + "s: " + e.toString());
+            $.writeln(" Marker set failed at " + t + "s: " + e.toString());
         }
     }
     if (lastT + 2 > lyricComp.duration) lyricComp.duration = lastT + 2;
@@ -497,7 +500,7 @@ function replaceInAllComps(compName, layerName, newItem) {
 function relinkFootageByName(itemName, newFilePath) {
     var newFile = new File(newFilePath);
     if (!newFile.exists) {
-        $.writeln("⚠️ File not found: " + newFilePath);
+        $.writeln(" File not found: " + newFilePath);
         return;
     }
     var found = false;
@@ -507,14 +510,31 @@ function relinkFootageByName(itemName, newFilePath) {
             try {
                 it.replace(newFile);     // relink only, name stays the same
                 found = true;
-                $.writeln("🔗 Relinked '" + it.name + "' to " + newFile.fsName);
+                $.writeln(" Relinked '" + it.name + "' to " + newFile.fsName);
             } catch (e) {
-                $.writeln("⚠️ Could not relink '" + it.name + "': " + e.toString());
+                $.writeln(" Could not relink '" + it.name + "': " + e.toString());
             }
         }
     }
-    if (!found) $.writeln("⚠️ Footage named '" + itemName + "' not found in Project.");
+    if (!found) $.writeln(" Footage named '" + itemName + "' not found in Project.");
 }
+
+// Auto-resize any COVER layer to fit comp safely (preserves aspect)
+function autoResizeCoverLayer(comp) {
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var lyr = comp.layer(i);
+        if (lyr.name && lyr.name.toUpperCase().indexOf("COVER") !== -1) {
+            var cw = comp.width, ch = comp.height;
+            var lw = lyr.source.width, lh = lyr.source.height;
+            if (lw && lh) {
+                var scale = 100 * Math.min(cw / lw, ch / lh);
+                lyr.property("Scale").setValue([scale, scale]);
+                $.writeln(" Auto-resized COVER layer in " + comp.name);
+            }
+        }
+    }
+}
+
 
 // If your Assets comp uses some other PNG/JPG layers, point them to the COVER footage item.
 function retargetImageLayersToFootage(assetComp, footageName) {
@@ -526,7 +546,7 @@ function retargetImageLayersToFootage(assetComp, footageName) {
             coverFootage = it; break;
         }
     }
-    if (!coverFootage) { $.writeln("⚠️ Footage '" + footageName + "' not found."); return; }
+    if (!coverFootage) { $.writeln(" Footage '" + footageName + "' not found."); return; }
 
     for (var L = 1; L <= assetComp.numLayers; L++) {
         var lyr = assetComp.layer(L);
@@ -536,14 +556,60 @@ function retargetImageLayersToFootage(assetComp, footageName) {
             if (/\.(png|jpg|jpeg)$/i.test(n)) {
                 try {
                     lyr.replaceSource(coverFootage, false); // keep layer props, use COVER footage
-                    $.writeln("🎯 Retargeted '" + lyr.name + "' to COVER footage in " + assetComp.name);
+                    $.writeln(" Retargeted '" + lyr.name + "' to COVER footage in " + assetComp.name);
                 } catch (e) {
-                    $.writeln("⚠️ Could not retarget '" + lyr.name + "': " + e.toString());
+                    $.writeln(" Could not retarget '" + lyr.name + "': " + e.toString());
                 }
             }
         }
     }
 }
+// Set comp work area to audio duration
+function setWorkAreaToAudioDuration(jobId, audioPath) {
+    try {
+        var comp = findCompByName("LYRIC FONT " + jobId);
+        if (!comp) return;
+        var audioFile = new File(audioPath);
+        var tmp = app.project.importFile(new ImportOptions(audioFile));
+        var duration = tmp.duration;
+        tmp.remove(); // clean up temp import
+
+        if (duration && duration > 0) {
+            comp.workAreaStart = 0;
+            comp.workAreaDuration = duration;
+            comp.duration = duration;
+            $.writeln(" Set work area for LYRIC FONT " + jobId + " to " + duration.toFixed(2) + "s");
+        }
+    } catch (e) {
+        $.writeln(" Could not set work area for job " + jobId + ": " + e.toString());
+    }
+}
+
+// Update title text inside Assets comp
+function updateSongTitle(jobId, titleText) {
+    if (!titleText) return;
+    try {
+        var assetsComp = findCompByName("Assets " + jobId);
+        if (!assetsComp) return;
+
+        for (var i = 1; i <= assetsComp.numLayers; i++) {
+            var lyr = assetsComp.layer(i);
+            if (lyr.property("Source Text")) {
+                if (lyr.name.toLowerCase().indexOf("title") !== -1) {
+                    var txtProp = lyr.property("Source Text");
+                    var doc = txtProp.value;
+                    doc.text = titleText;
+                    txtProp.setValue(doc);
+                    $.writeln(" Set song title in " + assetsComp.name + ": " + titleText);
+                    break;
+                }
+            }
+        }
+    } catch (e) {
+        $.writeln(" Could not update title for job " + jobId + ": " + e.toString());
+    }
+}
+
 
 
 

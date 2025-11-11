@@ -624,29 +624,38 @@ function setWorkAreaToAudioDuration(jobId) {
 
 
 // Update title text inside Assets comp
+// Update the TOPMOST text layer inside "Assets N" to the provided title
 function updateSongTitle(jobId, titleText) {
     if (!titleText) return;
     try {
         var assetsComp = findCompByName("Assets " + jobId);
-        if (!assetsComp) return;
+        if (!assetsComp) { $.writeln("⚠️ Assets " + jobId + " not found."); return; }
 
+        // Find the first layer that has a Source Text property (topmost text layer)
+        var targetTextLayer = null;
         for (var i = 1; i <= assetsComp.numLayers; i++) {
             var lyr = assetsComp.layer(i);
-            if (lyr.property("Source Text")) {
-                if (lyr.name.toLowerCase().indexOf("title") !== -1) {
-                    var txtProp = lyr.property("Source Text");
-                    var doc = txtProp.value;
-                    doc.text = titleText;
-                    txtProp.setValue(doc);
-                    $.writeln(" Set song title in " + assetsComp.name + ": " + titleText);
-                    break;
-                }
-            }
+            var txtProp = lyr.property("Source Text");
+            if (txtProp) { targetTextLayer = lyr; break; }
         }
+
+        if (!targetTextLayer) {
+            $.writeln("⚠️ No text layer found in " + assetsComp.name);
+            return;
+        }
+
+        var txtProp = targetTextLayer.property("Source Text");
+        var doc = txtProp.value;       // TextDocument
+        doc.text = String(titleText);  // supports \r for line breaks if you ever pass them
+        txtProp.setValue(doc);
+
+        $.writeln("📝 Set song title on layer '" + targetTextLayer.name +
+                  "' in " + assetsComp.name + " to: " + titleText);
     } catch (e) {
-        $.writeln(" Could not update title for job " + jobId + ": " + e.toString());
+        $.writeln("⚠️ Could not update title for job " + jobId + ": " + e.toString());
     }
 }
+
 function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
     var outputFolder = findFolderByName("OUTPUT" + jobId);
     if (!outputFolder) {

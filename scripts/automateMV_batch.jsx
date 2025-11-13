@@ -556,7 +556,7 @@ function retargetImageLayersToFootage(assetComp, footageName) {
     }
 
     if (!coverFootage) {
-        $.writeln("⚠️ Footage '" + footageName + "' not found.");
+        $.writeln(" Footage '" + footageName + "' not found.");
         return;
     }
 
@@ -580,9 +580,9 @@ function retargetImageLayersToFootage(assetComp, footageName) {
 
         try {
             lyr.replaceSource(coverFootage, false); // keep transform, effects, etc.
-            $.writeln("🖼️ Replaced album art layer '" + lyr.name + "' with COVER footage in " + assetComp.name);
+            $.writeln(" Replaced album art layer '" + lyr.name + "' with COVER footage in " + assetComp.name);
         } catch (e) {
-            $.writeln("⚠️ Could not replace '" + lyr.name + "': " + e.toString());
+            $.writeln(" Could not replace '" + lyr.name + "': " + e.toString());
         }
     }
 }
@@ -629,7 +629,7 @@ function updateSongTitle(jobId, titleText) {
     if (!titleText) return;
     try {
         var assetsComp = findCompByName("Assets " + jobId);
-        if (!assetsComp) { $.writeln("⚠️ Assets " + jobId + " not found."); return; }
+        if (!assetsComp) { $.writeln(" Assets " + jobId + " not found."); return; }
 
         // Find the first layer that has a Source Text property (topmost text layer)
         var targetTextLayer = null;
@@ -640,7 +640,7 @@ function updateSongTitle(jobId, titleText) {
         }
 
         if (!targetTextLayer) {
-            $.writeln("⚠️ No text layer found in " + assetsComp.name);
+            $.writeln(" No text layer found in " + assetsComp.name);
             return;
         }
 
@@ -649,17 +649,17 @@ function updateSongTitle(jobId, titleText) {
         doc.text = String(titleText);  // supports \r for line breaks if you ever pass them
         txtProp.setValue(doc);
 
-        $.writeln("📝 Set song title on layer '" + targetTextLayer.name +
+        $.writeln(" Set song title on layer '" + targetTextLayer.name +
                   "' in " + assetsComp.name + " to: " + titleText);
     } catch (e) {
-        $.writeln("⚠️ Could not update title for job " + jobId + ": " + e.toString());
+        $.writeln(" Could not update title for job " + jobId + ": " + e.toString());
     }
 }
 
 function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
     var outputFolder = findFolderByName("OUTPUT" + jobId);
     if (!outputFolder) {
-        $.writeln("⚠️ OUTPUT" + jobId + " folder not found.");
+        $.writeln(" OUTPUT" + jobId + " folder not found.");
         return;
     }
 
@@ -674,14 +674,14 @@ function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
     }
 
     if (!assetsFolder) {
-        $.writeln("⚠️ Assets folder not found inside OUTPUT" + jobId);
+        $.writeln(" Assets folder not found inside OUTPUT" + jobId);
         return;
     }
 
     var audioFile = new File(audioPath);
     var coverFile = new File(coverPath);
     if (!audioFile.exists || !coverFile.exists) {
-        $.writeln("⚠️ Missing audio or cover file for job " + jobId);
+        $.writeln(" Missing audio or cover file for job " + jobId);
         return;
     }
 
@@ -693,13 +693,13 @@ function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
         try {
             if (name === "AUDIO") {
                 it.replace(audioFile);
-                $.writeln("🎧 Replaced AUDIO inside Assets OT" + jobId);
+                $.writeln(" Replaced AUDIO inside Assets OT" + jobId);
             } else if (name === "COVER") {
                 it.replace(coverFile);
-                $.writeln("🖼️ Replaced COVER inside Assets OT" + jobId);
+                $.writeln(" Replaced COVER inside Assets OT" + jobId);
             }
         } catch (e) {
-            $.writeln("⚠️ Could not relink " + it.name + ": " + e.toString());
+            $.writeln(" Could not relink " + it.name + ": " + e.toString());
         }
     }
 }

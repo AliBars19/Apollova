@@ -7,7 +7,7 @@ A fully automated pipeline for creating professional 3D music video visuals read
 MV-AE-Project-Automation is a two-phase system:
 
 1. **Python Backend** (`main.py`) – Processes audio, images, and metadata
-2. **After Effects Automation** (`automateMV_batch.jsx`) – Renders final videos
+2. **After Effects Automation** (`MVAE-pt1.jsx`) – Renders final videos
 
 Simply provide a song URL, cover image URL, timestamps, and song title, and the system handles the rest automatically.
 
@@ -29,207 +29,207 @@ Simply provide a song URL, cover image URL, timestamps, and song title, and the 
   - Smart line wrapping (25-character limit per line)
   - Outputs JSON with precise lyric timing data
 
-- **After Effects Integration**
-  - Batch imports processed assets into AE project
-  - Auto-wires compositions with audio, cover art, and lyrics
-  - Applies extracted colors to gradient effects
-  - Automatically generates render queue
-  - Exports to H.264 MP4 format
+# MV-AE-Project-Automation
 
-- **Job Progress Tracking**
-  - Resumes interrupted jobs seamlessly
-  - Caches intermediate results (audio, lyrics, images, colors)
-  - JSON-based job metadata for transparency
+[![Python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-##  Quick Start
+A fully automated pipeline for creating 3D music-video visuals ready for social media. The project automates audio extraction, trimming, lyric transcription, color extraction from album art, and batch rendering via Adobe After Effects.
 
-### Prerequisites
+## Quick Snapshot
 
-- Python 3.8+
-- Adobe After Effects (with JSX scripting support)
-- ffmpeg (for audio processing)
+- Language: Python 3
+- AE Scripting: Adobe After Effects ExtendScript (JSX)
+- Jobs: Batch-style `jobs/job_001` → `jobs/job_012` by default
 
-### Installation
+## Table of Contents
 
-1. Clone or download the project
-2. Install Python dependencies:
-   ```powershell
-   pip install -r requirements.txt
-   ```
+1. Overview
+2. Features
+3. Quick Start (Windows)
+4. After Effects Setup Checklist
+5. File Layout
+6. Dependencies & Installation
+7. Usage Examples
+8. Troubleshooting
+9. Configuration
+10. Contributing & License
 
-### Usage
+## 1 — Overview
 
-#### Step 1: Run Python Backend
+The pipeline has two parts:
+
+- `main.py` — Python command-line helper that downloads and trims audio, downloads cover art, extracts dominant colors, transcribes lyrics using OpenAI Whisper, and writes `job_data.json` files into `jobs/job_###` folders.
+- `scripts/automateMV_batch.jsx` — After Effects script that imports job assets, wires them into templated comps, applies colors, populates lyrics, and queues renders.
+
+## 2 — Features
+
+- Audio download via `yt-dlp` and extraction to MP3/WAV
+- Trim audio to timestamp ranges, export `audio_trimmed.wav`
+- Cover image download and dominant color extraction (4 colors)
+- Lyric transcription with Whisper and timestamped output
+- AE JSX integration to auto-wire comps and push to render queue
+- Job progress checking and resume-friendly behavior
+
+## 3 — Quick Start (Windows)
+
+Prerequisites
+
+- Python 3.8 or later
+- Adobe After Effects (with scripting enabled)
+- ffmpeg (must be on PATH)
+
+Install (Python deps):
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Install `ffmpeg` on Windows (recommended):
+
+1. Download a build from https://www.gyan.dev/ffmpeg/builds/ or https://ffmpeg.org/download.html
+2. Unzip and copy the `bin\ffmpeg.exe` to a folder on your PATH or add the folder to PATH.
+3. Verify:
+```powershell
+ffmpeg -version
+```
+
+Run the job generator:
 
 ```powershell
 python main.py
 ```
 
-The script will prompt you for each job (1-12 by default):
+Follow prompts for each job: audio URL, start/end timestamps (MM:SS), image URL, and song title.
 
-```
---- Checking Job 001 ---
-[Job 1] Enter AUDIO URL: https://www.youtube.com/watch?v=...
-[Job 1] Enter start time (MM:SS): 00:15
-[Job 1] Enter end time (MM:SS): 01:45
-[Job 1] Enter IMAGE URL: https://example.com/cover.jpg
-[Job 1] Enter SONG TITLE (Artist - Song): The Weeknd - Blinding Lights
-```
+After running `main.py`, each job folder will contain:
 
-This generates a `jobs/job_001/` folder with:
-- `audio_source.mp3` – Original audio
-- `audio_trimmed.wav` – Trimmed audio clip
-- `cover.png` – Downloaded cover image
-- `lyrics.txt` – Transcribed lyrics with timings
-- `job_data.json` – Complete metadata
+- `audio_source.mp3`
+- `audio_trimmed.wav`
+- `cover.png`
+- `lyrics.txt` (JSON structured)
+- `job_data.json`
 
-#### Step 2: Prepare After Effects Project
+## 4 — After Effects Setup Checklist
 
-Your AE project should have:
-- **Folders:** `Foreground`, `Background`, `OUTPUT1`–`OUTPUT12`
-- **Compositions:** 
-  - `MAIN` (template composition)
-  - `OUTPUT 1`–`OUTPUT 12` (one per job)
-  - `LYRIC FONT 1`–`LYRIC FONT 12` (lyrics display)
-  - `Assets 1`–`Assets 12` (album art and metadata)
-  - `BACKGROUND 1`–`BACKGROUND 12` (gradient backgrounds)
-- **Layers & Effects:**
-  - Each `OUTPUT` comp should reference `LYRIC FONT` and audio layers
-  - Each `BACKGROUND` comp needs a layer named `BG GRADIENT` with a 4-Color Gradient effect
-  - Text layers named `LYRIC CURRENT`, `LYRIC PREVIOUS`, `LYRIC NEXT 1`, `LYRIC NEXT 2`
+Before running the JSX script in AE, ensure your AE project (template) includes the following items and naming conventions:
 
-#### Step 3: Run AE Script
+- Folders: `Foreground`, `Background`, `OUTPUT1`..`OUTPUT12`
+- Comps: `MAIN`, `OUTPUT 1`..`OUTPUT 12`, `LYRIC FONT 1`..`LYRIC FONT 12`, `Assets 1`..`Assets 12`, `BACKGROUND 1`..`BACKGROUND 12`
+- Layers:
+  - `BG GRADIENT` layer inside `BACKGROUND N` comps, with a 4-Color Gradient effect
+  - Text layers named `LYRIC CURRENT`, `LYRIC PREVIOUS`, `LYRIC NEXT 1`, `LYRIC NEXT 2` inside `LYRIC FONT N` comps
+  - An audio layer named `AUDIO` (or an AVLayer with audio enabled)
 
-1. Open your After Effects project (with above structure)
-2. `File` → `Scripts` → `Run Script File...`
-3. Select `scripts/automateMV_batch.jsx`
-4. Choose the `jobs` folder when prompted
-5. Script will:
-   - Import all job assets
-   - Link audio and images to compositions
-   - Set color gradients from extracted palette
-   - Populate lyrics with exact timings
-   - Queue all jobs for rendering
-6. Review the Render Queue and click **Render**
+How to run the AE script:
 
-##  Project Structure
+1. Open your AE template project
+2. File → Scripts → Run Script File... → select `scripts/automateMV_batch.jsx`
+3. Pick the `jobs` folder when prompted
+4. Verify imports and queued renders in AE's Render Queue
+
+## 5 — File Layout
 
 ```
 MV-AE-Project-Automation/
-├── main.py                          # Main Python automation script
-├── requirements.txt                 # Python dependencies
-├── README.md                        # Project documentation
-├── scripts/
-│   └── automateMV_batch.jsx         # After Effects batch automation
-├── template/
-│   └── 3D Apple Music.aep           # AE project template
-├── jobs/
-│   ├── job_001/
-│   │   ├── job_data.json            # Metadata (auto-generated)
-│   │   ├── audio_source.mp3         # Original audio
-│   │   ├── audio_trimmed.wav        # Trimmed audio
-│   │   ├── cover.png                # Album art
-│   │   └── lyrics.txt               # Transcribed lyrics
-│   └── ... (job_002 through job_012)
-└── renders/
-    ├── job_001.mp4                  # Final rendered video
-    └── ... (job_002 through job_012)
+├─ main.py
+├─ requirements.txt
+├─ README.md
+├─ scripts/
+│  └─ automateMV_batch.jsx
+├─ template/
+│  └─ 3D Apple Music.aep
+├─ jobs/
+│  ├─ job_001/
+│  │  ├─ audio_source.mp3
++│  │  ├─ audio_trimmed.wav
++│  │  ├─ cover.png
++│  │  ├─ lyrics.txt
++│  │  └─ job_data.json
+│  └─ ...
+└─ renders/
+   └─ job_001.mp4
 ```
 
-##  Dependencies
+## 6 — Dependencies & Installation
 
-| Package | Purpose |
-|---------|---------|
-| `yt-dlp` | YouTube audio extraction |
-| `ffmpeg` | Audio format conversion |
-| `pydub` | Audio trimming and processing |
-| `requests` | Download images from URLs |
-| `pillow` (PIL) | Image handling |
-| `colorthief` | Extract dominant colors |
-| `openai-whisper` | Speech-to-text transcription |
-| `matplotlib` | Color visualization (optional) |
+Primary Python packages (listed in `requirements.txt`):
 
-Install all with:
+- `yt-dlp` — download audio
+- `ffmpeg` — external binary for conversions
+- `pydub` — audio trimming
+- `requests`, `Pillow` — image downloading & handling
+- `colorthief` — dominant color extraction
+- `openai-whisper` (whisper) — transcription
+- `matplotlib` — optional color visualization
+
+Install all Python deps:
+
 ```powershell
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-##  Color Extraction
+Notes:
 
-The system automatically extracts 4 dominant colors from each cover image:
+- Whisper models can be large; choose `small` or `base` for faster processing, or `medium`/`large` for better accuracy.
+- `ffmpeg` must be installed separately — see section 3.
 
-```python
-colors = image_extraction(job_folder)
-# Returns: ["#FF5733", "#33FF57", "#3357FF", "#F0FF33"]
+## 7 — Usage Examples
+
+Example run (single session):
+
+```powershell
+python main.py
+# Follow prompts for jobs 1..12
 ```
 
-These colors are applied to After Effects gradient effects for dynamic, music-aware visual styling.
-
-##  Lyrics Format
-
-Generated `lyrics.txt` contains JSON array with timing and text:
+Example `job_data.json` snippet:
 
 ```json
-[
-  {
-    "t": 0.5,
-    "lyric_prev": "",
-    "lyric_current": "When I was young",
-    "lyric_next1": "I fell in love",
-    "lyric_next2": "With the bright lights"
-  },
-  ...
-]
+{
+  "job_id": 1,
+  "audio_source": "jobs/job_001/audio_source.mp3",
+  "audio_trimmed": "jobs/job_001/audio_trimmed.wav",
+  "cover_image": "jobs/job_001/cover.png",
+  "colors": ["#ff5733", "#33ff57", "#3357ff", "#f0ff33"],
+  "lyrics_file": "jobs/job_001/lyrics.txt",
+  "song_title": "Artist - Song"
+}
 ```
 
-**Key fields:**
-- `t` – Start time in seconds
-- `lyric_current` – Text to display now
-- `lyric_prev`, `lyric_next1`, `lyric_next2` – Context for carousel effects
+After the jobs exist, run the AE JSX script to import, wire comps, and queue renders.
 
-##  Configuration
+## 8 — Troubleshooting
 
-The number of jobs can be adjusted in `main.py`:
+- Audio download fails: ensure the URL is valid, `yt-dlp` is up-to-date, and `ffmpeg` is installed.
+- Whisper errors: verify model availability and sufficient disk space.
+- AE script alerts about missing comps/layers: open the template AE project and confirm naming exactly matches the checklist in section 4.
+- Colors not applied: ensure `BG GRADIENT` layer has a 4-Color Gradient effect available in AE.
+
+## 9 — Configuration
+
+Change the number of jobs by editing `main.py`:
 
 ```python
 def batch_generate_jobs():
-    base_jobs = 12  # Change this number
+    base_jobs = 12  # change to desired job count
 ```
 
-##  Troubleshooting
+You can also adapt `main.py` to accept a CLI argument (PR welcome).
 
-### Audio not downloading
-- Verify URL is a valid YouTube link or streaming service
-- Check internet connection
-- Ensure `ffmpeg` is installed: `ffmpeg -version`
+## 10 — Contributing & License
 
-### Lyrics not displaying in AE
-- Verify text layers exist: `LYRIC CURRENT`, `LYRIC PREVIOUS`, `LYRIC NEXT 1`, `LYRIC NEXT 2`
-- Check that `LYRIC FONT N` compositions exist for each job
-- Ensure `AUDIO` layer exists in the composition
+Contributions welcome. Suggested workflow:
 
-### Colors not applying to gradients
-- Verify `BG GRADIENT` layer exists in `BACKGROUND N` compositions
-- Check that layer has a 4-Color Gradient effect applied
-- Inspect AE console for color application errors (debug via JSX)
+1. Fork the repo
+2. Create a feature branch
+3. Open a pull request with a clear description
 
-### Render queue empty
-- Ensure `OUTPUT N` compositions exist (one per job)
-- Verify job_data.json files were created successfully
-- Check that audio and image files are accessible
+License: MIT (copy or add an appropriate `LICENSE` file if you want a different license).
 
-##  Batch Processing
+---
 
-Process up to 12 jobs sequentially:
-- **Job resumption:** If interrupted, restart to skip completed steps
-- **Memory efficient:** Each job is independent and cached
-- **Real-time feedback:** Console output shows progress at each stage
-
-##  Output
-
-Final rendered videos are saved to:
-```
-renders/job_001.mp4
+**Last Updated:** November 2025
 renders/job_002.mp4
 ... (up to job_012.mp4)
 ```

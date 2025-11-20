@@ -5,6 +5,9 @@ import yt_dlp # for audio extraction
 import ffmpeg
 from pydub import AudioSegment
 
+from html import unescape
+import re
+
 import requests # for image extraction
 from PIL import Image
 from io import BytesIO
@@ -13,6 +16,9 @@ from colorthief import ColorThief #For image colour extraction
 import matplotlib.pyplot as plt
 
 import librosa
+
+GENIUS_API_TOKEN = "1rnjcBnyL8eAARorEsLIG-JxO8JtsvAfygrPhd7uPxcXxMYK0NaNlL_i-jCsW0zt"
+GENIUS_BASE_URL = "https://api.genius.com"
 
 #------------------------------------------ JOB PROGRESS CHECKER
 def check_job_progress(job_folder):
@@ -114,44 +120,264 @@ def image_extraction(job_folder):
         colorshex.append(hexvalue)
 
     return colorshex
-#-------------------------------------- Taking in lyrics
+#--------------------------------------
+
+def fetch_genius_lyrics(song_title):
+    
+   
+    if not GENIUS_API_TOKEN or not song_title:
+        return None
+
+    headers = {"Authorization": f"Bearer {GENIUS_API_TOKEN}"}
+
+    artist = None
+    title = song_title.strip()
+    if " - " in song_title:
+        artist, title = [x.strip() for x in song_title.split(" - ", 1)]
+
+    title_l = title.lower()
+    artist_l = artist.lower() if artist else None
+
+    def safe_request(url, params=None):
+        try:
+            r = requests.get(url, headers=headers, params=params, timeout=10)
+            if r.status_code == 429:
+                print("  [Genius] Rate limited — waiting 3 seconds...")
+                import time
+                time.sleep(3)
+                return safe_request(url, params)
+            r.raise_for_status()
+            return r
+        except:
+            return None
+
+    search = safe_request(
+        f"{GENIUS_BASE_URL}/search",
+        params={"q": f"{title} {artist}" if artist else title}
+    )
+    if not search:
+        print("  [Genius] Search failed — using AZLyrics fallback.")
+        return fetch_azlyrics(song_title)
+
+    hits = search.json().get("response", {}).get("hits", [])
+    if not hits:
+        print("  [Genius] No hits — using AZLyrics fallback.")
+        return fetch_azlyrics(song_title)
+
+    from difflib import SequenceMatcher
+
+    def score(result):
+        result_title = result.get("title", "").lower()
+        result_artist = result.get("primary_artist", {}).get("name", "").lower()
+
+        title_sim = SequenceMatcher(None, title_l, result_title).ratio()
+
+        artist_sim = 0
+        if artist_l:
+            artist_sim = SequenceMatcher(None, artist_l, result_artist).ratio()
+
+        return (title_sim * 0.6) + (artist_sim * 0.4)
+
+    best = max([h["result"] for h in hits], key=score)
+    best_score = score(best)
+
+    if best_score < 0.35:
+        print("  [Genius] Match too weak — using AZLyrics fallback.")
+        return fetch_azlyrics(song_title)
+
+    url = best.get("url")
+    if not url:
+        print("  [Genius] No URL — fallback to AZLyrics.")
+        return fetch_azlyrics(song_title)
+
+    page = safe_request(url)
+    if not page:
+        print("  [Genius] Page failed — AZLyrics fallback.")
+        return fetch_azlyrics(song_title)
+
+    html = page.text
+
+    containers = re.findall(
+        r'<div[^>]+data-lyrics-container="true"[^>]*>(.*?)</div>',
+        html,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    if not containers:
+        print("  [Genius] No lyrics containers — AZLyrics fallback.")
+        return fetch_azlyrics(song_title)
+
+    collected = []
+    for block in containers:
+        block = re.sub(r'<br\s*/?>', '\n', block)
+        block = re.sub(r'<.*?>', '', block)
+        collected.append(block.strip())
+
+    text = unescape("\n".join(collected))
+
+    lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        if line.startswith("[") and line.endswith("]"):
+            continue
+
+        if re.match(r"^\d+\s+ContributorsTranslations$", line):
+            continue
+
+        lines.append(line)
+
+    if not lines:
+        print("  [Genius] Lyrics empty — fallback to AZLyrics.")
+        return fetch_azlyrics(song_title)
+
+    return "\n".join(lines)
+
+def fetch_azlyrics(song_title):
+    
+    print("  [AZLyrics] Attempting fallback lyric extraction...")
+
+    if " - " not in song_title:
+        return None
+
+    artist, title = [x.strip() for x in song_title.split(" - ", 1)]
+    artist = artist.lower().replace(" ", "")
+    title = title.lower().replace(" ", "")
+
+    url = f"https://www.azlyrics.com/lyrics/{artist}/{title}.html"
+
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code != 200:
+            print("  [AZLyrics] Not found.")
+            return None
+
+        html = r.text
+
+        # lyrics are between two <div>s without classes
+        m = re.search(
+            r'<!-- Usage of azlyrics.com content.*?-->(.*?)(</div>)',
+            html,
+            flags=re.DOTALL
+        )
+        if not m:
+            print("  [AZLyrics] Parsing failed.")
+            return None
+
+        block = m.group(1)
+        block = re.sub(r'<br\s*/?>', '\n', block)
+        block = re.sub(r'<.*?>', '', block)
+
+        cleaned = "\n".join([ln.strip() for ln in block.splitlines() if ln.strip()])
+        return cleaned
+
+    except Exception:
+        return None
+
+
+
+
+def map_genius_onto_whisper(final_list, genius_text, max_len=25):
+    
+
+    if not genius_text or not final_list:
+        return final_list
+
+    raw_lines = []
+    for line in genius_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        low = line.lower()
+        if line.startswith("[") and line.endswith("]"):
+            continue
+        if "contributors" in low or "translation" in low:
+            continue
+        if low.isdigit():
+            continue
+
+        raw_lines.append(line)
+
+    if not raw_lines:
+        return final_list
+
+   
+    def normalize(s: str) -> str:
+        s = s.lower()
+        s = re.sub(r"[^a-z0-9\s']", " ", s)  # keep basic chars
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+
+    whisper_text = normalize(" ".join(e.get("lyric_current", "") for e in final_list))
+
+  
+    best_idx = 0
+    best_score = 0
+
+    for i in range(len(raw_lines)):
+      
+        window = " ".join(raw_lines[i:i+4])
+        norm_window = normalize(window)
+        if not norm_window:
+            continue
+       
+        score = 0
+        for w in set(norm_window.split()):
+            if len(w) < 3:   
+                continue
+            if w in whisper_text:
+                score += 1
+
+        if score > best_score:
+            best_score = score
+            best_idx = i
+
+    
+    start_lines = raw_lines[best_idx:] if best_score > 0 else raw_lines
+
+    
+    genius_words = []
+    for line in start_lines:
+        genius_words.extend(line.split())
+
+    if not genius_words:
+        return final_list
+
+    
+    idx = 0
+    n_words = len(genius_words)
+
+    for entry in final_list:
+        if idx >= n_words:
+            break
+
+        buf = ""
+        while idx < n_words:
+            w = genius_words[idx]
+            candidate = (buf + " " + w).strip()
+            if len(candidate) > max_len:
+                break
+            buf = candidate
+            idx += 1
+
+        if buf:
+            entry["lyric_current"] = buf
+
+    return final_list
+
+
+
+#-------------------------------------- Taking in lyrics & Transcribe
 import whisper
 
-def transcribe_audio(job_folder):
+def transcribe_audio(job_folder, song_title=None):
     print("\n Transcribing audio with Whisper...")
 
     audio_path = os.path.join(job_folder, "audio_trimmed.wav")
     model = whisper.load_model("small")  # options: tiny, base, small, medium, large
     result = model.transcribe(audio_path, word_timestamps=True,verbose=False)
-
-    def pack_blocks_from_words(words, max_line=25):
-        blocks = []
-        i = 0
-        while i < len(words):
-            # Start a new block
-            block_start = float(words[i]['start'])
-            line1, line2 = "", ""
-            # fill line1
-            while i < len(words):
-                w = words[i]['word']
-                candidate = (line1 + (" " if line1 else "") + w).strip()
-                if len(candidate) > max_line:
-                    break
-                line1 = candidate
-                i += 1
-            # fill line2
-            while i < len(words):
-                w = words[i]['word']
-                candidate = (line2 + (" " if line2 else "") + w).strip()
-                if len(candidate) > max_line:
-                    break
-                line2 = candidate
-                i += 1
-            text = line1 if not line2 else (line1 + "\\r" + line2)
-            blocks.append({"t": block_start, "text": text})
-        return blocks
-
-
 
     final_list = []
     segments = result["segments"]
@@ -189,6 +415,19 @@ def transcribe_audio(job_folder):
                 "lyric_next2": ""
             })
 
+    if song_title and GENIUS_API_TOKEN:
+        print(" Fetching Genius lyrics for:", song_title)
+        genius_text = fetch_genius_lyrics(song_title)
+    
+        if genius_text:
+            genius_path = os.path.join(job_folder, "genius_lyrics.txt")
+            with open(genius_path, "w", encoding="utf-8") as gf:
+                gf.write(genius_text)
+            print(" Genius lyrics saved to", genius_path)
+    
+            final_list = map_genius_onto_whisper(final_list, genius_text, max_len=25)
+        else:
+            print(" Genius failed — keeping Whisper lyrics")
 
 
     # Save lyrics JSON file
@@ -221,10 +460,6 @@ def detect_beats(job_folder):
 
     return beats_list
 
-
-
-
-
 #-------------------------MAIN----------------------------------------
 
 def batch_generate_jobs():
@@ -248,7 +483,11 @@ def batch_generate_jobs():
         else:
             audio_path = os.path.join(job_folder, "audio_source.mp3")
             print(f"✓ Audio already downloaded for job {job_id:03}")
-
+        
+        #Song title
+        if not song_title:
+            song_title = input(f"[Job {job_id}] Enter SONG TITLE (Artist - Song): ")
+    
         #Audio trimming
         if not stages["audio_trimmed"]:
             start_time = input(f"[Job {job_id}] Enter start time (MM:SS): ")
@@ -270,7 +509,7 @@ def batch_generate_jobs():
 
         #Lyrics
         if not stages["lyrics_transcribed"]:
-            lyrics_path = transcribe_audio(job_folder)
+            lyrics_path = transcribe_audio(job_folder, song_title=song_title)
         else:
             lyrics_path = os.path.join(job_folder, "lyrics.txt")
             print(f"✓ Lyrics already transcribed for job {job_id:03}")
@@ -286,10 +525,7 @@ def batch_generate_jobs():
         #Colors
         colors = image_extraction(job_folder)
 
-        #Song title
-        if not song_title:
-            song_title = input(f"[Job {job_id}] Enter SONG TITLE (Artist - Song): ")
-
+        
         # Save or update job data
         job_data = {
             "job_id": job_id,

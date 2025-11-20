@@ -50,10 +50,20 @@ function main() {
 
     var subfolders = jobsFolder.getFiles(function (f) { return f instanceof Folder; });
     var jsonFiles = [];
+    
     for (var i = 0; i < subfolders.length; i++) {
-        var files = subfolders[i].getFiles("*.json");
-        if (files.length > 0) jsonFiles.push(files[0]);
+        // Only look for job_data.json in each job folder
+        var files = subfolders[i].getFiles("job_data.json");
+        if (files && files.length > 0) {
+            jsonFiles.push(files[0]);
+        }
     }
+    
+    if (jsonFiles.length === 0) {
+        alert("No job_data.json files found inside subfolders of " + jobsFolder.fsName);
+        return;
+    }
+    
     if (jsonFiles.length === 0) {
         alert("No job_data.json files found inside subfolders of " + jobsFolder.fsName);
         return;
@@ -102,6 +112,13 @@ function main() {
         applyColorsToBackground(jobData.job_id, jobData.colors);
         applyColorsWherePresent(newComp, jobData.colors);
 
+        // Beat Sync Spotlight
+        try {
+            applyBeatSync(jobData.job_id, jobData.beats);
+            $.writeln(" Applied beat sync for job " + jobData.job_id);
+        } catch (e) {
+            $.writeln(" Beat sync failed for job " + jobData.job_id + ": " + e.toString());
+        }
 
         // Lyrics
         var outputComp, lyricComp;
@@ -725,6 +742,66 @@ function setOutputWorkAreaToAudio(jobId, audioPath) {
         $.writeln(" Could not set OUTPUT work area for job " + jobId + ": " + e.toString());
     }
 }
+
+
+
+function applyBeatSync(jobId, beatsArray) {
+    if (!beatsArray || !beatsArray.length) {
+        $.writeln(" No beats for job " + jobId);
+        return;
+    }
+
+    var comp = findCompByName("OUTPUT " + jobId);
+    if (!comp) {
+        $.writeln(" OUTPUT " + jobId + " not found");
+        return;
+    }
+
+    var layer = comp.layer("Spot Light 2");
+    if (!layer) {
+        $.writeln(" 'Spot Light 2' not found in OUTPUT " + jobId);
+        return;
+    }
+
+    // ---- Correct Intensity Property ----
+    var intensity =
+        layer.property("ADBE Light Options Group") &&
+        layer.property("ADBE Light Options Group").property("ADBE Light Intensity");
+
+    if (!intensity)
+        intensity = layer.property("Light Options") && layer.property("Light Options").property("Intensity");
+
+    if (!intensity)
+        intensity = layer.property("Light Options").property(2); // Intensity is usually second parameter
+
+    if (!intensity) {
+        $.writeln(" Spot Light 2: Intensity property not found");
+        return;
+    }
+
+    for (var k = intensity.numKeys; k >= 1; k--) intensity.removeKey(k);
+
+    var peak = 75;
+    var base = 15;
+
+    for (var i = 0; i < beatsArray.length; i++) {
+        var t = beatsArray[i];
+        var nextT = (i < beatsArray.length - 1) ? beatsArray[i + 1] : (t + 0.4);
+        var falloff = Math.max(0.05, nextT - t);
+
+        intensity.setValueAtTime(t, peak);
+        intensity.setValueAtTime(t + falloff, base);
+
+        var k1 = intensity.nearestKeyIndex(t);
+        var k2 = intensity.nearestKeyIndex(t + falloff);
+
+        intensity.setTemporalEaseAtKey(k1, [new KeyframeEase(0, 90)], [new KeyframeEase(0, 90)]);
+        intensity.setTemporalEaseAtKey(k2, [new KeyframeEase(0, 90)], [new KeyframeEase(0, 90)]);
+    }
+
+    $.writeln(" Beat-sync keys applied: " + beatsArray.length);
+}
+
 
 
 

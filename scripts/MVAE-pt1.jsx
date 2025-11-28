@@ -364,10 +364,7 @@ function parseLyricsFile(p) {
 
     for (var i = 0; i < data.length; i++) {
         if (data[i].lyric_current) {
-            data[i].lyric_current =
-                data[i].lyric_current
-                    .split("MVAE").join("\\r")   // ← converts the placeholder to line break
-                    .split("\\n").join("\\n");   // ← handles literal \n too
+            data[i].lyric_current = data[i].lyric_current.replace(/\\r/g, "\r");
         }
     }
 
@@ -389,11 +386,8 @@ function parseLyricsFile(p) {
 function wrapTwoLines(s, limit) {
     s = String(s);
 
-    if (s.indexOf("\n") !== -1) {
-        return s.replace(/\\n/g, "\n");
-    }
-
-    if (s.indexOf("\n") !== -1 || s.indexOf("\n") !== -1) {
+    // DO NOT wrap if Python already inserted \r
+    if (s.indexOf("\r") !== -1) {
         return s;
     }
 
@@ -402,8 +396,9 @@ function wrapTwoLines(s, limit) {
     var cut = s.lastIndexOf(" ", limit);
     if (cut < 0) cut = limit;
 
-    return s.substring(0, cut) + "\n" + s.substring(cut + 1).replace(/^\s+/, "");
+    return s.substring(0, cut) + "\r" + s.substring(cut + 1).replace(/^\s+/, "");
 }
+
 
 
 
@@ -412,9 +407,13 @@ function replaceLyricArrayInLayer(layer, linesArray) {
 
     var lines = [];
     for (var i = 0; i < linesArray.length; i++) {
-        var l = wrapTwoLines(linesArray[i], MAX);
+        l = wrapTwoLines(linesArray[i], MAX);
+        // KEEP literal "\r" visible in the JS array
+        l = l.replace(/\r/g, "\\r");
+
+        // Escape backslashes and quotes
         l = String(l).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-        lines.push('"' + l + '"');
+
     }
 
     var newBlock = "var lyrics = [\n" + lines.join(",\n") + "\n];";
@@ -809,12 +808,6 @@ function applyBeatSync(jobId, beatsArray) {
 
     $.writeln(" Beat sync applied with frame-gap falloff.");
 }
-
-
-
-
-
-
 
 // -----------------------------
 main();

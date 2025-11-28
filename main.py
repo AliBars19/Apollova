@@ -282,95 +282,106 @@ def fetch_azlyrics(song_title):
 
 from difflib import SequenceMatcher
 
-def align_genius_to_whisper(whisper_segments, genius_text, max_chars=25):
+def align_genius_to_whisper(whisper_segments, genius_text):
     """
-    Aligns clean Genius lyric lines onto Whisper time segments.
-    Keeps Whisper timing but replaces segmented text with Genius lines.
+    BEST VERSION:
+    - Does rolling windows of 1–5 Whisper segments
+    - Scores similarity *with length normalization*
+    - Forces ordered mapping (never jumps backwards)
+    - Recovers when Whisper mis-hears one segment
+    - Ensures every Genius line gets matched if possible
     """
+
     import re
     from difflib import SequenceMatcher
 
     if not whisper_segments or not genius_text:
         return whisper_segments
 
-    # ---------------------------------------------------
-    # 1) Clean and split Genius into usable lyric lines
-    # ---------------------------------------------------
-    genius_lines = [
-        line.strip()
-        for line in genius_text.splitlines()
-        if line.strip()
-    ]
+    # ----------------------------
+    # CLEAN GENIUS LINES
+    # ----------------------------
+    genius_lines = [ln.strip() for ln in genius_text.splitlines() if ln.strip()]
 
-    # Normalization helper
     def clean(x):
         x = x.lower()
-        x = re.sub(r"\[.*?\]", "", x)          # remove [Music], [Intro], etc
-        x = re.sub(r"\(.*?\)", "", x)          # remove (yeah), (laughs), etc
-        x = re.sub(r"[^a-z0-9]+", " ", x)      # keep letters/numbers
+        x = re.sub(r"[^a-z0-9 ]+", " ", x)
         x = re.sub(r"\s+", " ", x)
         return x.strip()
 
+    genius_clean = [clean(g) for g in genius_lines]
 
-    # Normalize the search lines
-    genius_clean = [clean(l) for l in genius_lines]
+    # ----------------------------
+    # CLEAN WHISPER SEGMENTS
+    # ----------------------------
+    whisper_clean = [clean(seg["lyric_current"]) for seg in whisper_segments]
 
-    # ---------------------------------------------------
-    # 2) Prepare Whisper segments (normalized)
-    # ---------------------------------------------------
-    whisper_clean = [
-        clean(seg["lyric_current"]) for seg in whisper_segments
-    ]
+    wcount = len(whisper_clean)
+    gcount = len(genius_clean)
 
-    used = set()
+    w_index = 0  # where in Whisper we're allowed to match next
 
-    # ---------------------------------------------------
-    # 3) Scoring function with length penalty
-    # ---------------------------------------------------
-    def score_pair(a, b):
-        """
-        a = genius line
-        b = whisper text
-        """
-        if not a or not b:
-            return 0.0
+    # ----------------------------
+    # ALIGN EACH GENIUS LINE
+    # ----------------------------
+    for g_idx, g_line in enumerate(genius_clean):
 
-        base = SequenceMatcher(None, a, b).ratio()
+        best_score = 0
+        best_range = None
 
-        # length similarity penalty
-        len_ratio = min(len(a), len(b)) / max(len(a), len(b))
+        # Try windows from 1–5 segments
+        for start in range(w_index, min(w_index + 12, wcount)):
+            window = ""
 
-        return base * len_ratio
+            for end in range(start, min(start + 5, wcount)):
+                window = (window + " " + whisper_clean[end]).strip()
 
-    # ---------------------------------------------------
-    # 4) Assign each Genius line to best Whisper segment
-    # ---------------------------------------------------
-    for i, g_line in enumerate(genius_clean):
+                # similarity + length penalty
+                sm = SequenceMatcher(None, g_line, window).ratio()
+                len_penalty = min(len(g_line), len(window)) / max(len(g_line), len(window))
+                score = sm * len_penalty
 
-        best_idx = -1
-        best_score = 0.0
+                if score > best_score:
+                    best_score = score
+                    best_range = (start, end)
 
-        for j, w_line in enumerate(whisper_clean):
-            if j in used:
-                continue
+        # requirement lowered for chorus-heavy modern songs
+        if not best_range or best_score < 0.28:
+            print(f"[ALIGN] Weak match → SKIPPED: {genius_lines[g_idx]}")
+            continue
 
-            s = score_pair(g_line, w_line)
+        s, e = best_range
 
-            if s > best_score:
-                best_idx = j
-                best_score = s
+        # assign Genius line to ALL Whisper segments in the window
+        for i in range(s, e + 1):
+            whisper_segments[i]["lyric_current"] = genius_lines[g_idx]
 
-        # Tuneable threshold — 0.07 works extremely well
-        if best_score >= 0.045 and best_idx >= 0:
-            whisper_segments[best_idx]["lyric_current"] = genius_lines[i]
-            used.add(best_idx)
-        else:
-            print(f"[WARN] Genius line not matched: {genius_lines[i]}")
+        w_index = e + 1
+
+        if w_index >= wcount:
+            break
 
     return whisper_segments
 
+
 #-------------------------------------- Taking in lyrics & Transcribe
 import whisper
+
+def wrap_two_lines(text, max_chars=25):
+    text = text.strip()
+
+    if len(text) <= max_chars:
+        return text
+
+    cut = text.rfind(" ", 0, max_chars)
+    if cut == -1:
+        cut = max_chars
+
+    first = text[:cut].rstrip()
+    rest  = text[cut:].lstrip()
+
+    return first + " \\r " + rest
+
 
 
 def transcribe_audio(job_folder, song_title=None):
@@ -386,16 +397,29 @@ def transcribe_audio(job_folder, song_title=None):
 
     result = model.transcribe(
         audio_path,
-        word_timestamps=False,
-        condition_on_previous_text=False
+        fp16=False,                     # CPU safe
+        temperature=0,                  # NO randomness
+        no_speech_threshold=0.30,       # FIX: was too low
+        condition_on_previous_text=False,
+        initial_prompt=(
+            "These are song lyrics. "
+            "Do not hallucinate. "
+            "Only transcribe exactly what is sung. "
+            "Do not skip lines or add lines."
+        )
     )
 
     segments = result.get("segments", [])
-    final_list = []
+
+    print("\n--- RAW WHISPER SEGMENTS ---")
+    for seg in segments:
+        print(f"[{seg['start']:.2f} → {seg['end']:.2f}]  {seg['text']}")
+    print("--- END RAW WHISPER ---\n")
 
     # ---------------------------
-    # STEP 1 — KEEP WHISPER SEGMENTS INTACT
+    # STEP 1 — Keep Whisper segments
     # ---------------------------
+    final_list = []
     for seg in segments:
         final_list.append({
             "t": float(seg["start"]),
@@ -409,17 +433,14 @@ def transcribe_audio(job_folder, song_title=None):
     # STEP 2 — Fetch Genius lyrics
     # ---------------------------
     genius_text = None
-
     if song_title and GENIUS_API_TOKEN:
         print(" Fetching Genius lyrics for:", song_title)
         genius_text = fetch_genius_lyrics(song_title)
 
         if genius_text:
-            # Save raw Genius lyrics
-            genius_path = os.path.join(job_folder, "genius_lyrics.txt")
-            with open(genius_path, "w", encoding="utf-8") as gf:
+            with open(os.path.join(job_folder, "genius_lyrics.txt"), "w", encoding="utf-8") as gf:
                 gf.write(genius_text)
-            print(" Genius lyrics saved to", genius_path)
+            print(" Genius lyrics saved.")
         else:
             print(" Genius failed — keeping Whisper lyrics")
 
@@ -427,23 +448,18 @@ def transcribe_audio(job_folder, song_title=None):
     # STEP 3 — Align Genius → Whisper
     # ---------------------------
     if genius_text:
-        final_list = align_genius_to_whisper(final_list, genius_text, max_chars=25)
+        final_list = align_genius_to_whisper(final_list, genius_text)
 
     # ---------------------------
-    # STEP 4 — Chunk all final lines to max 25 chars
+    # STEP 4 — Soft wrap to 25 chars using \r (NOT real linebreak)
     # ---------------------------
     def wrap_chunk(text, limit=25):
-        """
-        Splits long lines into 1–2 lines separated with "MVAE".
-        """
         words = text.split()
         out, buf = [], ""
 
         for w in words:
-            # If adding next word exceeds limit, create a new line
             if len((buf + " " + w).strip()) > limit:
-                if buf:
-                    out.append(buf.strip())
+                out.append(buf.strip())
                 buf = w
             else:
                 buf = (buf + " " + w).strip()
@@ -451,23 +467,21 @@ def transcribe_audio(job_folder, song_title=None):
         if buf:
             out.append(buf)
 
-        return "MVAE".join(out)
+        return " \\r ".join(out)
 
     for seg in final_list:
-        seg["lyric_current"] = wrap_chunk(seg["lyric_current"], limit=25)
+        seg["lyric_current"] = wrap_chunk(seg["lyric_current"], 25)
 
     # ---------------------------
     # STEP 5 — Save JSON
     # ---------------------------
     lyrics_path = os.path.join(job_folder, "lyrics.txt")
-
     with open(lyrics_path, "w", encoding="utf-8") as f:
-        text = json.dumps(final_list, indent=4, ensure_ascii=False)
-        text = text.replace("\\\\n", "\\n")
-        f.write(text)
+        f.write(json.dumps(final_list, indent=4, ensure_ascii=False))
 
     print(f" Transcription complete: {len(final_list)} lines saved to {lyrics_path}")
     return lyrics_path
+
 
 def detect_beats(job_folder):
 

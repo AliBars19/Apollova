@@ -1,0 +1,37 @@
+[
+    {
+        "t": 0.0,
+        "lyric_prev": "",
+        "lyric_current": "She's high (High) She \\r lives in the sky",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 5.04,
+        "lyric_prev": "",
+        "lyric_current": "Tonight, she's satisfied \\r (Satisfied) Rolling back \\r her eyes",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 9.94,
+        "lyric_prev": "",
+        "lyric_current": "But then, she starts to \\r cry (To cry) Everything \\r is turning to black",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 15.06,
+        "lyric_prev": "",
+        "lyric_current": "All in one night (One \\r night) She just went to \\r heaven and back (She \\r went)",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 20.74,
+        "lyric_prev": "",
+        "lyric_current": "Yeah, ooh yeah (Oh yeah)",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

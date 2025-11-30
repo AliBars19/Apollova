@@ -1,0 +1,107 @@
+[
+    {
+        "t": 0.736,
+        "lyric_prev": "",
+        "lyric_current": "I need real love, I need \\r hella",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 5.6,
+        "lyric_prev": "",
+        "lyric_current": "He ain't never leaving, \\r and we're coming right \\r back",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 7.9,
+        "lyric_prev": "",
+        "lyric_current": "I know that he need it, \\r cause shorty gon' bite \\r back",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 10.52,
+        "lyric_prev": "",
+        "lyric_current": "And he don't want nobody \\r else to end it like that",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 13.46,
+        "lyric_prev": "",
+        "lyric_current": "Before I die, I'm tryna \\r fuck you, baby",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 16.2,
+        "lyric_prev": "",
+        "lyric_current": "Hopefully we don't have \\r no babies",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 18.78,
+        "lyric_prev": "",
+        "lyric_current": "I don't even wanna go \\r back home",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 21.504,
+        "lyric_prev": "",
+        "lyric_current": "Hopefully you don't leave \\r my own home",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 23.78,
+        "lyric_prev": "",
+        "lyric_current": "Before I die, I'm tryna \\r fuck you, baby",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 26.54,
+        "lyric_prev": "",
+        "lyric_current": "Hopefully we don't have \\r no babies",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 28.6,
+        "lyric_prev": "",
+        "lyric_current": "I don't even wanna go \\r back home Hopefully you \\r don't leave my own home",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 33.98,
+        "lyric_prev": "",
+        "lyric_current": "I just want him blessing \\r me I want your baggie, \\r your best to me",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 38.9,
+        "lyric_prev": "",
+        "lyric_current": "Shorty get the bread and \\r the recipe He already \\r know it while she testing \\r me",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 44.544,
+        "lyric_prev": "",
+        "lyric_current": "I'm so fly, I rock \\r Marcella I won't die till \\r I get better",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 49.16,
+        "lyric_prev": "",
+        "lyric_current": "Money and clout won't get \\r me better I need real \\r love, I need hellas",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

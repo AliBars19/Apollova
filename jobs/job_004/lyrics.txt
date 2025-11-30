@@ -1,0 +1,37 @@
+[
+    {
+        "t": 0.384,
+        "lyric_prev": "",
+        "lyric_current": "Sure it's Christmas once \\r more",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 6.688,
+        "lyric_prev": "",
+        "lyric_current": "Everywhere you go",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 11.14,
+        "lyric_prev": "",
+        "lyric_current": "Take a look at the five \\r and ten",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 13.8,
+        "lyric_prev": "",
+        "lyric_current": "It's glistening once \\r again",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 16.38,
+        "lyric_prev": "",
+        "lyric_current": "With candy canes and \\r silver lanes that glow",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

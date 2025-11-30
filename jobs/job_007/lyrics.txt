@@ -1,0 +1,65 @@
+[
+    {
+        "t": 0.32,
+        "lyric_prev": "",
+        "lyric_current": "I can only see your face \\r when I close my eyes",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 5.408,
+        "lyric_prev": "",
+        "lyric_current": "So can I get a kiss?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 8.18,
+        "lyric_prev": "",
+        "lyric_current": "And can you make it last \\r forever?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 11.34,
+        "lyric_prev": "",
+        "lyric_current": "I said I'm about to go to \\r war",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 14.58,
+        "lyric_prev": "",
+        "lyric_current": "I don't know if I'm gonna \\r see you again",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 17.12,
+        "lyric_prev": "",
+        "lyric_current": "Can I get a kiss?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 20.44,
+        "lyric_prev": "",
+        "lyric_current": "And can you make it last \\r forever?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 23.56,
+        "lyric_prev": "",
+        "lyric_current": "I said I'm about to go to \\r war",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 25.52,
+        "lyric_prev": "",
+        "lyric_current": "I don't know if I'm gonna \\r see you again",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

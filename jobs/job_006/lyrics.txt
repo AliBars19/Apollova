@@ -1,0 +1,58 @@
+[
+    {
+        "t": 0.0,
+        "lyric_prev": "",
+        "lyric_current": "I met that girl right up \\r at my show, left her man \\r in the crowd on the floor",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 4.02,
+        "lyric_prev": "",
+        "lyric_current": "Out of town, never saw \\r her before, Told her baby \\r we don't got that long",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 8.42,
+        "lyric_prev": "",
+        "lyric_current": "Listen, this not my city \\r show, But I treat it like \\r my city show",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 11.86,
+        "lyric_prev": "",
+        "lyric_current": "20 more minutes and two \\r and more, 20 more minutes \\r and two and more",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 15.9,
+        "lyric_prev": "",
+        "lyric_current": "20 more minutes and two \\r and more, 20 more minutes \\r and two and more",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 20.12,
+        "lyric_prev": "",
+        "lyric_current": "20 more minutes and two \\r and more, 20 more minutes \\r and two and more",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 24.0,
+        "lyric_prev": "",
+        "lyric_current": "I am not slow, Bigger you \\r want me cause I got the \\r dope",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 27.0,
+        "lyric_prev": "",
+        "lyric_current": "That's that girl right up \\r my street, give me gold, \\r He pass me huffing so \\r they switching rules",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

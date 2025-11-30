@@ -1,0 +1,121 @@
+[
+    {
+        "t": 0.0,
+        "lyric_prev": "",
+        "lyric_current": "Wild, wild, wild",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 3.808,
+        "lyric_prev": "",
+        "lyric_current": "I heard it got these \\r other niggas goin' crazy",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 6.46,
+        "lyric_prev": "",
+        "lyric_current": "Yeah, I treat you like a \\r lady, lady",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 8.9,
+        "lyric_prev": "",
+        "lyric_current": "Fuck you till you burned \\r out, clemation",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 11.66,
+        "lyric_prev": "",
+        "lyric_current": "Make it cream, yeah, \\r Wu-Tang",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 14.06,
+        "lyric_prev": "",
+        "lyric_current": "Throw that ass back, \\r bouquet",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 16.58,
+        "lyric_prev": "",
+        "lyric_current": "Call me and I can get it \\r just say",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 18.976,
+        "lyric_prev": "",
+        "lyric_current": "I can tell you gone off \\r the dole, say",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 21.7,
+        "lyric_prev": "",
+        "lyric_current": "Careful, mama, why would \\r you say?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 23.98,
+        "lyric_prev": "",
+        "lyric_current": "You talkin' to me like \\r you're new bae",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 26.44,
+        "lyric_prev": "",
+        "lyric_current": "You talkin' like you \\r tryna do things",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 28.2,
+        "lyric_prev": "",
+        "lyric_current": "Now that pipe gotta \\r runnin' like she Usain, \\r baby",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 31.06,
+        "lyric_prev": "",
+        "lyric_current": "You made me drown in that \\r Ootouche, baby I'm \\r carryin' that water, \\r barbie, bouche, baby",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 35.8,
+        "lyric_prev": "",
+        "lyric_current": "And you know I'ma \\r slaughter like I'm Jason \\r Busted why you got it on \\r safety",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 40.864,
+        "lyric_prev": "",
+        "lyric_current": "White girl, where is your \\r dumb brown liquor? I \\r probably shouldn't be \\r around you",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 46.06,
+        "lyric_prev": "",
+        "lyric_current": "Cause you get wild, wild, \\r wild You lookin' like \\r it's nothin' that you \\r won't do",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 51.28,
+        "lyric_prev": "",
+        "lyric_current": "Ay, girl, that's when I \\r told you",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

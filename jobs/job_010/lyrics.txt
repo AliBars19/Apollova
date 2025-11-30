@@ -1,0 +1,72 @@
+[
+    {
+        "t": 0.896,
+        "lyric_prev": "",
+        "lyric_current": "Bring it over to my place",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 2.94,
+        "lyric_prev": "",
+        "lyric_current": "I don't know why this \\r shit got me lazy right \\r now, yeah",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 8.7,
+        "lyric_prev": "",
+        "lyric_current": "Can't do work, I said, so \\r I'll let",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 12.04,
+        "lyric_prev": "",
+        "lyric_current": "I'm turning one and \\r trying to live it up",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 14.78,
+        "lyric_prev": "",
+        "lyric_current": "Yeah, right, right, right",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 16.96,
+        "lyric_prev": "",
+        "lyric_current": "Baby, who cares?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 18.96,
+        "lyric_prev": "",
+        "lyric_current": "Right, who cares?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 21.46,
+        "lyric_prev": "",
+        "lyric_current": "Bring it over to my place",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 23.86,
+        "lyric_prev": "",
+        "lyric_current": "You be like, baby, who \\r cares?",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    },
+    {
+        "t": 27.02,
+        "lyric_prev": "",
+        "lyric_current": "But I know you care",
+        "lyric_next1": "",
+        "lyric_next2": ""
+    }
+]

@@ -1,9 +1,0 @@
-[
-    {
-        "t": 60.26,
-        "lyric_prev": "",
-        "lyric_current": "Love, let's talk about \\r love",
-        "lyric_next1": "",
-        "lyric_next2": ""
-    }
-]

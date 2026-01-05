@@ -2,3 +2,5 @@
 /whisper_models/
 /jobs/
 spotify_api_data.txt
+.env
+/scripts/__pycache__/

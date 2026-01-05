@@ -3,160 +3,192 @@ import re
 import json
 from html import unescape
 
+from scripts.config import Config
+from scripts.image_processing import download_image
 
-GENIUS_API_TOKEN = "1rnjcBnyL8eAARorEsLIG-JxO8JtsvAfygrPhd7uPxcXxMYK0NaNlL_i-jCsW0zt"
-GENIUS_BASE_URL = "https://api.genius.com"
 
-
-def fetch_genius_lyrics(song_title):
-    """
-    Fully correct Genius lyric scraper:
-    - Uses Genius API to find the song page
-    - Extracts ALL lyrics from __PRELOADED_STATE__
-    - Recursively flattens the children tree
-    - Preserves exact ordering of every line
-    - Removes metadata like [Chorus], [Verse X]
-    """
-
-    if not GENIUS_API_TOKEN or not song_title:
+def fetch_genius_image(song_title, job_folder):
+    if not Config.GENIUS_API_TOKEN:
         return None
-
-    headers = {"Authorization": f"Bearer {GENIUS_API_TOKEN}"}
-
-    # ----- Parse artist/title if provided as: "Artist - Song" -----
+    
+    if not song_title:
+        return None
+    
+    headers = {"Authorization": f"Bearer {Config.GENIUS_API_TOKEN}"}
+    
+    # Parse "Artist - Song" format
     artist = None
     title = song_title.strip()
     if " - " in song_title:
-        artist, title = [x.strip() for x in song_title.split(" - ", 1)]
-
-    q = f"{title} {artist}" if artist else title
-
-    # ----- Genius Search -----
+        parts = song_title.split(" - ", 1)
+        artist = parts[0].strip()
+        title = parts[1].strip()
+    
+    query = f"{title} {artist}" if artist else title
+    
+    # Search Genius
     try:
-        res = requests.get(
-            f"{GENIUS_BASE_URL}/search",
-            params={"q": q},
+        response = requests.get(
+            f"{Config.GENIUS_BASE_URL}/search",
+            params={"q": query},
             headers=headers,
             timeout=10
-        ).json()
-    except:
-        print("[GENIUS] Search request failed.")
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+    except Exception as e:
+        print(f"  Genius search failed: {e}")
         return None
-
-    hits = res.get("response", {}).get("hits", [])
+    
+    # Get first result
+    hits = data.get("response", {}).get("hits", [])
     if not hits:
-        print("[GENIUS] No hits found.")
+        print("  No Genius results found")
+        return None
+    
+    # Get song art URL
+    song_info = hits[0]["result"]
+    image_url = song_info.get("song_art_image_url") or song_info.get("header_image_url")
+    
+    if not image_url:
+        print("  No image found in Genius result")
+        return None
+    
+    # Download the image
+    try:
+        return download_image(job_folder, image_url)
+    except Exception as e:
+        print(f"  Failed to download Genius image: {e}")
         return None
 
-    url = hits[0]["result"]["url"]
 
-    # ----- Fetch HTML -----
+def fetch_genius_lyrics(song_title):
+    if not Config.GENIUS_API_TOKEN:
+        return None
+    
+    if not song_title:
+        return None
+    
+    headers = {"Authorization": f"Bearer {Config.GENIUS_API_TOKEN}"}
+    
+    # Parse "Artist - Song" format
+    artist = None
+    title = song_title.strip()
+    if " - " in song_title:
+        parts = song_title.split(" - ", 1)
+        artist = parts[0].strip()
+        title = parts[1].strip()
+    
+    query = f"{title} {artist}" if artist else title
+    
+    # Search Genius
+    try:
+        response = requests.get(
+            f"{Config.GENIUS_BASE_URL}/search",
+            params={"q": query},
+            headers=headers,
+            timeout=10
+        )
+        response.raise_for_status()
+        data = response.json()
+        
+    except Exception as e:
+        print(f"  Genius search failed: {e}")
+        return None
+    
+    # Get first result
+    hits = data.get("response", {}).get("hits", [])
+    if not hits:
+        print("  No Genius results found")
+        return None
+    
+    url = hits[0]["result"]["url"]
+    
+    # Fetch lyrics page
     try:
         html = requests.get(url, timeout=10).text
-    except:
-        print("[GENIUS] Failed to fetch song HTML.")
+    except Exception as e:
+        print(f"  Failed to fetch Genius page: {e}")
         return None
-
-    # ----- Extract __PRELOADED_STATE__ JSON -----
+    
+    # Extract from __PRELOADED_STATE__ JSON
     state_match = re.search(
         r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});',
         html,
         flags=re.DOTALL
     )
-
+    
     if not state_match:
-        print("[GENIUS] Could not locate PRELOADED_STATE. Falling back.")
-        return fallback_html_lyrics(html)
-
+        return _fallback_html_extraction(html)
+    
     try:
-        data = json.loads(state_match.group(1))
+        state_data = json.loads(state_match.group(1))
+        body_children = state_data["songPage"]["lyricsData"]["body"]["children"]
+        
+        # Recursively extract text
+        full_text = _extract_text_recursive(body_children)
+        
+        # Clean and filter
+        lines = [
+            ln.strip()
+            for ln in full_text.splitlines()
+            if ln.strip() and not (ln.startswith("[") and ln.endswith("]"))
+        ]
+        
+        return "\n".join(lines)
+        
     except Exception as e:
-        print("[GENIUS] JSON decode error:", e)
-        return fallback_html_lyrics(html)
-
-    # ----- Locate the lyrics tree -----
-    try:
-        body_children = (
-            data["songPage"]["lyricsData"]["body"]["children"]
-        )
-    except Exception as e:
-        print("[GENIUS] Lyrics JSON structure changed:", e)
-        return fallback_html_lyrics(html)
-
-    # ----- Recursively flatten all nodes into plain text -----
-    full_text = extract_text_from_json(body_children)
-
-    # ----- Clean + filter -----
-    lines = [
-        ln.strip()
-        for ln in full_text.splitlines()
-        if ln.strip() and not (ln.startswith("[") and ln.endswith("]"))
-    ]
-
-    return "\n".join(lines)
+        print(f"  Genius JSON parsing failed: {e}")
+        return _fallback_html_extraction(html)
 
 
-def extract_text_from_json(node):
-    """
-    Recursively flatten all children into plain text
-    preserving the exact order of lyrics.
-    """
-
+def _extract_text_recursive(node):
     if isinstance(node, str):
         return node
-
+    
     if isinstance(node, dict):
-        pieces = []
-        for child in node.get("children", []):
-            pieces.append(extract_text_from_json(child))
+        pieces = [_extract_text_recursive(child) for child in node.get("children", [])]
         return "\n".join(pieces)
-
+    
     if isinstance(node, list):
-        pieces = []
-        for child in node:
-            pieces.append(extract_text_from_json(child))
+        pieces = [_extract_text_recursive(child) for child in node]
         return "\n".join(pieces)
-
+    
     return ""
 
 
-def fallback_html_lyrics(html):
-    """
-    Only used if JSON extraction fails.
-    Still improved over your original fallback.
-    """
-
+def _fallback_html_extraction(html):
     blocks = re.findall(
         r'<div[^>]+data-lyrics-container="true"[^>]*>(.*?)</div>',
         html,
         flags=re.DOTALL | re.IGNORECASE
     )
-
+    
     if not blocks:
         return None
-
+    
+    # Clean HTML tags
     cleaned = []
-    for blk in blocks:
-        blk = re.sub(r'<br\s*/?>', '\n', blk)
-        blk = re.sub(r'<.*?>', '', blk)
-        cleaned.append(blk.strip())
-
+    for block in blocks:
+        block = re.sub(r'<br\s*/?>', '\n', block)
+        block = re.sub(r'<.*?>', '', block)
+        cleaned.append(block.strip())
+    
     text = unescape("\n".join(cleaned))
-
-        # ----- Clean + filter -----
-    raw_lines = [
-        ln.strip()
-        for ln in text.splitlines()
-        if ln.strip() and not (ln.startswith("[") and ln.endswith("]"))
-    ]
-
-    # Remove junk like "168 ContributorsTranslations"
+    
+    # Filter lines
     lines = []
-    for ln in raw_lines:
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        if ln.startswith("[") and ln.endswith("]"):
+            continue
+        # Skip metadata
         low = ln.lower()
         if "contributors" in low or "translations" in low:
             continue
         lines.append(ln)
-
+    
     return "\n".join(lines)
-

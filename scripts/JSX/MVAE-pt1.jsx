@@ -799,6 +799,8 @@ function setSolidLayerColor(layer, hex) {
     }
 }
 
+// Replace the applyBackgroundColors function with this:
+
 function applyBackgroundColors(jobId, colors) {
     if (!colors || colors.length < 2) {
         $.writeln(" Not enough colors for job " + jobId);
@@ -813,13 +815,43 @@ function applyBackgroundColors(jobId, colors) {
         return;
     }
 
-    var layer1 = bgComp.layer("COLOUR 1");
-    var layer2 = bgComp.layer("COLOUR 2");
+    // Find the Gradient layer
+    var gradientLayer = bgComp.layer("Gradient");
+    if (!gradientLayer) {
+        $.writeln(" Gradient layer not found in BACKGROUND " + jobId);
+        return;
+    }
 
-    if (layer1) setSolidLayerColor(layer1, colors[0]);
-    if (layer2) setSolidLayerColor(layer2, colors[1]);
+    // Find the 4-Color Gradient effect
+    var effectParade = gradientLayer.property("ADBE Effect Parade");
+    if (!effectParade) {
+        $.writeln(" No effects on Gradient layer in BACKGROUND " + jobId);
+        return;
+    }
 
-    $.writeln(" Background solids updated for job " + jobId);
+    var gradient4Color = effectParade.property("4-Color Gradient");
+    if (!gradient4Color) {
+        $.writeln(" 4-Color Gradient effect not found on Gradient layer in BACKGROUND " + jobId);
+        return;
+    }
+
+    // Apply colors (Color 1, Color 2, Color 3, Color 4)
+    // Python gives us 2 colors, so: Color1=colors[0], Color2=colors[1], Color3=colors[0], Color4=colors[0]
+    try {
+        var color1Prop = gradient4Color.property("Color 1");
+        var color2Prop = gradient4Color.property("Color 2");
+        var color3Prop = gradient4Color.property("Color 3");
+        var color4Prop = gradient4Color.property("Color 4");
+
+        if (color1Prop) color1Prop.setValue(hexToRGB(colors[0]));
+        if (color2Prop) color2Prop.setValue(hexToRGB(colors[1]));
+        if (color3Prop) color3Prop.setValue(hexToRGB(colors.length > 2 ? colors[2] : colors[0]));
+        if (color4Prop) color4Prop.setValue(hexToRGB(colors[0])); // Repeat dominant color
+
+        $.writeln(" 4-Color Gradient updated for job " + jobId);
+    } catch (e) {
+        $.writeln(" Failed to apply gradient colors for job " + jobId + ": " + e.toString());
+    }
 }
 
 

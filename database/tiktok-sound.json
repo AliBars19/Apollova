@@ -227,7 +227,10 @@
     "sound_title": "Eyes Off You",
     "sound_author": "PRETTYMUCH",
     "genre": "general",
-    "used": false
+    "used": false,
+    "used_in_compilation": [
+      "used_compilation_2026-01-11_13-20-52.mp4"
+    ]
   },
   {
     "video_id": "7504727611973700887",
@@ -445,7 +448,10 @@
     "sound_title": "Collide",
     "sound_author": "Justine Skye",
     "genre": "general",
-    "used": false
+    "used": false,
+    "used_in_compilation": [
+      "used_compilation_2026-01-11_13-20-57.mp4"
+    ]
   },
   {
     "video_id": "7519035850110323990",
@@ -1632,7 +1638,10 @@
     "sound_title": "オリジナル楽曲",
     "sound_author": "ボブ🎧洋楽紹介",
     "genre": "general",
-    "used": false
+    "used": false,
+    "used_in_compilation": [
+      "used_compilation_2026-01-11_13-20-55.mp4"
+    ]
   },
   {
     "video_id": "7505313083099827478",
@@ -5454,7 +5463,10 @@
     "sound_title": "CHIHIRO",
     "sound_author": "Billie Eilish",
     "genre": "general",
-    "used": false
+    "used": false,
+    "used_in_compilation": [
+      "used_compilation_2026-01-11_13-20-59.mp4"
+    ]
   },
   {
     "video_id": "7516356800069963054",
@@ -6673,7 +6685,10 @@
     "sound_title": "It's You",
     "sound_author": "Ali Gatie",
     "genre": "general",
-    "used": false
+    "used": false,
+    "used_in_compilation": [
+      "used_compilation_2026-01-11_13-20-54.mp4"
+    ]
   },
   {
     "video_id": "7531652943079165197",

@@ -45,6 +45,8 @@ if (typeof JSON === "undefined") {
 function main() {
     app.beginUndoGroup("Batch Music Video Build");
 
+    clearAllJobComps();
+
     var jobsFolder = Folder.selectDialog("Select your /jobs folder");
     if (!jobsFolder) return;
 
@@ -799,8 +801,6 @@ function setSolidLayerColor(layer, hex) {
     }
 }
 
-// Replace the applyBackgroundColors function with this:
-
 function applyBackgroundColors(jobId, colors) {
     if (!colors || colors.length < 2) {
         $.writeln(" Not enough colors for job " + jobId);
@@ -863,6 +863,22 @@ function sanitizeFilename(name) {
         .replace(/\s+/g, " ")            // collapse spaces
         .replace(/^\s+|\s+$/g, "");      // trim
 }
-
+function clearAllJobComps() {
+    $.writeln(" Clearing all MV_JOB comps...");
+    var count = 0;
+    
+    for (var i = app.project.numItems; i >= 1; i--) {
+        var it = app.project.item(i);
+        
+        if (it instanceof CompItem && it.name.indexOf("MV_JOB_") === 0) {
+            try {
+                it.remove();
+                count++;
+            } catch (e) {}
+        }
+    }
+    
+    $.writeln(" ✓ Deleted " + count + " old job comps");
+}
 // -----------------------------
 main();

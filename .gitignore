@@ -4,3 +4,5 @@
 spotify_api_data.txt
 .env
 /scripts/__pycache__/
+/database/tiktok-sound.json
+/database/songs.db

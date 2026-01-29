@@ -1,299 +1,93 @@
 # MV-AE-Project-Automation
 
-A fully automated pipeline for creating professional 3D music-video visuals ready for social media distribution. The project integrates audio processing, lyric transcription, color extraction, beat detection, and batch rendering via Adobe After Effects, with optional integration for TikTok sound databases and Spotify API for enhanced song selection.
+Comprehensive automation pipeline to produce short, shareable music-video visuals using Python for data processing and Adobe After Effects for rendering. The project automates audio download and trimming, lyric transcription with timings, color extraction from cover art, beat detection, job packing into JSON, and fully automated AE project wiring and batch rendering.
 
-## Quick Snapshot
+For busy creators and small studios: generate 12 templated music-video jobs, import them into After Effects, and queue MP4 exports with minimal manual work.
 
-- **Language:** Python 3
-- **AE Scripting:** Adobe After Effects ExtendScript (JSX)
-- **Batch Mode:** `jobs/job_001` → `jobs/job_012` by default
-- **Output:** H.264 MP4 files with synced lyrics, beat-synced effects, and color-graded visuals
-- **Integrations:** TikTok sound database, Spotify API, Genius lyrics and images
+**Scope:** audio processing, lyric timing, image color extraction, AE ExtendScript automation, TikTok/Spotify integration for song selection, and batch render queuing.
+
+--
+
+**Quick links**
+
+- Project entry: [main.py](main.py)
+- AE automation script: [scripts/JSX/MVAE-pt1.jsx](scripts/JSX/MVAE-pt1.jsx)
+- Job templates: [jobs/](jobs/)
+- AE templates: [template/](template/)
+
+--
 
 ## Table of Contents
 
-1. [Overview](#1--overview)
-2. [Features](#2--features)
-3. [Architecture](#3--architecture)
-4. [Quick Start (Windows)](#4--quick-start-windows)
-5. [After Effects Setup Checklist](#5--after-effects-setup-checklist)
-6. [File Layout](#6--file-layout)
-7. [Dependencies & Installation](#7--dependencies--installation)
-8. [Usage Examples](#8--usage-examples)
-9. [Database and Song Selection](#9--database-and-song-selection)
-10. [Configuration](#10--configuration)
-11. [Troubleshooting](#11--troubleshooting)
-12. [Contributing & License](#12--contributing--license)
+1. [Getting Started](#getting-started)
+2. [How It Works (High-Level)](#how-it-works-high-level)
+3. [After Effects Template Requirements](#after-effects-template-requirements)
+4. [File Layout & Job Spec](#file-layout--job-spec)
+5. [Install & Dependencies (Windows)](#install--dependencies-windows)
+6. [Usage Examples](#usage-examples)
+7. [Configuration & Tuning](#configuration--tuning)
+8. [Troubleshooting & Tips](#troubleshooting--tips)
+9. [Developer Notes & Contributing](#developer-notes--contributing)
+10. [License](#license)
 
-## 1 — Overview
 
-The MV-AE-Project-Automation is a comprehensive tool for automating the creation of music videos. It combines Python scripting for data processing and Adobe After Effects for visual rendering.
+## Getting Started
 
-### Main Components
+1. Install dependencies (see the Installation section).
+2. Run `python main.py` and follow the prompts to create job folders and `job_data.json` files.
+3. Open the After Effects template in `template/` and run the JSX automation script: `File → Scripts → Run Script File... → scripts/JSX/MVAE-pt1.jsx` and choose the top-level `jobs/` folder.
+4. Inspect the render queue in AE and render MP4 outputs.
 
-- **`main.py`** — Python command-line tool that:
-  - Downloads audio from YouTube or streaming URLs
-  - Trims audio to specified timestamps
-  - Downloads cover images (auto-fetch from Genius or manual)
-  - Extracts dominant colors from cover art
-  - Transcribes lyrics using OpenAI Whisper with word-level timing
-  - Detects beats for synchronization
-  - Generates `job_data.json` with all metadata
 
-- **`scripts/JSX/MVAE-pt1.jsx`** — After Effects ExtendScript that:
-  - Imports job assets into AE project
-  - Wires audio, cover images, and lyrics into templated compositions
-  - Applies extracted colors to gradient effects and backgrounds
-  - Populates text layers with synchronized lyrics
-  - Syncs spotlight effects with beat detection
-  - Automatically queues all jobs for rendering
+## How It Works (High-Level)
 
-- **Database Module** (`database/`):
-  - Manages a TikTok sound database for song selection
-  - Implements cooldowns to avoid reusing recent tracks
-  - Supports genre-based filtering
-  - Integrates with Spotify API for additional metadata
+- Python side (`main.py` + `scripts/`): downloads audio, trims, extracts beats, transcribes lyrics, downloads cover art, extracts colors, and writes `job_data.json` per job folder.
+- Database tools (`database/`): optional automation to pick songs, track cooldowns, and enrich metadata via Spotify.
+- After Effects side (`scripts/JSX/MVAE-pt1.jsx`): imports job assets, duplicates `MAIN` comp, wires layers and text, applies colors and beat-sync keyframes, and queues the final `OUTPUT N` compositions for rendering.
 
-## 2 — Features
 
-✅ **Audio Processing**
-- Download from YouTube/streaming links using `yt-dlp`
-- Trim to custom timestamps (MM:SS format)
-- Beat detection using Librosa
-- Export as WAV for After Effects compatibility
+## After Effects Template Requirements
 
-✅ **Image Processing**
-- Auto-fetch cover images from Genius API
-- Manual URL input as fallback
-- Extract 4 dominant colors using ColorThief
-- Output colors in hex format for AE color grading
+This project assumes a carefully prepared AE template. If your template doesn't match the checklist below, the JSX script will either skip jobs or print helpful log messages.
 
-✅ **Lyric Transcription**
-- Automatic speech-to-text using OpenAI Whisper
-- Word-level timing synchronization
-- Smart line wrapping (25-character limit per line)
-- JSON output with precise timing data
-- Fallback to Genius lyrics if available
+- Top-level project folders (exact names): `Foreground`, `Background`, `OUTPUT1` … `OUTPUT12`.
+- A composition named `MAIN` that serves as the template to duplicate per job.
+- Comps named `OUTPUT 1` … `OUTPUT 12`, `LYRIC FONT 1` … `LYRIC FONT 12`, `Assets 1` … `Assets 12`, and `BACKGROUND 1` … `BACKGROUND 12`.
 
-✅ **After Effects Integration**
-- Batch imports all job assets
-- Auto-wires comps with audio, cover art, and lyrics
-- Applies extracted colors to gradient effects and backgrounds
-- Beat-sync spotlight intensity for dynamic visuals
-- Generates render queue automatically
-- Exports to H.264 MP4 format
+Required layers/properties (exact names used by JSX):
 
-✅ **Job Management**
-- Resume interrupted jobs seamlessly
-- Cache intermediate results
-- JSON-based metadata for transparency and debugging
-- Support for 12 jobs by default (configurable)
+- In each `LYRIC FONT N` comp:
+  - Text layers: `LYRIC PREVIOUS`, `LYRIC CURRENT`, `LYRIC NEXT 1`, `LYRIC NEXT 2` (these layers receive arrays of lyrics via expressions).
+  - An audio layer named `AUDIO` (or any AVLayer with audio; the script will rename the first audio-enabled AVLayer to `AUDIO` if needed).
 
-✅ **Database Integration**
-- TikTok sound database with genre filtering
-- Cooldown system (30 days default) to prevent reuse
-- Spotify API integration for track metadata
-- Automated song picking with `song_picker.py`
+- In each `Assets N` comp:
+  - Topmost text layer for the song title (the script sets its `Source Text`).
+  - One or more placeholder image layers that are clearly album-art targets (layer names or source names containing `cover`, `album`, or `art`). These will be retargeted to the footage item named `COVER`.
 
-## 3 — Architecture
+- In each `BACKGROUND N` comp:
+  - A layer named `Gradient` with the `4-Color Gradient` effect (the script sets `Color 1–4`).
 
-The project follows a modular architecture:
+- In each `OUTPUT N` comp:
+  - A light layer named `Spot Light 2` with an intensity property (the script adds beat-synced keyframes to this intensity).
 
-- **Core Processing** (`scripts/`): Audio, image, lyric, and genius processing modules
-- **Database** (`database/`): Song selection and metadata management
-- **Jobs** (`jobs/`): Per-job data storage and caching
-- **Template** (`template/`): AE project templates
-- **Renders** (`renders/`): Output directory for rendered videos
+Notes:
 
-Workflow:
-1. Song selection (manual or automated via database)
-2. Audio download and trimming
-3. Image fetching and color extraction
-4. Lyric transcription and beat detection
-5. Metadata compilation into `job_data.json`
-6. AE script imports and wires assets
-7. Rendering to MP4
+- Layer/effect/property names are case-sensitive in the JSX script. If you change names, update the JSX accordingly.
+- The JSX script attempts safe fallbacks and emits `$.writeln(...)` log lines for diagnostic troubleshooting.
 
-## 4 — Quick Start (Windows)
 
-### Prerequisites
+## File Layout & Job Spec
 
-- Python 3.8 or later
-- Adobe After Effects (with scripting enabled)
-- `ffmpeg` (must be on system PATH)
-- Optional: Spotify API credentials for enhanced features
+Repository layout (important files):
 
-### Installation
+- `main.py` — interactive job generator and orchestrator.
+- `requirements.txt` — Python deps.
+- `scripts/` — audio/image/lyric processing and `JSX/` AE scripts.
+- `database/` — optional song picker and TikTok DB.
+- `jobs/job_XXX/` — per-job working folders with `job_data.json`.
+- `template/` — After Effects project templates.
 
-**Step 1: Install Python Dependencies**
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-**Step 2: Install ffmpeg**
-
-1. Download from [gyan.dev ffmpeg builds](https://www.gyan.dev/ffmpeg/builds/) (recommended for Windows)
-2. Unzip and add to PATH:
-   ```powershell
-   $env:Path += ";C:\path\to\ffmpeg\bin"
-   ```
-3. Verify:
-   ```powershell
-   ffmpeg -version
-   ```
-
-**Step 3: Configure Database (Optional)**
-
-Edit `database/config.yaml` with your Spotify credentials and TikTok channels.
-
-**Step 4: Run Job Generator**
-
-```powershell
-python main.py
-```
-
-Follow prompts for each job (1–12):
-- Audio URL
-- Start/End times
-- Song title (or auto-fetch)
-
-**Step 5: Open AE and Run Script**
-
-1. Open `template/3D Apple Music.aep`
-2. `File` → `Scripts` → `Run Script File...` → `scripts/JSX/MVAE-pt1.jsx`
-3. Select `jobs` folder when prompted
-4. Review Render Queue and render
-
-## 5 — After Effects Setup Checklist
-
-Your AE template must include:
-
-### Project Folder Structure
-
-- `Foreground` (folder)
-- `Background` (folder)
-- `OUTPUT1` through `OUTPUT12` (folders)
-
-### Required Compositions
-
-- `MAIN` — Template duplicated per job
-- `OUTPUT 1` through `OUTPUT 12` — Final comps
-- `LYRIC FONT 1` through `LYRIC FONT 12` — Lyric displays
-- `Assets 1` through `Assets 12` — Album art/metadata
-- `BACKGROUND 1` through `BACKGROUND 12` — Gradients
-
-### Required Layers & Effects
-
-**In `BACKGROUND N`:**
-- `COLOUR 1` and `COLOUR 2` solid layers
-- `BG GRADIENT` with 4-Color Gradient effect
-
-**In `LYRIC FONT N`:**
-- Text layers: `LYRIC PREVIOUS`, `LYRIC CURRENT`, `LYRIC NEXT 1`, `LYRIC NEXT 2`
-- Audio layer named `AUDIO`
-
-**In `Assets N`:**
-- Text layer for song title
-- Layers for album art (retargeted to `COVER`)
-
-**In `OUTPUT N`:**
-- `Spot Light 2` with Intensity property for beat sync
-
-## 6 — File Layout
-
-```
-MV-AE-Project-Automation/
-├── main.py                          # Main job generator
-├── requirements.txt                 # Python dependencies
-├── spotify_api_data.txt             # Spotify API cache
-├── README.md                        # This file
-├── scripts/
-│   ├── __init__.py
-│   ├── audio_processing.py          # Audio download/trim/beat detection
-│   ├── config.py                    # Configuration management
-│   ├── genius_processing.py         # Genius API integration
-│   ├── image_processing.py          # Image download/color extraction
-│   ├── lyric_processing.py          # Whisper transcription
-│   ├── __pycache__/
-│   └── JSX/
-│       ├── MVAE-pt1.jsx             # AE automation script
-│       └── MVAE-pt2.jsx             # Additional AE utilities
-├── database/
-│   ├── config.yaml                  # DB config and API keys
-│   ├── song_picker.py               # Automated song selection
-│   ├── tiktok_sound_db.py           # TikTok DB management
-│   └── tiktok-sound.json            # TikTok sound database
-├── jobs/
-│   ├── job_001/
-│   │   ├── audio_source.mp3         # Downloaded audio
-│   │   ├── audio_trimmed.wav        # Trimmed WAV
-│   │   ├── cover.png                # Album art
-│   │   ├── lyrics.txt               # Transcribed lyrics (JSON)
-│   │   ├── job_data.json            # Metadata
-│   │   ├── beats.json               # Beat timestamps
-│   │   └── genius_lyrics.txt        # Genius reference
-│   └── ... (job_002 through job_012)
-├── renders/                         # Output MP4s
-├── template/
-│   ├── 3D Apple Music.aep           # AE template
-│   └── ... (logs and backups)
-└── whisper_models/                  # Cached Whisper models
-    └── medium.pt
-```
-
-## 7 — Dependencies & Installation
-
-### Python Packages
-
-| Package | Purpose |
-|---------|---------|
-| `yt-dlp` | Audio download from streaming services |
-| `ffmpeg` | Audio conversion (external) |
-| `pydub` | Audio trimming |
-| `requests` | HTTP requests for images |
-| `Pillow` | Image processing |
-| `colorthief` | Color extraction |
-| `openai-whisper` | Speech-to-text |
-| `librosa` | Beat detection |
-| `rich` | Console output formatting |
-| `pyyaml` | Config parsing |
-| `spotipy` | Spotify API (optional) |
-
-Install all:
-```powershell
-python -m pip install -r requirements.txt
-```
-
-### Whisper Models
-
-- Auto-downloaded on first use
-- Cached in `whisper_models/`
-- `medium` model recommended for balance
-
-## 8 — Usage Examples
-
-### Manual Job Generation
-
-```powershell
-python main.py
-```
-
-Prompts for each job:
-- Audio URL: https://youtube.com/watch?v=...
-- Start time: 00:15
-- End time: 01:45
-- Song title: Artist - Song
-
-### Automated Song Selection
-
-```powershell
-python database/song_picker.py
-```
-
-Select genre, gets random eligible track from TikTok DB.
-
-### Example `job_data.json`
+Job JSON (`job_data.json`) minimal example:
 
 ```json
 {
@@ -301,15 +95,15 @@ Select genre, gets random eligible track from TikTok DB.
   "audio_source": "jobs/job_001/audio_source.mp3",
   "audio_trimmed": "jobs/job_001/audio_trimmed.wav",
   "cover_image": "jobs/job_001/cover.png",
-  "colors": ["#ff5733", "#33ff57", "#3357ff", "#f0ff33"],
+  "colors": ["#0f172a", "#ef4444"],
   "lyrics_file": "jobs/job_001/lyrics.txt",
-  "beats": [0.5, 1.2, 2.1, ...],
+  "beats": [0.5, 1.23, 1.92],
   "job_folder": "jobs/job_001",
   "song_title": "Artist - Song"
 }
 ```
 
-### Example `lyrics.txt`
+Lyric JSON (array of timed lines produced by `scripts/lyric_processing.py`):
 
 ```json
 [
@@ -318,85 +112,88 @@ Select genre, gets random eligible track from TikTok DB.
 ]
 ```
 
-## 9 — Database and Song Selection
 
-### TikTok Sound Database
+## Install & Dependencies (Windows)
 
-- Stores tracks from specified TikTok channels
-- Genre classification
-- Cooldown tracking (30 days default)
+1. Install Python 3.8+ and add it to PATH.
+2. Install required pip packages:
 
-### Spotify Integration
-
-- Fetch track metadata
-- Requires client ID/secret in `config.yaml`
-
-### Using Song Picker
-
-1. Run `python database/song_picker.py`
-2. Select genre
-3. Gets random unused track
-4. Updates DB with usage timestamp
-
-### Managing the Database
-
-- Edit `database/config.yaml` for channels/genres
-- `tiktok-sound.json` contains track data
-- Manual editing supported
-
-## 10 — Configuration
-
-### Adjust Job Count
-
-In `scripts/config.py`:
-```python
-TOTAL_JOBS = 12  # Change as needed
+```powershell
+python -m pip install -r requirements.txt
 ```
 
-### Whisper Model
+3. Install ffmpeg and ensure `ffmpeg` is available on PATH.
 
-In `scripts/lyric_processing.py`:
-```python
-model = whisper.load_model("medium")  # tiny/base/small/medium/large
+Optional (for Spotify/DB features): configure `database/config.yaml` with API credentials.
+
+Common packages used (check `requirements.txt` for exact pins): `yt-dlp`, `pydub`, `librosa`, `colorthief`, `Pillow`, `whisper` or `openai-whisper`, `spotipy`, `pyyaml`, `requests`.
+
+
+## Usage Examples
+
+Generate jobs interactively:
+
+```powershell
+python main.py
 ```
 
-### Database Settings
+After creating jobs, open After Effects, load your AE template project, and run the JSX script:
 
-In `database/config.yaml`:
-- Add TikTok channels
-- Set Spotify credentials
-- Customize genres
+1. File → Scripts → Run Script File...
+2. Select `scripts/JSX/MVAE-pt1.jsx`
+3. When prompted, select the root `jobs/` folder
 
-### Lyric Wrapping
+The script duplicates `MAIN` into `MV_JOB_###`, relinks footage named `AUDIO` and `COVER`, pushes lyrics arrays into lyric layers, sets audio markers, applies colors, applies beat-sync keyframes, and queues `OUTPUT N` comps to the render queue.
 
-In `scripts/lyric_processing.py`:
-```python
-def chunk_text(s, limit=25):  # Adjust limit
-```
+Render queue output path: each job's MP4 is written to `<job root>/renders/` with a sanitized filename.
 
-## 11 — Troubleshooting
 
-### Common Issues
+## Configuration & Tuning
 
-**Audio Download Fails**
-- Check URL validity
-- Update yt-dlp: `pip install --upgrade yt-dlp`
+- `scripts/config.py`: project-wide constants like `TOTAL_JOBS`.
+- `database/config.yaml`: TikTok channels, cooldown days, Spotify credentials.
+- `scripts/lyric_processing.py`: Whisper model selection and line-wrapping limits.
 
-**FFmpeg Errors**
-- Ensure PATH includes ffmpeg
-- Reinstall from gyan.dev
+Performance tips:
 
-**Whisper Slow/Fails**
-- Use smaller model
-- Check disk space (>1GB for models)
+- Use a smaller Whisper model for faster transcription if accuracy tradeoff is acceptable.
+- Pre-generate audio trims and beats to avoid re-processing during AE import.
 
-**AE Script Errors**
-- Verify template structure matches checklist
-- Use Script Debugger for logs
 
-**Colors/Lyrics Not Applying**
-- Check layer names match exactly
-- Ensure effects exist on layers
+## Troubleshooting & Tips
+
+- If JSX reports a missing comp or layer, open AE and verify exact names listed in the AE Template Requirements section.
+- If audio durations appear wrong, confirm the AE project framerate matches the expected frameRate (the script uses comp.frameRate for frame timing).
+- If `ffmpeg` commands fail, run `ffmpeg -version` to ensure PATH and permissions are correct.
+- For slow transcription, consider running `scripts/lyric_processing.py` directly and checking the generated `lyrics.txt` per job.
+
+Common quick fixes:
+
+- Update `yt-dlp`: `python -m pip install -U yt-dlp`
+- Reinstall or add `ffmpeg` to PATH.
+- Re-run `main.py` with `--verbose` (if implemented) to see step-by-step processing.
+
+
+## Developer Notes & Contributing
+
+- The AE JSX script is located at [scripts/JSX/MVAE-pt1.jsx](scripts/JSX/MVAE-pt1.jsx). Modify it only if you change template names or want custom wiring.
+- Keep Python modules small and testable; prefer unit-testing audio/image transforms.
+- When changing layer or comp names in AE, mirror them in the JSX script to avoid breakage.
+
+Contributions: open issues or pull requests describing the feature or bug. Include example job folders for reproducible tests.
+
+
+## License
+
+This repository does not include a license by default. Add a `LICENSE` file if you intend to open-source the project and specify terms.
+
+--
+
+If you'd like, I can:
+
+- add an example `job_data.json` into `jobs/job_001` for a quick trial,
+- or run a short checklist script to validate your AE template names against the JSX expectations.
+
 
 **Renders Missing**
 - Verify `job_data.json` created

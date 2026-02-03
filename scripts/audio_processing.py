@@ -1,60 +1,88 @@
-"""Audio processing with retry logic"""
+"""Audio processing with pytubefix and OAuth login"""
 import os
 import time
-import yt_dlp
+from pytubefix import YouTube
 from pydub import AudioSegment
 import librosa
+import subprocess
 
 
-def download_audio(url, job_folder, max_retries=3):
-    """Download audio from URL with retry logic"""
-    output_path = os.path.join(job_folder, 'audio_source.%(ext)s')
+def download_audio(url, job_folder, max_retries=3, use_oauth=True):
+    """Download audio from YouTube URL using pytubefix with OAuth"""
+    mp3_path = os.path.join(job_folder, 'audio_source.mp3')
     
-    ydl_opts = {
-        'format': 'bestaudio/best',
-        'outtmpl': output_path,
-        'quiet': True,
-        'no_warnings': True,
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-        }],
-        # Anti-403 options
-        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'referer': 'https://www.youtube.com/',
-        'nocheckcertificate': True,
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web'],
-                'skip': ['hls', 'dash']
-            }
-        }
-    }
+    # Check if already downloaded
+    if os.path.exists(mp3_path):
+        print(f"✓ Audio already downloaded")
+        return mp3_path
+    
+    print(f"Downloading audio...")
     
     for attempt in range(max_retries):
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+            # Create YouTube object with OAuth
+            yt = YouTube(
+                url,
+                use_oauth=use_oauth,
+                allow_oauth_cache=True
+            )
             
-            mp3_path = os.path.join(job_folder, 'audio_source.mp3')
+            # Get highest quality audio stream
+            audio_stream = yt.streams.filter(
+                only_audio=True
+            ).order_by('abr').desc().first()
+            
+            if not audio_stream:
+                print(f"❌ No audio streams available")
+                return None
+            
+            # Download to temp file
+            temp_file = os.path.join(job_folder, f"temp_audio_{yt.video_id}.{audio_stream.subtype}")
+            audio_stream.download(output_path=job_folder, filename=f"temp_audio_{yt.video_id}.{audio_stream.subtype}")
+            
+            # Convert to MP3 using ffmpeg
+            cmd = [
+                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", temp_file,
+                "-vn",  # No video
+                "-acodec", "libmp3lame",
+                "-q:a", "2",  # High quality
+                mp3_path
+            ]
+            subprocess.run(cmd, check=True)
+            
+            # Remove temp file
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
             
             if os.path.exists(mp3_path):
+                print(f"✓ Audio downloaded")
                 return mp3_path
+            else:
+                raise Exception("MP3 conversion failed")
                 
         except Exception as e:
-            error_msg = str(e)
+            error_msg = str(e).lower()
             
-            # Check if it's a 403 error specifically
-            if "403" in error_msg or "Forbidden" in error_msg:
-                print(f"⚠️  YouTube blocking download (403 Forbidden)")
-                
-                # Try updating yt-dlp
-                if attempt == 0:
-                    print("💡 Tip: Try updating yt-dlp: pip install -U yt-dlp --break-system-packages")
+            # Handle specific errors
+            if "bot" in error_msg:
+                if attempt == 0 and not use_oauth:
+                    print(f"⚠️  Bot detected, retrying with login...")
+                    return download_audio(url, job_folder, max_retries=max_retries-1, use_oauth=True)
+                else:
+                    print(f"⚠️  Bot detection even with login, waiting 30s...")
+                    time.sleep(30)
+            elif "400" in error_msg:
+                print(f"⚠️  HTTP 400 error, waiting 5s...")
+                time.sleep(5)
+            elif "429" in error_msg:
+                print(f"⚠️  Rate limited, waiting 15s...")
+                time.sleep(15)
             
             if attempt < max_retries - 1:
                 print(f"  Download failed (attempt {attempt + 1}/{max_retries}), retrying...")
-                time.sleep(2 ** attempt)  # Exponential backoff
+                time.sleep(2)
+                continue
             else:
                 print(f"❌ Download failed after {max_retries} attempts: {e}")
                 raise

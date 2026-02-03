@@ -103,6 +103,24 @@ class SongDatabase:
         conn.commit()
         conn.close()
     
+    def mark_song_used(self, song_title):
+        """
+        Mark a song as used (increment use_count and update last_used)
+        Use this when loading cached data without updating the data itself
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE songs 
+            SET last_used = CURRENT_TIMESTAMP,
+                use_count = use_count + 1
+            WHERE LOWER(song_title) = LOWER(?)
+        """, (song_title,))
+        
+        conn.commit()
+        conn.close()
+    
     def update_lyrics(self, song_title, transcribed_lyrics):
         """Update transcribed lyrics for a song"""
         conn = sqlite3.connect(self.db_path)

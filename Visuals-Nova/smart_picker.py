@@ -1,20 +1,28 @@
+#!/usr/bin/env python3
+"""
+Smart Picker for NOVA - Auto-select 12 songs
+"""
 import os
 import sys
+from pathlib import Path
 from scripts.smart_picker import SmartSongPicker
 from scripts.song_database import SongDatabase
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from main import process_single_job
+from main import process_nova_job
 from rich.console import Console
 
 console = Console()
 
+# Shared database path
+SHARED_DB = Path(__file__).parent.parent / "database" / "songs.db"
+
 def main():
-    console.print("[bold cyan]🤖 Smart Song Picker[/bold cyan]\n")
+    console.print("[bold cyan]🤖 Smart Song Picker - NOVA[/bold cyan]\n")
     
-    picker = SmartSongPicker()
+    picker = SmartSongPicker(db_path=str(SHARED_DB))
     stats = picker.get_database_stats()
     
     if stats['total_songs'] == 0:
@@ -26,13 +34,13 @@ def main():
     # Get 12 songs
     songs = picker.get_available_songs(num_songs=12)
     
-    console.print("[cyan]📋 Next 12 songs:[/cyan]")
+    console.print("[cyan]📋 Next 12 songs for NOVA:[/cyan]")
     for i, song in enumerate(songs, 1):
         status = "unused" if song['use_count'] == 1 else f"{song['use_count']}x"
         console.print(f"  {i:2}. {song['song_title']:<45} ({status})")
     
     console.print()
-    response = input("Run these 12 jobs? (Y/n): ").strip().lower()
+    response = input("Run these 12 NOVA jobs? (Y/n): ").strip().lower()
     if response == 'n':
         console.print("Cancelled.")
         return
@@ -64,7 +72,7 @@ def main():
     successful = 0
     for i in range(1, 13):
         try:
-            if process_single_job(i):
+            if process_nova_job(i):
                 successful += 1
         except Exception as e:
             console.print(f"[red]Job {i} failed: {e}[/red]")

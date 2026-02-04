@@ -1,5 +1,11 @@
+#!/usr/bin/env python3
+"""
+Smart Picker - Auto-select 12 songs and run them
+Zero changes to main.py required
+"""
 import os
 import sys
+from pathlib import Path
 from scripts.smart_picker import SmartSongPicker
 from scripts.song_database import SongDatabase
 
@@ -11,10 +17,13 @@ from rich.console import Console
 
 console = Console()
 
+# Shared database path
+SHARED_DB = Path(__file__).parent.parent / "database" / "songs.db"
+
 def main():
     console.print("[bold cyan]🤖 Smart Song Picker[/bold cyan]\n")
     
-    picker = SmartSongPicker()
+    picker = SmartSongPicker(db_path=str(SHARED_DB))
     stats = picker.get_database_stats()
     
     if stats['total_songs'] == 0:

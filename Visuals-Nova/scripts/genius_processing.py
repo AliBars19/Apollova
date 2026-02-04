@@ -4,64 +4,6 @@ import json
 from html import unescape
 
 from scripts.config import Config
-from scripts.image_processing import download_image
-
-
-def fetch_genius_image(song_title, job_folder):
-    if not Config.GENIUS_API_TOKEN:
-        return None
-    
-    if not song_title:
-        return None
-    
-    headers = {"Authorization": f"Bearer {Config.GENIUS_API_TOKEN}"}
-    
-    # Parse "Artist - Song" format
-    artist = None
-    title = song_title.strip()
-    if " - " in song_title:
-        parts = song_title.split(" - ", 1)
-        artist = parts[0].strip()
-        title = parts[1].strip()
-    
-    query = f"{title} {artist}" if artist else title
-    
-    # Search Genius
-    try:
-        response = requests.get(
-            f"{Config.GENIUS_BASE_URL}/search",
-            params={"q": query},
-            headers=headers,
-            timeout=10
-        )
-        response.raise_for_status()
-        data = response.json()
-        
-    except Exception as e:
-        print(f"  Genius search failed: {e}")
-        return None
-    
-    # Get first result
-    hits = data.get("response", {}).get("hits", [])
-    if not hits:
-        print("  No Genius results found")
-        return None
-    
-    # Get song art URL
-    song_info = hits[0]["result"]
-    image_url = song_info.get("song_art_image_url") or song_info.get("header_image_url")
-    
-    if not image_url:
-        print("  No image found in Genius result")
-        return None
-    
-    # Download the image
-    try:
-        return download_image(job_folder, image_url)
-    except Exception as e:
-        print(f"  Failed to download Genius image: {e}")
-        return None
-
 
 def fetch_genius_lyrics(song_title):
     if not Config.GENIUS_API_TOKEN:

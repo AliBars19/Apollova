@@ -5,7 +5,9 @@ from html import unescape
 
 from scripts.config import Config
 
+
 def fetch_genius_lyrics(song_title):
+    """Fetch lyrics from Genius API"""
     if not Config.GENIUS_API_TOKEN:
         return None
     

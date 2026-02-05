@@ -25,14 +25,14 @@ def download_image(job_folder, url, max_retries=3):
             # Save
             img.save(image_path, format="PNG", optimize=True)
             
-            print(f" Image downloaded and processed")
+            print(f"✓ Image downloaded and processed")
             return image_path
             
         except Exception as e:
             if attempt < max_retries - 1:
                 print(f"  Image download failed (attempt {attempt + 1}/{max_retries}), retrying...")
             else:
-                print(f" Image download failed: {e}")
+                print(f"❌ Image download failed: {e}")
                 raise
     
     return None
@@ -75,10 +75,10 @@ def extract_colors(job_folder, color_count=2):
             for r, g, b in palette
         ]
         
-        print(f" Extracted {len(colors_hex)} colors: {', '.join(colors_hex)}")
+        print(f"✓ Extracted {len(colors_hex)} colors: {', '.join(colors_hex)}")
         return colors_hex
         
     except Exception as e:
-        print(f" Color extraction failed: {e}")
+        print(f"❌ Color extraction failed: {e}")
         # Return default colors as fallback
         return ['#ff5733', '#33ff57']

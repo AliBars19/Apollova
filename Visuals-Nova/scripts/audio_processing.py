@@ -3,7 +3,6 @@ import os
 import time
 from pytubefix import YouTube
 from pydub import AudioSegment
-import librosa
 import subprocess
 
 
@@ -139,36 +138,3 @@ def trim_audio(job_folder, start_time, end_time):
     except Exception as e:
         print(f"❌ Audio trimming failed: {e}")
         raise
-
-
-def detect_beats(job_folder):
-    """Detect beats in trimmed audio"""
-    audio_path = os.path.join(job_folder, "audio_trimmed.wav")
-    
-    if not os.path.exists(audio_path):
-        print(f"❌ Trimmed audio not found: {audio_path}")
-        return []
-    
-    try:
-        # Load audio
-        y, sr = librosa.load(audio_path, sr=None)
-        
-        # Detect beats
-        tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
-        beat_times = librosa.frames_to_time(beat_frames, sr=sr)
-        
-        beats_list = [float(t) for t in beat_times]
-        
-        # Extract tempo value
-        if hasattr(tempo, '__len__'):
-            tempo_val = float(tempo[0]) if len(tempo) > 0 else 120.0
-        else:
-            tempo_val = float(tempo)
-        
-        print(f"✓ Detected {len(beats_list)} beats (tempo ≈ {tempo_val:.1f} BPM)")
-        
-        return beats_list
-        
-    except Exception as e:
-        print(f"⚠️  Beat detection failed: {e}")
-        return []

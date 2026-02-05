@@ -1,10 +1,10 @@
 """
-Lyric processing for Visuals NOVA - Word-level timestamps
+Nova Lyric Processing - Word-level timestamp extraction
+For minimal text-only lyric videos with word-by-word reveal
 """
 import os
 import json
 import re
-from rapidfuzz import fuzz
 from stable_whisper import load_model
 
 from scripts.config import Config
@@ -13,10 +13,13 @@ from scripts.genius_processing import fetch_genius_lyrics
 
 def transcribe_audio_nova(job_folder, song_title=None):
     """
-    Transcribe audio with word-level timestamps for NOVA
-    Returns markers with word timing data for word-by-word reveal
+    Transcribe audio with word-level timestamps for Nova style videos
+    
+    Returns dict with:
+        - markers: list of marker objects for JSX
+        - Each marker has: time, text, words[], color, end_time
     """
-    print(f"\n🎵 Transcribing for NOVA (word-level)...")
+    print(f"\n✎ Nova Transcription ({Config.WHISPER_MODEL})...")
     
     audio_path = os.path.join(job_folder, "audio_trimmed.wav")
     
@@ -25,7 +28,7 @@ def transcribe_audio_nova(job_folder, song_title=None):
         return None
     
     try:
-        # Load Whisper model
+        # Load model
         os.makedirs(Config.WHISPER_CACHE_DIR, exist_ok=True)
         
         model = load_model(
@@ -34,61 +37,36 @@ def transcribe_audio_nova(job_folder, song_title=None):
             in_memory=False
         )
         
-        # Transcribe with word timestamps
-        print("  Extracting word timestamps...")
+        # Transcribe with word-level timestamps
         result = model.transcribe(
             audio_path,
+            word_timestamps=True,  # Critical for Nova word-by-word
             vad=True,
             suppress_silence=False,
             regroup=True,
             temperature=0,
-            word_timestamps=True  # KEY: Get word-level timing
         )
         
+        # Fallback if empty
         if not result.segments:
-            print("  Empty transcription, retrying with fallback...")
+            print("  Empty transcription, retrying with fallback params...")
             result = model.transcribe(
                 audio_path,
+                word_timestamps=True,
                 vad=False,
                 suppress_silence=False,
                 regroup=True,
                 temperature=0.5,
-                word_timestamps=True
             )
         
         if not result.segments:
             print("❌ Whisper returned no segments")
-            return None
+            return {"markers": []}
         
-        # Extract segments with word-level data
-        nova_markers = []
-        
-        for seg in result.segments:
-            # Get word timestamps from segment
-            words = []
-            if hasattr(seg, 'words') and seg.words:
-                for w in seg.words:
-                    words.append({
-                        "word": w.word.strip(),
-                        "start": float(w.start),
-                        "end": float(w.end)
-                    })
-            
-            # Create marker entry
-            marker = {
-                "time": float(seg.start),
-                "text": seg.text.strip(),
-                "words": words,
-                "end_time": float(seg.end)
-            }
-            
-            nova_markers.append(marker)
-        
-        print(f"✓ Extracted {len(nova_markers)} segments with word timing")
-        
-        # Fetch and align Genius lyrics if available
+        # Fetch Genius lyrics for text replacement (optional)
+        genius_lines = []
         if song_title and Config.GENIUS_API_TOKEN:
-            print("  Fetching Genius lyrics for alignment...")
+            print("✎ Fetching Genius lyrics for alignment...")
             genius_text = fetch_genius_lyrics(song_title)
             
             if genius_text:
@@ -97,143 +75,118 @@ def transcribe_audio_nova(job_folder, song_title=None):
                 with open(genius_path, "w", encoding="utf-8") as f:
                     f.write(genius_text)
                 
-                print("  Aligning Genius lyrics to Whisper segments...")
-                nova_markers = _align_genius_to_nova_markers(nova_markers, genius_text)
+                genius_lines = [
+                    ln.strip()
+                    for ln in genius_text.splitlines()
+                    if ln.strip() and not (ln.startswith("[") and ln.endswith("]"))
+                ]
         
-        # Remove duplicates
-        nova_markers = _remove_duplicate_nova_markers(nova_markers)
+        # Build Nova markers
+        markers = []
+        genius_idx = 0
         
-        # Add color alternation (white/black flip)
-        for i, marker in enumerate(nova_markers):
-            marker["color"] = "white" if i % 2 == 0 else "black"
+        for seg_idx, segment in enumerate(result.segments):
+            # Get segment text and timing
+            seg_start = float(segment.start)
+            seg_end = float(segment.end)
+            seg_text = segment.text.strip()
+            
+            # Try to use Genius text if available and matches
+            if genius_lines and genius_idx < len(genius_lines):
+                genius_text_clean = _clean_for_match(genius_lines[genius_idx])
+                whisper_text_clean = _clean_for_match(seg_text)
+                
+                # Simple fuzzy match
+                if _simple_match(whisper_text_clean, genius_text_clean):
+                    seg_text = genius_lines[genius_idx]
+                    genius_idx += 1
+            
+            # Extract word timings
+            words = []
+            if hasattr(segment, 'words') and segment.words:
+                for word in segment.words:
+                    words.append({
+                        "word": word.word.strip(),
+                        "start": float(word.start),
+                        "end": float(word.end)
+                    })
+            else:
+                # Fallback: distribute words evenly across segment
+                word_list = seg_text.split()
+                if word_list:
+                    duration = seg_end - seg_start
+                    word_duration = duration / len(word_list)
+                    for i, w in enumerate(word_list):
+                        words.append({
+                            "word": w,
+                            "start": seg_start + (i * word_duration),
+                            "end": seg_start + ((i + 1) * word_duration)
+                        })
+            
+            # Determine color (alternating white/black based on marker index)
+            color = "white" if seg_idx % 2 == 0 else "black"
+            
+            marker = {
+                "time": seg_start,
+                "text": seg_text,
+                "words": words,
+                "color": color,
+                "end_time": seg_end
+            }
+            
+            markers.append(marker)
         
-        # Save markers
-        markers_path = os.path.join(job_folder, "nova_markers.json")
-        with open(markers_path, "w", encoding="utf-8") as f:
-            json.dump(nova_markers, f, indent=2, ensure_ascii=False)
+        # Remove consecutive duplicates
+        markers = _remove_duplicate_markers(markers)
         
-        print(f"✓ NOVA markers saved: {len(nova_markers)} segments")
-        return markers_path
+        print(f"✓ Nova transcription complete: {len(markers)} markers")
+        
+        return {
+            "markers": markers,
+            "total_markers": len(markers)
+        }
         
     except Exception as e:
-        print(f"❌ Transcription failed: {e}")
+        print(f"❌ Nova transcription failed: {e}")
         raise
 
 
-def _align_genius_to_nova_markers(nova_markers, genius_text):
-    """
-    Align Genius lyrics to Whisper segments while preserving word timestamps
-    """
-    # Parse Genius lines
-    genius_lines = [
-        ln.strip()
-        for ln in genius_text.splitlines()
-        if ln.strip() and not (ln.startswith("[") and ln.endswith("]"))
-    ]
-    
-    if not genius_lines:
-        return nova_markers
-    
-    # Clean for matching
-    genius_clean = [
-        re.sub(r"[^a-zA-Z0-9 ]+", " ", ln).lower().strip()
-        for ln in genius_lines
-    ]
-    
-    whisper_clean = [
-        re.sub(r"[^a-zA-Z0-9 ]+", " ", m["text"]).lower().strip()
-        for m in nova_markers
-    ]
-    
-    # Fuzzy match
-    aligned = []
-    last_idx = 0
-    min_score = 65
-    
-    for i, w_clean in enumerate(whisper_clean):
-        if last_idx >= len(genius_clean):
-            # Use Whisper text
-            aligned.append(nova_markers[i]["text"])
-            continue
-        
-        # Find best match
-        best_score = -1
-        best_j = last_idx
-        
-        search_limit = min(len(genius_clean), last_idx + 5)
-        
-        for j in range(last_idx, search_limit):
-            score = fuzz.partial_ratio(w_clean, genius_clean[j])
-            
-            if score > best_score:
-                best_score = score
-                best_j = j
-            
-            if best_score >= 90:
-                break
-        
-        # Use Genius if good match
-        if best_score >= min_score:
-            aligned.append(genius_lines[best_j])
-            last_idx = best_j + 1
-        else:
-            aligned.append(nova_markers[i]["text"])
-    
-    # Apply aligned text (keep word timestamps from Whisper)
-    for i in range(min(len(nova_markers), len(aligned))):
-        nova_markers[i]["text"] = aligned[i]
-    
-    return nova_markers
+def _clean_for_match(text):
+    """Clean text for fuzzy matching"""
+    return re.sub(r"[^a-zA-Z0-9 ]+", "", text).lower().strip()
 
 
-def _remove_duplicate_nova_markers(markers):
-    """Remove consecutive duplicate markers"""
+def _simple_match(a, b, threshold=0.6):
+    """Simple word overlap matching"""
+    words_a = set(a.split())
+    words_b = set(b.split())
+    
+    if not words_a or not words_b:
+        return False
+    
+    overlap = len(words_a & words_b)
+    max_len = max(len(words_a), len(words_b))
+    
+    return (overlap / max_len) >= threshold
+
+
+def _remove_duplicate_markers(markers):
+    """Remove consecutive duplicate text markers"""
     if not markers:
         return markers
     
-    filtered = []
-    prev_clean = None
-    removed = 0
+    filtered = [markers[0]]
+    prev_text_clean = _clean_for_match(markers[0]["text"])
     
-    for marker in markers:
-        text = marker["text"].strip()
+    for marker in markers[1:]:
+        current_text_clean = _clean_for_match(marker["text"])
         
-        if not text:
-            continue
-        
-        # Normalize
-        clean = re.sub(r"[^a-zA-Z0-9 ]+", "", text).lower().strip()
-        
-        if clean and clean == prev_clean:
-            # Duplicate - skip
-            removed += 1
-            continue
-        
-        filtered.append(marker)
-        prev_clean = clean
+        if current_text_clean != prev_text_clean:
+            filtered.append(marker)
+            prev_text_clean = current_text_clean
     
+    removed = len(markers) - len(filtered)
     if removed > 0:
-        print(f"  Removed {removed} duplicate markers")
+        print(f"   Removed {removed} duplicate markers")
     
     return filtered
-
-
-def convert_nova_markers_to_ae_format(markers):
-    """
-    Convert NOVA markers to AE-compatible format for JSX injection
-    Returns list of marker data for AE
-    """
-    ae_markers = []
-    
-    for marker in markers:
-        ae_marker = {
-            "time": marker["time"],
-            "comment": json.dumps({
-                "text": marker["text"],
-                "words": marker["words"],
-                "color": marker["color"]
-            }, ensure_ascii=False)
-        }
-        ae_markers.append(ae_marker)
-    
-    return ae_markers

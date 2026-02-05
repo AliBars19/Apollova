@@ -47,7 +47,7 @@ def check_job_progress(job_folder):
 
 def process_single_job(job_id):
     """Process a single job with database caching"""
-    job_folder = f"jobs/job_{job_id:03}"
+    job_folder = f"Visuals-Aurora/jobs/job_{job_id:03}"
     os.makedirs(job_folder, exist_ok=True)
     
     console.print(f"\n[bold cyan]━━━ Job {job_id:03} ━━━[/bold cyan]")

@@ -2,6 +2,7 @@ import sqlite3
 import random
 from datetime import datetime
 
+
 class SmartSongPicker:
     """Intelligently picks songs from database based on usage patterns"""
     
@@ -13,7 +14,7 @@ class SmartSongPicker:
         Get top songs that haven't been used yet, or least recently used if all have been used
         
         Returns list of dicts with song info, sorted by:
-        1. Never used songs first
+        1. Never used songs first (use_count = 1)
         2. Then by least use_count
         3. Then by oldest last_used
         """
@@ -28,7 +29,7 @@ class SmartSongPicker:
             conn.close()
             return []
         
-        # Check if we have any unused songs
+        # Check if we have any unused songs (use_count = 1 means added but never used in a batch)
         cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1")
         unused_count = cursor.fetchone()[0]
         

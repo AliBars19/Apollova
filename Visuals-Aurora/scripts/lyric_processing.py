@@ -9,12 +9,12 @@ from scripts.genius_processing import fetch_genius_lyrics
 
 
 def transcribe_audio(job_folder, song_title=None):
-    print(f"\n Transcribing audio with Whisper ({Config.WHISPER_MODEL})...")
+    print(f"\n✎ Transcribing audio with Whisper ({Config.WHISPER_MODEL})...")
     
     audio_path = os.path.join(job_folder, "audio_trimmed.wav")
     
     if not os.path.exists(audio_path):
-        print(" Trimmed audio not found")
+        print("❌ Trimmed audio not found")
         return None
     
     try:
@@ -48,7 +48,7 @@ def transcribe_audio(job_folder, song_title=None):
             )
         
         if not result.segments:
-            print(" Whisper returned no segments")
+            print("❌ Whisper returned no segments")
             return None
         
         # Build initial segments
@@ -66,7 +66,7 @@ def transcribe_audio(job_folder, song_title=None):
         # Fetch and align Genius lyrics if available
         genius_text = None
         if song_title and Config.GENIUS_API_TOKEN:
-            print(" Fetching Genius lyrics...")
+            print("✎ Fetching Genius lyrics...")
             genius_text = fetch_genius_lyrics(song_title)
             
             if genius_text:
@@ -76,7 +76,7 @@ def transcribe_audio(job_folder, song_title=None):
                     f.write(genius_text)
                 
                 # Align
-                print(" Aligning Genius lyrics to timestamps...")
+                print("✎ Aligning Genius lyrics to timestamps...")
                 segments = _align_genius_to_whisper(segments, genius_text)
                 
                 # Remove duplicate lyrics
@@ -91,11 +91,11 @@ def transcribe_audio(job_folder, song_title=None):
         with open(lyrics_path, "w", encoding="utf-8") as f:
             json.dump(segments, f, indent=4, ensure_ascii=False)
         
-        print(f" Transcription complete: {len(segments)} segments")
+        print(f"✓ Transcription complete: {len(segments)} segments")
         return lyrics_path
         
     except Exception as e:
-        print(f" Transcription failed: {e}")
+        print(f"❌ Transcription failed: {e}")
         raise
 
 

@@ -78,6 +78,9 @@ def process_single_job(job_id):
     # === Check Database for Cached Parameters ===
     cached_song = song_db.get_song(song_title)
     
+    # Check for Nova-specific cached lyrics (separate from Aurora)
+    cached_nova_lyrics = song_db.get_nova_lyrics(song_title)
+    
     if cached_song:
         console.print(f"[green]✓ Found '{song_title}' in database! Loading cached parameters...[/green]")
         
@@ -85,15 +88,13 @@ def process_single_job(job_id):
         audio_url = cached_song["youtube_url"]
         start_time = cached_song["start_time"]
         end_time = cached_song["end_time"]
-        cached_lyrics = cached_song["transcribed_lyrics"]
         
         console.print(f"[dim]  URL: {audio_url}[/dim]")
         console.print(f"[dim]  Time: {start_time} → {end_time}[/dim]")
-        if cached_lyrics:
-            console.print(f"[dim]  Cached lyrics: {len(cached_lyrics)} segments ⚡[/dim]")
+        if cached_nova_lyrics:
+            console.print(f"[dim]  Cached Nova lyrics: {len(cached_nova_lyrics)} markers ⚡[/dim]")
     else:
         console.print(f"[yellow]'{song_title}' not in database. Creating new entry...[/yellow]")
-        cached_lyrics = None
     
     # === Audio Download ===
     if not stages["audio_downloaded"]:
@@ -155,7 +156,14 @@ def process_single_job(job_id):
     # === Nova Transcription (Word-Level Timestamps) ===
     nova_data_path = os.path.join(job_folder, "nova_data.json")
     
-    if not stages["nova_data_generated"]:
+    # Check if we have cached Nova lyrics
+    if cached_nova_lyrics:
+        console.print(f"[green]✓ Using cached Nova lyrics ({len(cached_nova_lyrics)} markers) ⚡[/green]")
+        nova_data = {"markers": cached_nova_lyrics, "total_markers": len(cached_nova_lyrics)}
+        with open(nova_data_path, "w", encoding="utf-8") as f:
+            json.dump(nova_data, f, indent=4, ensure_ascii=False)
+        transcribed_lyrics = cached_nova_lyrics
+    elif not stages["nova_data_generated"]:
         console.print("[magenta]Transcribing with word-level timestamps...[/magenta]")
         try:
             nova_data = transcribe_audio_nova(job_folder, song_title)
@@ -187,18 +195,21 @@ def process_single_job(job_id):
             start_time=start_time,
             end_time=end_time,
             genius_image_url=None,  # Nova doesn't use images
-            transcribed_lyrics=transcribed_lyrics,
+            transcribed_lyrics=None,  # Don't touch Aurora's column!
             colors=None,  # Nova doesn't use colors from images
             beats=None    # Nova doesn't use beat detection
         )
+        # Save Nova lyrics to separate column
+        if transcribed_lyrics:
+            song_db.update_nova_lyrics(song_title, transcribed_lyrics)
         console.print("[green]✓ Song saved to database for future use[/green]")
     else:
         song_db.mark_song_used(song_title)
         console.print(f"[green]✓ Marked '{song_title}' as used in database[/green]")
         
-        # Update lyrics if we generated new ones
-        if transcribed_lyrics:
-            song_db.update_lyrics(song_title, transcribed_lyrics)
+        # Update Nova lyrics if we generated new ones (don't touch Aurora's column)
+        if transcribed_lyrics and not cached_nova_lyrics:
+            song_db.update_nova_lyrics(song_title, transcribed_lyrics)
     
     # === Save Job Data ===
     job_data = {
@@ -239,7 +250,7 @@ def batch_generate_jobs():
     console.print(f"[dim]📊 Database: {SHARED_DB}[/dim]")
     if stats["total_songs"] > 0:
         console.print(f"[dim]   {stats['total_songs']} songs, "
-                     f"{stats['cached_lyrics']} with cached lyrics[/dim]\n")
+                     f"{stats['cached_lyrics']} with cached Aurora lyrics[/dim]\n")
     
     # Process each job
     total_jobs = Config.TOTAL_JOBS
@@ -256,7 +267,7 @@ def batch_generate_jobs():
     stats = song_db.get_stats()
     console.print(f"\n[magenta]📊 Database now has:[/magenta]")
     console.print(f"   {stats['total_songs']} songs")
-    console.print(f"   {stats['cached_lyrics']} with cached lyrics")
+    console.print(f"   {stats['cached_lyrics']} with cached Aurora lyrics")
     console.print(f"   {stats['total_uses']} total uses")
     
     console.print("\n[magenta]Next step:[/magenta] Run the After Effects JSX script")

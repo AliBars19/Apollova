@@ -1,238 +1,697 @@
-// ===============================
+// -------------------------------------------------------
 // VISUALS NOVA - After Effects Automation
-// Batch process 12 jobs with word-level markers
-// ===============================
+// Modified Aurora template with word-by-word reveal
+// -------------------------------------------------------
+// Usage:
+//  1) Run main_nova.py to build /jobs/job_001 → job_012
+//  2) Open AE project (same Aurora template)
+//  3) File → Scripts → Run Script File → select this file
+//  4) Pick the /jobs folder → items import + comps wired + queued
+// -------------------------------------------------------
 
-(function() {
-    
-    // Configuration
-    var TOTAL_JOBS = 12;
-    var JOBS_DIR = "jobs/";
-    var COMP_NAME_PREFIX = "NOVA_";
-    var FRAME_RATE = 30;
-    var DURATION_SECONDS = 61; // Default duration
-    
-    // ===============================
-    // MAIN
-    // ===============================
-    
-    app.beginUndoGroup("NOVA Batch Process");
-    
-    try {
-        for (var jobId = 1; jobId <= TOTAL_JOBS; jobId++) {
-            processNovaJob(jobId);
+// -----------------------------
+// JSON Polyfill (for older AE)
+// -----------------------------
+if (typeof JSON === "undefined") {
+    JSON = {};
+    JSON.parse = function (s) {
+        try { return eval("(" + s + ")"); }
+        catch (e) { alert("Error parsing JSON: " + e.toString()); return null; }
+    };
+    JSON.stringify = function (obj) {
+        var t = typeof obj;
+        if (t !== "object" || obj === null) {
+            if (t === "string") obj = '"' + obj.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+            return String(obj);
+        } else {
+            var n, v, json = [], arr = (obj && obj.constructor === Array);
+            for (n in obj) {
+                v = obj[n];
+                t = typeof v;
+                if (t === "string") v = '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+                else if (t === "object" && v !== null) v = JSON.stringify(v);
+                json.push((arr ? "" : '"' + n + '":') + String(v));
+            }
+            return (arr ? "[" : "{") + String(json) + (arr ? "]" : "}");
         }
-        alert("✓ NOVA batch processing complete!\n\n" + TOTAL_JOBS + " videos generated.");
-    } catch(e) {
-        alert("Error: " + e.toString());
+    };
+}
+
+
+// -----------------------------
+// MAIN
+// -----------------------------
+function main() {
+    app.beginUndoGroup("NOVA Batch Music Video Build");
+
+    clearAllJobComps();
+
+    var jobsFolder = Folder.selectDialog("Select your /jobs folder (Visuals-Nova/jobs)");
+    if (!jobsFolder) return;
+
+    var subfolders = jobsFolder.getFiles(function (f) { return f instanceof Folder; });
+    var jsonFiles = [];
+    
+    for (var i = 0; i < subfolders.length; i++) {
+        // Look for nova_data.json in each job folder
+        var files = subfolders[i].getFiles("nova_data.json");
+        if (files && files.length > 0) {
+            jsonFiles.push(files[0]);
+        }
     }
     
-    app.endUndoGroup();
-    
-    // ===============================
-    // PROCESS SINGLE JOB
-    // ===============================
-    
-    function processNovaJob(jobId) {
-        var jobFolder = JOBS_DIR + "job_" + padZero(jobId, 3) + "/";
-        var dataPath = jobFolder + "nova_data.json";
+    if (jsonFiles.length === 0) {
+        alert("No nova_data.json files found inside subfolders of " + jobsFolder.fsName);
+        return;
+    }
+
+    for (var j = 0; j < jsonFiles.length; j++) {
+        var novaFile = jsonFiles[j];
+        if (!novaFile.exists || !novaFile.open("r")) continue;
+        var novaText = novaFile.read();
+        novaFile.close();
+        if (!novaText) continue;
+
+        var novaData;
+        try { novaData = JSON.parse(novaText); }
+        catch (e) { alert("Error parsing " + novaFile.name + ": " + e.toString()); continue; }
+
+        // Also read job_data.json for paths and metadata
+        var jobFolder = novaFile.parent;
+        var jobDataFile = new File(jobFolder.fsName + "/job_data.json");
+        var jobData = {};
         
-        // Read job data
-        var jobData = readJSON(dataPath);
-        if (!jobData) {
-            alert("Missing nova_data.json for job " + jobId);
-            return;
+        if (jobDataFile.exists && jobDataFile.open("r")) {
+            var jobDataText = jobDataFile.read();
+            jobDataFile.close();
+            try { jobData = JSON.parse(jobDataText); }
+            catch (e) { $.writeln("Could not parse job_data.json"); }
         }
+
+        // Convert paths to absolute
+        jobData.audio_trimmed = toAbsolute(jobData.audio_trimmed || (jobFolder.fsName + "/audio_trimmed.wav"));
+        jobData.job_folder = jobFolder.fsName.replace(/\\/g, "/");
         
+        // For Nova, we may or may not have cover image (optional)
+        var hasCoverImage = false;
+        if (jobData.cover_image) {
+            jobData.cover_image = toAbsolute(jobData.cover_image);
+            var imageFile = new File(jobData.cover_image);
+            hasCoverImage = imageFile.exists;
+        }
+
+        var jobId = jobData.job_id || (j + 1);
         var songTitle = jobData.song_title || "Unknown";
-        var markers = jobData.markers || [];
-        
-        // Create comp
-        var compName = COMP_NAME_PREFIX + padZero(jobId, 3);
-        var comp = app.project.items.addComp(compName, 1080, 1920, 1, DURATION_SECONDS, FRAME_RATE);
-        
-        // Import audio
-        var audioFile = new File(jobFolder + "audio_trimmed.wav");
-        if (!audioFile.exists) {
-            alert("Audio file not found: " + audioFile.fsName);
-            return;
+        var markers = novaData.markers || [];
+
+        $.writeln("──────── NOVA Job " + jobId + " ────────");
+        $.writeln("Song: " + songTitle);
+        $.writeln("Markers: " + markers.length);
+
+        var audioFile = new File(jobData.audio_trimmed);
+        if (!audioFile.exists) { 
+            alert("Missing audio:\n" + jobData.audio_trimmed); 
+            continue; 
+        }
+
+        // Duplicate MAIN template
+        var template = findCompByName("MAIN");
+        var newComp = template.duplicate();
+        newComp.name = "NOVA_JOB_" + ("00" + jobId).slice(-3);
+
+        // Move duplicated comp into correct OUTPUT folder
+        moveItemToFolder(newComp, "OUTPUT" + jobId);
+
+        // Relink audio (and cover if exists)
+        if (hasCoverImage) {
+            relinkFootageInsideOutputFolder(jobId, jobData.audio_trimmed, jobData.cover_image);
+            autoResizeCoverInOutput(jobId);
+        } else {
+            relinkAudioOnly(jobId, jobData.audio_trimmed);
         }
         
-        var audioItem = app.project.importFile(new ImportOptions(audioFile));
-        var audioLayer = comp.layers.add(audioItem);
-        audioLayer.name = "AUDIO";
+        setWorkAreaToAudioDuration(jobId);
+        setOutputWorkAreaToAudio(jobId, jobData.audio_trimmed);
+        updateSongTitle(jobId, songTitle);
+
+        // Lyrics - NOVA STYLE (word-by-word)
+        var lyricComp;
+        try { lyricComp = findCompByName("LYRIC FONT " + jobId); }
+        catch (e) { $.writeln("Missing LYRIC FONT " + jobId + " – skipping lyrics."); continue; }
+
+        // Add markers to AUDIO layer in LYRIC FONT comp
+        addNovaMarkersToAudio(lyricComp, markers);
         
-        // Add markers to audio layer
-        addMarkersToLayer(audioLayer, markers);
-        
-        // Create background solid (will flip color via expression)
-        var bgLayer = comp.layers.addSolid([1, 1, 1], "BACKGROUND", 1080, 1920, 1, DURATION_SECONDS);
-        bgLayer.moveToEnd();
-        
-        // Apply color flip expression to background
-        var bgColorProp = bgLayer.property("ADBE Effect Parade").addProperty("ADBE Fill");
-        var bgColorControl = bgColorProp.property("ADBE Fill-0002");
-        bgColorControl.expression = getColorFlipExpression();
-        
-        // Create text layer
-        var textLayer = comp.layers.addText("");
-        textLayer.name = "LYRIC_TEXT";
-        
-        // Style text (Brat font aesthetic)
-        var textProp = textLayer.property("ADBE Text Properties").property("ADBE Text Document");
-        var textDoc = textProp.value;
-        textDoc.fontSize = 72;
-        textDoc.font = "ArialMT"; // Use Arial Bold in practice
-        textDoc.fillColor = [1, 1, 1]; // Will be controlled by expression
-        textDoc.justification = ParagraphJustification.CENTER_JUSTIFY;
-        textDoc.applyStroke = false;
-        textProp.setValue(textDoc);
-        
-        // Apply word-by-word reveal expression
-        var sourceTextProp = textLayer.property("ADBE Text Properties").property("ADBE Text Document");
-        sourceTextProp.expression = getWordRevealExpression();
-        
-        // Apply color flip to text fill
-        var textFillProp = textLayer.property("ADBE Text Properties").property("ADBE Text Animators").addProperty("ADBE Text Animator");
-        textFillProp.name = "Color Flip";
-        var fillColorProp = textFillProp.property("ADBE Text Animator Properties").addProperty("ADBE Text Fill Color");
-        fillColorProp.property("ADBE Text Fill Color").expression = getColorFlipExpression();
-        
-        // Position text center
-        var textPosition = textLayer.property("ADBE Transform Group").property("ADBE Position");
-        textPosition.setValue([540, 960]);
-        
+        // Inject word-by-word segments into LYRIC_TEXT expression
+        injectNovaSegmentsToLyricText(lyricComp, markers);
+
+        // Add markers to BACKGROUND comp for color flip
+        try {
+            var bgComp = findCompByName("BACKGROUND " + jobId);
+            addNovaMarkersToBackground(bgComp, markers);
+            $.writeln("Added markers to BACKGROUND " + jobId);
+        } catch (e) {
+            $.writeln("BACKGROUND " + jobId + " not found – skipping color flip markers.");
+        }
+
+        // Album art (optional for Nova)
+        if (hasCoverImage) {
+            try {
+                var assetsComp = findCompByName("Assets " + jobId);
+                retargetImageLayersToFootage(assetsComp, "COVER");
+                $.writeln("Album art retargeted for job " + jobId);
+            } catch (e) {
+                $.writeln("Assets " + jobId + " not found – skipping album art.");
+            }
+        }
+
         // Add to render queue
-        var renderItem = app.project.renderQueue.items.add(comp);
-        renderItem.outputModule(1).file = new File(jobFolder + compName + ".mp4");
+        try {
+            var renderPath = addToRenderQueue(
+                findCompByName("OUTPUT " + jobId),
+                jobData.job_folder,
+                jobId,
+                songTitle,
+                "_NOVA"
+            );
+            $.writeln("Queued: " + renderPath);
+        } catch (e) {
+            $.writeln("Render queue error: " + e);
+        }
     }
+
+    alert("NOVA batch processing complete!\n\nReview in Render Queue, then click Render.");
+    app.endUndoGroup();
+}
+
+
+// -----------------------------
+// NOVA-SPECIFIC FUNCTIONS
+// -----------------------------
+
+function addNovaMarkersToAudio(lyricComp, markers) {
+    // Add simple markers to AUDIO layer (just for timing triggers)
+    // LYRIC CONTROL reads these to determine current segment index
     
-    // ===============================
-    // ADD MARKERS
-    // ===============================
-    
-    function addMarkersToLayer(layer, markers) {
-        var markerProp = layer.property("ADBE Marker");
+    var audio = ensureAudioLayer(lyricComp);
+    if (!audio) { 
+        $.writeln("No AUDIO layer found in " + lyricComp.name); 
+        return; 
+    }
+
+    var mk = audio.property("Marker");
+    if (!mk) { 
+        $.writeln("No Marker prop on AUDIO in " + lyricComp.name); 
+        return; 
+    }
+
+    // Clear existing markers
+    for (var i = mk.numKeys; i >= 1; i--) mk.removeKey(i);
+
+    var lastT = 0;
+    for (var k = 0; k < markers.length; k++) {
+        var m = markers[k];
+        var t = Number(m.time) || 0;
         
-        for (var i = 0; i < markers.length; i++) {
-            var m = markers[i];
-            var markerTime = m.time;
-            var markerComment = m.comment;
-            
-            var newMarker = new MarkerValue(markerComment);
-            markerProp.setValueAtTime(markerTime, newMarker);
+        // Simple marker - just the segment text as comment (like Aurora)
+        var markerComment = m.text || ("Segment " + (k + 1));
+        
+        try {
+            mk.setValueAtTime(t, new MarkerValue(markerComment));
+            if (t > lastT) lastT = t;
+        } catch (e) {
+            $.writeln("Marker set failed at " + t + "s: " + e.toString());
         }
     }
     
-    // ===============================
-    // EXPRESSIONS
-    // ===============================
-    
-    function getWordRevealExpression() {
-        return [
-            "var audio = thisComp.layer(\"AUDIO\");",
-            "var m = audio.marker;",
-            "",
-            "if (m.numKeys === 0) {",
-            "    \"\";",
-            "} else {",
-            "    var t = time;",
-            "    var idx = 0;",
-            "",
-            "    for (var k = 1; k <= m.numKeys; k++) {",
-            "        if (t >= m.key(k).time) idx = k;",
-            "        else break;",
-            "    }",
-            "",
-            "    if (idx === 0) {",
-            "        \"\";",
-            "    } else {",
-            "        var markerData;",
-            "        try {",
-            "            markerData = JSON.parse(m.key(idx).comment);",
-            "        } catch(e) {",
-            "            m.key(idx).comment;",
-            "        }",
-            "",
-            "        if (!markerData || !markerData.words || markerData.words.length === 0) {",
-            "            markerData.text || m.key(idx).comment;",
-            "        } else {",
-            "            var words = markerData.words;",
-            "            var output = \"\";",
-            "            ",
-            "            for (var i = 0; i < words.length; i++) {",
-            "                var word = words[i];",
-            "                ",
-            "                if (t >= word.start) {",
-            "                    output += word.word;",
-            "                    if (i < words.length - 1) output += \" \";",
-            "                } else {",
-            "                    break;",
-            "                }",
-            "            }",
-            "            ",
-            "            output;",
-            "        }",
-            "    }",
-            "}"
-        ].join("\n");
+    if (lastT + 2 > lyricComp.duration) {
+        lyricComp.duration = lastT + 2;
     }
     
-    function getColorFlipExpression() {
-        return [
-            "var audio = thisComp.layer(\"AUDIO\");",
-            "var m = audio.marker;",
-            "",
-            "if (m.numKeys === 0) {",
-            "    [1, 1, 1, 1];",
-            "} else {",
-            "    var t = time;",
-            "    var idx = 0;",
-            "",
-            "    for (var k = 1; k <= m.numKeys; k++) {",
-            "        if (t >= m.key(k).time) idx = k;",
-            "        else break;",
-            "    }",
-            "",
-            "    if (idx === 0) {",
-            "        [1, 1, 1, 1];",
-            "    } else {",
-            "        var markerData;",
-            "        try {",
-            "            markerData = JSON.parse(m.key(idx).comment);",
-            "        } catch(e) {",
-            "            markerData = { color: (idx % 2 === 1) ? \"white\" : \"black\" };",
-            "        }",
-            "",
-            "        if (markerData.color === \"black\") {",
-            "            [0, 0, 0, 1];",
-            "        } else {",
-            "            [1, 1, 1, 1];",
-            "        }",
-            "    }",
-            "}"
-        ].join("\n");
+    $.writeln("Added " + markers.length + " markers to AUDIO in " + lyricComp.name);
+}
+
+
+function addNovaMarkersToBackground(bgComp, markers) {
+    // Add markers to the audio layer in BACKGROUND comp for color flip
+    // Find the audio layer (might be named "audio_trimmed.wav" or "AUDIO")
+    
+    var audioLayer = null;
+    
+    // Try common audio layer names
+    var audioNames = ["audio_trimmed.wav", "AUDIO", "audio"];
+    for (var n = 0; n < audioNames.length; n++) {
+        try {
+            audioLayer = bgComp.layer(audioNames[n]);
+            if (audioLayer) break;
+        } catch (e) {}
     }
     
-    // ===============================
-    // HELPERS
-    // ===============================
+    // Fallback: find first layer with audio
+    if (!audioLayer) {
+        for (var i = 1; i <= bgComp.numLayers; i++) {
+            var L = bgComp.layer(i);
+            if (L instanceof AVLayer && L.hasAudio) {
+                audioLayer = L;
+                break;
+            }
+        }
+    }
     
-    function readJSON(filePath) {
-        var file = new File(filePath);
-        if (!file.exists) return null;
+    if (!audioLayer) {
+        $.writeln("No audio layer found in " + bgComp.name);
+        return;
+    }
+
+    var mk = audioLayer.property("Marker");
+    if (!mk) {
+        $.writeln("No Marker property on audio layer in " + bgComp.name);
+        return;
+    }
+
+    // Clear existing markers
+    for (var i = mk.numKeys; i >= 1; i--) mk.removeKey(i);
+
+    // Add markers at each segment time
+    for (var k = 0; k < markers.length; k++) {
+        var m = markers[k];
+        var t = Number(m.time) || 0;
+        var markerComment = m.text || ("Segment " + (k + 1));
         
-        file.open("r");
-        var content = file.read();
-        file.close();
+        try {
+            mk.setValueAtTime(t, new MarkerValue(markerComment));
+        } catch (e) {
+            $.writeln("Background marker set failed at " + t + "s: " + e.toString());
+        }
+    }
+    
+    $.writeln("Added " + markers.length + " markers to audio in " + bgComp.name);
+}
+
+
+function injectNovaSegmentsToLyricText(lyricComp, markers) {
+    // Find LYRIC_TEXT layer
+    var lyricText = lyricComp.layer("LYRIC_TEXT");
+    if (!lyricText) {
+        $.writeln("LYRIC_TEXT layer not found in " + lyricComp.name);
+        return;
+    }
+
+    var sourceText = lyricText.property("Source Text");
+    if (!sourceText) {
+        $.writeln("No Source Text property on LYRIC_TEXT");
+        return;
+    }
+
+    // Build the segments array string
+    var segmentsArray = buildSegmentsArrayString(markers);
+    
+    // Build the full Nova expression with line-break logic
+    var novaExpression = [
+        '// NOVA: Word-by-word reveal with line breaks',
+        '// Segments injected by JSX',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '',
+        'if (segIndex < 1 || segIndex > segments.length) {',
+        '    "";',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var output = "";',
+        '    var lineLen = 0;',
+        '    var maxLen = 25;',
+        '',
+        '    for (var i = 0; i < seg.words.length; i++) {',
+        '        if (time >= seg.words[i].s) {',
+        '            var word = seg.words[i].w;',
+        '            if (output.length > 0) {',
+        '                // Check if adding this word exceeds line length',
+        '                if (lineLen + 1 + word.length > maxLen) {',
+        '                    output += "\\r";  // Line break',
+        '                    lineLen = 0;',
+        '                } else {',
+        '                    output += " ";',
+        '                    lineLen += 1;',
+        '                }',
+        '            }',
+        '            output += word;',
+        '            lineLen += word.length;',
+        '        }',
+        '    }',
+        '    output;',
+        '}'
+    ].join('\n');
+
+    // Apply the expression
+    sourceText.expression = novaExpression;
+    
+    $.writeln("Injected Nova word-reveal expression with " + markers.length + " segments");
+}
+
+
+function buildSegmentsArrayString(markers) {
+    // Build: var segments = [{t:0.18, words:[{w:"It",s:0.18},{w:"ain't",s:0.64}]}, ...];
+    
+    var segmentStrings = [];
+    
+    for (var i = 0; i < markers.length; i++) {
+        var m = markers[i];
+        var t = Number(m.time) || 0;
+        var words = m.words || [];
         
-        return eval("(" + content + ")");
+        // Build words array string
+        var wordStrings = [];
+        for (var j = 0; j < words.length; j++) {
+            var word = words[j];
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+            var s = Number(word.start) || 0;
+            wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
+        }
+        
+        var segStr = '{t:' + t.toFixed(3) + ',words:[' + wordStrings.join(',') + ']}';
+        segmentStrings.push(segStr);
     }
     
-    function padZero(num, size) {
-        var s = num + "";
-        while (s.length < size) s = "0" + s;
-        return s;
+    return 'var segments = [\n    ' + segmentStrings.join(',\n    ') + '\n];';
+}
+
+
+function relinkAudioOnly(jobId, audioPath) {
+    var outputFolder = findFolderByName("OUTPUT" + jobId);
+    if (!outputFolder) {
+        $.writeln("OUTPUT" + jobId + " folder not found.");
+        return;
+    }
+
+    var assetsFolder = null;
+    for (var i = 1; i <= outputFolder.numItems; i++) {
+        var it = outputFolder.item(i);
+        if (it instanceof FolderItem && it.name.toUpperCase().indexOf("ASSETS OT") === 0) {
+            assetsFolder = it;
+            break;
+        }
+    }
+
+    if (!assetsFolder) {
+        $.writeln("Assets folder not found inside OUTPUT" + jobId);
+        return;
+    }
+
+    var audioFile = new File(audioPath);
+    if (!audioFile.exists) {
+        $.writeln("Missing audio file for job " + jobId);
+        return;
+    }
+
+    for (var i = 1; i <= assetsFolder.numItems; i++) {
+        var it = assetsFolder.item(i);
+        if (!(it instanceof FootageItem)) continue;
+
+        var name = (it.name || "").toUpperCase();
+        if (name === "AUDIO") {
+            try {
+                it.replace(audioFile);
+                $.writeln("Replaced AUDIO inside Assets OT" + jobId);
+            } catch (e) {
+                $.writeln("Could not relink AUDIO: " + e.toString());
+            }
+        }
+    }
+}
+
+
+// -----------------------------
+// SHARED HELPER FUNCTIONS
+// -----------------------------
+
+function findFolderByName(name) {
+    for (var i = 1; i <= app.project.numItems; i++) {
+        var it = app.project.item(i);
+        if (it instanceof FolderItem && it.name === name) return it;
+    }
+    return null;
+}
+
+function moveItemToFolder(item, folderName) {
+    var folder = findFolderByName(folderName);
+    if (folder) item.parentFolder = folder;
+}
+
+function toAbsolute(p) {
+    if (!p) return p;
+    p = p.replace(/\\/g, "/");
+
+    var f = new File(p);
+    if (f.exists) {
+        return f.fsName.replace(/\\/g, "/");
+    }
+
+    var base = File($.fileName).parent.parent.parent;
+    f = new File(base.fsName + "/" + p);
+
+    return f.fsName.replace(/\\/g, "/");
+}
+
+function findCompByName(name) {
+    for (var i = 1; i <= app.project.numItems; i++) {
+        var it = app.project.item(i);
+        if (it instanceof CompItem && it.name === name) return it;
+    }
+    throw new Error("Comp not found: " + name);
+}
+
+function ensureAudioLayer(comp) {
+    var lyr = comp.layer("AUDIO");
+    if (lyr) return lyr;
+
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var L = comp.layer(i);
+        if (L instanceof AVLayer && L.hasAudio) {
+            try { L.name = "AUDIO"; } catch (_) {}
+            return L;
+        }
+    }
+    return null;
+}
+
+function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
+    var outputFolder = findFolderByName("OUTPUT" + jobId);
+    if (!outputFolder) {
+        $.writeln("OUTPUT" + jobId + " folder not found.");
+        return;
+    }
+
+    var assetsFolder = null;
+    for (var i = 1; i <= outputFolder.numItems; i++) {
+        var it = outputFolder.item(i);
+        if (it instanceof FolderItem && it.name.toUpperCase().indexOf("ASSETS OT") === 0) {
+            assetsFolder = it;
+            break;
+        }
+    }
+
+    if (!assetsFolder) {
+        $.writeln("Assets folder not found inside OUTPUT" + jobId);
+        return;
+    }
+
+    var audioFile = new File(audioPath);
+    var coverFile = new File(coverPath);
+
+    for (var i = 1; i <= assetsFolder.numItems; i++) {
+        var it = assetsFolder.item(i);
+        if (!(it instanceof FootageItem)) continue;
+
+        var name = (it.name || "").toUpperCase();
+        try {
+            if (name === "AUDIO" && audioFile.exists) {
+                it.replace(audioFile);
+                $.writeln("Replaced AUDIO inside Assets OT" + jobId);
+            } else if (name === "COVER" && coverFile.exists) {
+                it.replace(coverFile);
+                $.writeln("Replaced COVER inside Assets OT" + jobId);
+            }
+        } catch (e) {
+            $.writeln("Could not relink " + it.name + ": " + e.toString());
+        }
+    }
+}
+
+function autoResizeCoverInOutput(jobId) {
+    var comp;
+    try { comp = findCompByName("OUTPUT " + jobId); }
+    catch(_) { return; }
+
+    var cw = comp.width;
+    var ch = comp.height;
+
+    for (var i = 1; i <= comp.numLayers; i++) {
+        var lyr = comp.layer(i);
+        if (!(lyr instanceof AVLayer)) continue;
+
+        var isCover = (lyr.name.toUpperCase() === "COVER") ||
+                      (lyr.source && lyr.source.name.toUpperCase() === "COVER");
+        if (!isCover) continue;
+
+        var lw = lyr.source.width;
+        var lh = lyr.source.height;
+        if (!lw || !lh) continue;
+
+        var scaleW = cw / lw;
+        var scaleH = ch / lh;
+        var scale = 100 * Math.max(scaleW, scaleH);
+
+        try {
+            lyr.property("Scale").setValue([scale, scale]);
+            lyr.property("Position").setValue([cw / 2, ch / 2]);
+        } catch(e) {}
+
+        $.writeln("Auto-Fill scaled COVER in " + comp.name);
+        return;
+    }
+}
+
+function setWorkAreaToAudioDuration(jobId) {
+    var comp;
+    try { comp = findCompByName("LYRIC FONT " + jobId); }
+    catch(_) { return; }
+
+    var audio = ensureAudioLayer(comp);
+    if (!audio || !audio.source || !audio.source.duration) return;
+
+    var dur = audio.source.duration;
+    comp.duration = dur;
+    comp.workAreaStart = 0;
+    comp.workAreaDuration = dur;
+}
+
+function setOutputWorkAreaToAudio(jobId, audioPath) {
+    var comp;
+    try { comp = findCompByName("OUTPUT " + jobId); }
+    catch(_) { return; }
+
+    var imported = app.project.importFile(new ImportOptions(new File(audioPath)));
+    var dur = imported.duration;
+    imported.remove();
+
+    comp.duration = dur;
+    comp.workAreaStart = 0;
+    comp.workAreaDuration = dur;
+}
+
+function updateSongTitle(jobId, titleText) {
+    if (!titleText) return;
+    try {
+        var assetsComp = findCompByName("Assets " + jobId);
+        if (!assetsComp) return;
+
+        var targetTextLayer = null;
+        for (var i = 1; i <= assetsComp.numLayers; i++) {
+            var lyr = assetsComp.layer(i);
+            var txtProp = lyr.property("Source Text");
+            if (txtProp) { targetTextLayer = lyr; break; }
+        }
+
+        if (!targetTextLayer) return;
+
+        var txtProp = targetTextLayer.property("Source Text");
+        var doc = txtProp.value;
+        doc.text = String(titleText);
+        txtProp.setValue(doc);
+
+        $.writeln("Set song title for job " + jobId + ": " + titleText);
+    } catch (e) {
+        $.writeln("Could not update title for job " + jobId + ": " + e.toString());
+    }
+}
+
+function retargetImageLayersToFootage(assetComp, footageName) {
+    if (!assetComp) return;
+
+    var coverFootage = null;
+    for (var i = 1; i <= app.project.numItems; i++) {
+        var it = app.project.item(i);
+        if (it instanceof FootageItem && it.name.toUpperCase() === footageName.toUpperCase()) {
+            coverFootage = it;
+            break;
+        }
+    }
+
+    if (!coverFootage) return;
+
+    for (var L = 1; L <= assetComp.numLayers; L++) {
+        var lyr = assetComp.layer(L);
+        if (!(lyr instanceof AVLayer)) continue;
+        if (!(lyr.source instanceof FootageItem)) continue;
+
+        var srcName = (lyr.source.name || "").toLowerCase();
+        var lyrName = (lyr.name || "").toLowerCase();
+
+        var isCoverLayer =
+            lyrName === "cover" ||
+            lyrName.indexOf("album") !== -1 ||
+            lyrName.indexOf("art") !== -1 ||
+            srcName === "cover" ||
+            srcName.indexOf("album") !== -1;
+
+        if (!isCoverLayer) continue;
+
+        try {
+            lyr.replaceSource(coverFootage, false);
+            $.writeln("Replaced album art layer in " + assetComp.name);
+        } catch (e) {
+            $.writeln("Could not replace layer: " + e.toString());
+        }
+    }
+}
+
+function addToRenderQueue(comp, jobFolder, jobId, songTitle, suffix) {
+    var root = new Folder(jobFolder).parent;
+    var renderDir = new Folder(root.fsName + "/renders");
+    if (!renderDir.exists) renderDir.create();
+
+    var safeTitle = sanitizeFilename(songTitle);
+    var filename = safeTitle + (suffix || "") + ".mp4";
+    var outPath = renderDir.fsName + "/" + filename;
+    var outFile = new File(outPath);
+
+    var rq = app.project.renderQueue.items.add(comp);
+    try { rq.applyTemplate("Best Settings"); } catch (e) {}
+    try { rq.outputModule(1).applyTemplate("H.264"); } catch (e) {}
+    rq.outputModule(1).file = outFile;
+
+    return outPath;
+}
+
+function sanitizeFilename(name) {
+    if (!name) return "untitled";
+    return String(name)
+        .replace(/[\/\\:*?"<>|]/g, "")
+        .replace(/\s+/g, " ")
+        .replace(/^\s+|\s+$/g, "");
+}
+
+function clearAllJobComps() {
+    $.writeln("Clearing all NOVA_JOB comps...");
+    var count = 0;
+    
+    for (var i = app.project.numItems; i >= 1; i--) {
+        var it = app.project.item(i);
+        
+        if (it instanceof CompItem && it.name.indexOf("NOVA_JOB_") === 0) {
+            try {
+                it.remove();
+                count++;
+            } catch (e) {}
+        }
     }
     
-})();
+    $.writeln("Deleted " + count + " old NOVA job comps");
+}
+
+// -----------------------------
+// RUN
+// -----------------------------
+main();

@@ -91,10 +91,10 @@ class SongDatabase:
                 youtube_url = excluded.youtube_url,
                 start_time = excluded.start_time,
                 end_time = excluded.end_time,
-                genius_image_url = excluded.genius_image_url,
-                transcribed_lyrics = excluded.transcribed_lyrics,
-                colors = excluded.colors,
-                beats = excluded.beats,
+                genius_image_url = COALESCE(excluded.genius_image_url, genius_image_url),
+                transcribed_lyrics = COALESCE(excluded.transcribed_lyrics, transcribed_lyrics),
+                colors = COALESCE(excluded.colors, colors),
+                beats = COALESCE(excluded.beats, beats),
                 last_used = CURRENT_TIMESTAMP,
                 use_count = use_count + 1
         """, (song_title, youtube_url, start_time, end_time, 
@@ -122,7 +122,7 @@ class SongDatabase:
         conn.close()
     
     def update_lyrics(self, song_title, transcribed_lyrics):
-        """Update transcribed lyrics for a song"""
+        """Update transcribed lyrics for a song (Aurora format)"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -131,6 +131,40 @@ class SongDatabase:
         cursor.execute("""
             UPDATE songs 
             SET transcribed_lyrics = ?, last_used = CURRENT_TIMESTAMP
+            WHERE LOWER(song_title) = LOWER(?)
+        """, (lyrics_json, song_title))
+        
+        conn.commit()
+        conn.close()
+    
+    def get_nova_lyrics(self, song_title):
+        """Get Nova-format lyrics from database (word-level timestamps)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT nova_lyrics FROM songs 
+            WHERE LOWER(song_title) = LOWER(?)
+        """, (song_title,))
+        
+        row = cursor.fetchone()
+        conn.close()
+        
+        if not row or not row[0]:
+            return None
+        
+        return json.loads(row[0])
+    
+    def update_nova_lyrics(self, song_title, nova_lyrics):
+        """Update Nova-format lyrics for a song (word-level timestamps)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        lyrics_json = json.dumps(nova_lyrics)
+        
+        cursor.execute("""
+            UPDATE songs 
+            SET nova_lyrics = ?, last_used = CURRENT_TIMESTAMP
             WHERE LOWER(song_title) = LOWER(?)
         """, (lyrics_json, song_title))
         

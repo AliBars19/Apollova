@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Music Video Automation - Improved Version
-Same functionality, better code quality and efficiency
+Apollova Onyx - Music Video Automation
+Hybrid template: Word-by-word lyrics (left) + Spinning disc with album art (right)
 """
 import os
 import json
@@ -9,9 +9,9 @@ from pathlib import Path
 from rich.console import Console
 
 from scripts.config import Config
-from scripts.audio_processing import download_audio, trim_audio, detect_beats
+from scripts.audio_processing import download_audio, trim_audio
 from scripts.image_processing import download_image, extract_colors
-from scripts.lyric_processing import transcribe_audio
+from scripts.lyric_processing_onyx import transcribe_audio_onyx
 from scripts.song_database import SongDatabase
 
 console = Console()
@@ -26,9 +26,8 @@ def check_job_progress(job_folder):
     stages = {
         "audio_downloaded": os.path.exists(os.path.join(job_folder, "audio_source.mp3")),
         "audio_trimmed": os.path.exists(os.path.join(job_folder, "audio_trimmed.wav")),
-        "lyrics_transcribed": os.path.exists(os.path.join(job_folder, "lyrics.txt")),
+        "onyx_data_created": os.path.exists(os.path.join(job_folder, "onyx_data.json")),
         "image_downloaded": os.path.exists(os.path.join(job_folder, "cover.png")),
-        "beats_generated": os.path.exists(os.path.join(job_folder, "beats.json")),
         "job_complete": os.path.exists(os.path.join(job_folder, "job_data.json"))
     }
     
@@ -47,10 +46,10 @@ def check_job_progress(job_folder):
 
 def process_single_job(job_id):
     """Process a single job with database caching"""
-    job_folder = f"Visuals-Aurora/jobs/job_{job_id:03}"
+    job_folder = f"jobs/job_{job_id:03}"
     os.makedirs(job_folder, exist_ok=True)
     
-    console.print(f"\n[bold cyan]━━━ Job {job_id:03} ━━━[/bold cyan]")
+    console.print(f"\n[bold magenta]━━━ Onyx Job {job_id:03} ━━━[/bold magenta]")
     
     stages, job_data = check_job_progress(job_folder)
     
@@ -58,9 +57,8 @@ def process_single_job(job_id):
     if stages["job_complete"] and all([
         stages["audio_downloaded"],
         stages["audio_trimmed"],
-        stages["lyrics_transcribed"],
-        stages["image_downloaded"],
-        stages["beats_generated"]
+        stages["onyx_data_created"],
+        stages["image_downloaded"]
     ]):
         song_title = job_data.get("song_title", "Unknown")
         console.print(f"[green]✓ Job {job_id:03} already complete: {song_title}[/green]")
@@ -75,29 +73,29 @@ def process_single_job(job_id):
     
     # === Check Database for Cached Parameters ===
     cached_song = song_db.get_song(song_title)
+    cached_onyx_lyrics = None
     
     if cached_song:
-        console.print(f"[green]✓ Found '{song_title}' in database! Loading cached parameters...[/green]")
+        console.print(f"[green]✓ Found '{song_title}' in database![/green]")
         
         # Use cached parameters
         audio_url = cached_song["youtube_url"]
         start_time = cached_song["start_time"]
         end_time = cached_song["end_time"]
         cached_image_url = cached_song["genius_image_url"]
-        cached_lyrics = cached_song["transcribed_lyrics"]
         cached_colors = cached_song["colors"]
-        cached_beats = cached_song["beats"]
+        
+        # Get Onyx-specific lyrics
+        cached_onyx_lyrics = song_db.get_onyx_lyrics(song_title)
         
         console.print(f"[dim]  URL: {audio_url}[/dim]")
         console.print(f"[dim]  Time: {start_time} → {end_time}[/dim]")
-        if cached_lyrics:
-            console.print(f"[dim]  Cached lyrics: {len(cached_lyrics)} segments ⚡[/dim]")
+        if cached_onyx_lyrics:
+            console.print(f"[dim]  Cached Onyx lyrics: {len(cached_onyx_lyrics.get('markers', []))} markers ⚡[/dim]")
     else:
         console.print(f"[yellow]'{song_title}' not in database. Creating new entry...[/yellow]")
         cached_image_url = None
-        cached_lyrics = None
         cached_colors = None
-        cached_beats = None
     
     # === Audio Download ===
     if not stages["audio_downloaded"]:
@@ -116,10 +114,9 @@ def process_single_job(job_id):
     else:
         audio_path = os.path.join(job_folder, "audio_source.mp3")
         console.print("✓ Audio already downloaded")
-        # Get URL from job data, cache, or skip (not critical for existing jobs)
         if cached_song:
             audio_url = cached_song["youtube_url"]
-        elif "audio_source" in job_data:
+        elif "youtube_url" in job_data:
             audio_url = job_data.get("youtube_url", "unknown")
         else:
             audio_url = "unknown"
@@ -150,7 +147,6 @@ def process_single_job(job_id):
     else:
         trimmed_path = os.path.join(job_folder, "audio_trimmed.wav")
         console.print("✓ Audio already trimmed")
-        # Get timing from job data or cache
         if cached_song:
             start_time = cached_song["start_time"]
             end_time = cached_song["end_time"]
@@ -158,49 +154,7 @@ def process_single_job(job_id):
             start_time = job_data.get("start_time", "00:00")
             end_time = job_data.get("end_time", "01:01")
     
-    # === Beat Detection ===
-    beats_path = os.path.join(job_folder, "beats.json")
-    if cached_beats:
-        console.print("[green]✓ Using cached beat data[/green]")
-        beats = cached_beats
-        with open(beats_path, "w", encoding="utf-8") as f:
-            json.dump(beats, f, indent=4)
-    elif not stages["beats_generated"]:
-        console.print("[cyan]Detecting beats...[/cyan]")
-        beats = detect_beats(job_folder)
-        with open(beats_path, "w", encoding="utf-8") as f:
-            json.dump(beats, f, indent=4)
-    else:
-        with open(beats_path, "r", encoding="utf-8") as f:
-            beats = json.load(f)
-        console.print("✓ Beats already detected")
-    
-    # === Lyrics Transcription ===
-    if cached_lyrics:
-        console.print(f"[green]✓ Using cached transcription ({len(cached_lyrics)} segments) ⚡[/green]")
-        lyrics_path = os.path.join(job_folder, "lyrics.txt")
-        with open(lyrics_path, "w", encoding="utf-8") as f:
-            json.dump(cached_lyrics, f, indent=4, ensure_ascii=False)
-    elif not stages["lyrics_transcribed"]:
-        console.print("[cyan]Transcribing lyrics (this will be cached)...[/cyan]")
-        try:
-            lyrics_path = transcribe_audio(job_folder, song_title)
-            # Load the transcribed lyrics to cache them
-            with open(lyrics_path, "r", encoding="utf-8") as f:
-                transcribed_lyrics = json.load(f)
-        except Exception as e:
-            console.print(f"[yellow]Warning: Transcription failed: {e}[/yellow]")
-            lyrics_path = os.path.join(job_folder, "lyrics.txt")
-            transcribed_lyrics = []
-            with open(lyrics_path, "w", encoding="utf-8") as f:
-                json.dump([], f)
-    else:
-        lyrics_path = os.path.join(job_folder, "lyrics.txt")
-        with open(lyrics_path, "r", encoding="utf-8") as f:
-            transcribed_lyrics = json.load(f)
-        console.print("✓ Lyrics already transcribed")
-    
-    # === Image Download ===
+    # === Image Download (Required for Onyx disc) ===
     if cached_image_url:
         console.print("[green]✓ Using cached image URL[/green]")
         if not stages["image_downloaded"]:
@@ -218,7 +172,6 @@ def process_single_job(job_id):
             image_path = fetch_genius_image(song_title, job_folder)
             
             if image_path:
-                # Get the image URL if we fetched it
                 genius_image_url = "fetched_from_genius"
             else:
                 console.print("[yellow]Couldn't auto-fetch image from Genius[/yellow]")
@@ -249,9 +202,38 @@ def process_single_job(job_id):
         console.print("[cyan]Extracting colors...[/cyan]")
         colors = extract_colors(job_folder)
     
+    # === Onyx Lyrics (Word-by-word with timestamps) ===
+    onyx_data_path = os.path.join(job_folder, "onyx_data.json")
+    
+    if cached_onyx_lyrics:
+        console.print(f"[green]✓ Using cached Onyx transcription ({len(cached_onyx_lyrics.get('markers', []))} markers) ⚡[/green]")
+        onyx_data = cached_onyx_lyrics
+        # Add colors and cover image path to onyx_data
+        onyx_data["colors"] = colors
+        onyx_data["cover_image"] = "cover.png"
+        with open(onyx_data_path, "w", encoding="utf-8") as f:
+            json.dump(onyx_data, f, indent=4, ensure_ascii=False)
+    elif not stages["onyx_data_created"]:
+        console.print("[cyan]Transcribing with word-level timestamps (Onyx style)...[/cyan]")
+        try:
+            onyx_data = transcribe_audio_onyx(job_folder, song_title)
+            # Add colors and cover image path
+            onyx_data["colors"] = colors
+            onyx_data["cover_image"] = "cover.png"
+            with open(onyx_data_path, "w", encoding="utf-8") as f:
+                json.dump(onyx_data, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            console.print(f"[yellow]Warning: Transcription failed: {e}[/yellow]")
+            onyx_data = {"markers": [], "colors": colors, "cover_image": "cover.png"}
+            with open(onyx_data_path, "w", encoding="utf-8") as f:
+                json.dump(onyx_data, f)
+    else:
+        with open(onyx_data_path, "r", encoding="utf-8") as f:
+            onyx_data = json.load(f)
+        console.print("✓ Onyx data already created")
+    
     # === Save to Database ===
     if not cached_song:
-        # New song - add to database (sets use_count = 1)
         console.print(f"[cyan]💾 Saving '{song_title}' to database...[/cyan]")
         song_db.add_song(
             song_title=song_title,
@@ -259,20 +241,23 @@ def process_single_job(job_id):
             start_time=start_time,
             end_time=end_time,
             genius_image_url=genius_image_url if 'genius_image_url' in locals() else None,
-            transcribed_lyrics=transcribed_lyrics if 'transcribed_lyrics' in locals() else None,
+            transcribed_lyrics=None,  # Don't overwrite Aurora's lyrics
             colors=colors,
-            beats=beats
+            beats=None  # Onyx doesn't use beats
         )
-        console.print("[green]✓ Song saved to database for future use[/green]")
+        console.print("[green]✓ Song saved to database[/green]")
     else:
-        # Cached song - mark as used (increment use_count)
         song_db.mark_song_used(song_title)
-        console.print(f"[green]✓ Marked '{song_title}' as used in database[/green]")
+        console.print(f"[green]✓ Marked '{song_title}' as used[/green]")
         
-        # Update any new data that wasn't cached
-        song_db.update_colors_and_beats(song_title, colors, beats)
-        if 'transcribed_lyrics' in locals() and transcribed_lyrics:
-            song_db.update_lyrics(song_title, transcribed_lyrics)
+        # Update colors if needed
+        if colors and not cached_colors:
+            song_db.update_colors_and_beats(song_title, colors, None)
+    
+    # Save Onyx-specific lyrics separately
+    if onyx_data and onyx_data.get("markers"):
+        song_db.update_onyx_lyrics(song_title, onyx_data)
+        console.print("[green]✓ Onyx lyrics saved to database[/green]")
     
     # === Save Job Data ===
     job_data = {
@@ -281,26 +266,26 @@ def process_single_job(job_id):
         "audio_trimmed": trimmed_path.replace("\\", "/"),
         "cover_image": image_path.replace("\\", "/"),
         "colors": colors,
-        "lyrics_file": lyrics_path.replace("\\", "/"),
-        "beats": beats,
+        "onyx_data": onyx_data_path.replace("\\", "/"),
         "job_folder": job_folder.replace("\\", "/"),
         "song_title": song_title,
         "youtube_url": audio_url,
         "start_time": start_time,
-        "end_time": end_time
+        "end_time": end_time,
+        "marker_count": len(onyx_data.get("markers", []))
     }
     
     json_path = os.path.join(job_folder, "job_data.json")
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(job_data, f, indent=4)
     
-    console.print(f"[green]✓ Job {job_id:03} complete[/green]")
+    console.print(f"[green]✓ Onyx Job {job_id:03} complete[/green]")
     return True
 
 
 def batch_generate_jobs():
     """Generate all jobs with database caching"""
-    console.print("\n[bold cyan]🎬 Music Video Automation[/bold cyan]\n")
+    console.print("\n[bold magenta]💿 Apollova Onyx - Music Video Automation[/bold magenta]\n")
     
     # Validate config
     Config.validate()
@@ -323,7 +308,7 @@ def batch_generate_jobs():
         if not success:
             console.print(f"\n[yellow]⚠️  Job {job_id} had errors, continuing...[/yellow]")
     
-    console.print("\n[bold green]✅ All jobs processed![/bold green]")
+    console.print("\n[bold green]✅ All Onyx jobs processed![/bold green]")
     
     # Show updated stats
     stats = song_db.get_stats()
@@ -333,7 +318,7 @@ def batch_generate_jobs():
     console.print(f"   {stats['total_uses']} total uses")
     
     console.print("\n[cyan]Next step:[/cyan] Run the After Effects JSX script")
-    console.print("[dim]File → Scripts → Run Script File... → scripts/automateMV_batch.jsx[/dim]\n")
+    console.print("[dim]File → Scripts → Run Script File... → scripts/automateMV_onyx.jsx[/dim]\n")
 
 
 if __name__ == "__main__":

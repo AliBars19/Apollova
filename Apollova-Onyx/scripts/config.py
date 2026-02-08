@@ -12,7 +12,7 @@ class Config:
     
     # Whisper Settings
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
-    WHISPER_CACHE_DIR = "Visuals-Aurora/whisper_models"
+    WHISPER_CACHE_DIR = "whisper_models"
     
     # Job Settings
     TOTAL_JOBS = int(os.getenv("TOTAL_JOBS", "12"))
@@ -21,7 +21,7 @@ class Config:
     MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
     
     # File Paths
-    JOBS_DIR = "Visuals-Aurora/jobs"
+    JOBS_DIR = "jobs"
     
     # Audio Settings
     AUDIO_FORMAT = "mp3"

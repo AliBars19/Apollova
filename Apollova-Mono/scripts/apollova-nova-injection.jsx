@@ -189,8 +189,7 @@ function main() {
                     outputComp,
                     jobData.job_folder,
                     jobId,
-                    songTitle,
-                    "_NOVA"
+                    songTitle
                 );
                 $.writeln("Queued: " + renderPath);
             } else {

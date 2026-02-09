@@ -88,22 +88,16 @@ function main() {
             catch (e) { $.writeln("Could not parse job_data.json"); }
         }
 
-        // FIXED: Use job folder path directly instead of toAbsolute
-        // The audio file is always in the job folder
-        var audioPath = jobFolder.fsName + "/audio_trimmed.wav";
-        jobData.audio_trimmed = audioPath.replace(/\\/g, "/");
+        // Convert paths to absolute
+        jobData.audio_trimmed = toAbsolute(jobData.audio_trimmed || (jobFolder.fsName + "/audio_trimmed.wav"));
         jobData.job_folder = jobFolder.fsName.replace(/\\/g, "/");
         
         // For Nova, we may or may not have cover image (optional)
         var hasCoverImage = false;
         if (jobData.cover_image) {
-            // Check if cover exists in job folder
-            var coverPath = jobFolder.fsName + "/cover.png";
-            var imageFile = new File(coverPath);
-            if (imageFile.exists) {
-                jobData.cover_image = coverPath.replace(/\\/g, "/");
-                hasCoverImage = true;
-            }
+            jobData.cover_image = toAbsolute(jobData.cover_image);
+            var imageFile = new File(jobData.cover_image);
+            hasCoverImage = imageFile.exists;
         }
 
         var jobId = jobData.job_id || (j + 1);
@@ -113,7 +107,6 @@ function main() {
         $.writeln("──────── NOVA Job " + jobId + " ────────");
         $.writeln("Song: " + songTitle);
         $.writeln("Markers: " + markers.length);
-        $.writeln("Audio path: " + jobData.audio_trimmed);
 
         var audioFile = new File(jobData.audio_trimmed);
         if (!audioFile.exists) { 
@@ -189,7 +182,8 @@ function main() {
                     outputComp,
                     jobData.job_folder,
                     jobId,
-                    songTitle
+                    songTitle,
+                    "_NOVA"
                 );
                 $.writeln("Queued: " + renderPath);
             } else {
@@ -234,17 +228,16 @@ function addNovaMarkersToAudio(lyricComp, markers) {
         var t = Number(m.time) || 0;
         
         // Simple marker - just the segment text as comment (like Aurora)
-        var markerText = m.text || ("Segment " + (k + 1));
+        var markerComment = m.text || ("Segment " + (k + 1));
         
         try {
-            mk.setValueAtTime(t, new MarkerValue(markerText));
+            mk.setValueAtTime(t, new MarkerValue(markerComment));
             if (t > lastT) lastT = t;
         } catch (e) {
             $.writeln("Marker set failed at " + t + "s: " + e.toString());
         }
     }
     
-    // Extend comp if needed
     if (lastT + 2 > lyricComp.duration) {
         lyricComp.duration = lastT + 2;
     }
@@ -254,164 +247,240 @@ function addNovaMarkersToAudio(lyricComp, markers) {
 
 
 function addNovaMarkersToBackground(bgComp, markers) {
-    // Add markers to the audio layer in BACKGROUND comp for color flip expression
+    // Add markers to the audio layer in BACKGROUND comp for color flip
+    // Find the audio layer (might be named "audio_trimmed.wav" or "AUDIO")
     
-    if (!bgComp) {
-        $.writeln("BACKGROUND comp not provided");
-        return;
+    var audioLayer = null;
+    
+    // Try common audio layer names
+    var audioNames = ["audio_trimmed.wav", "AUDIO", "audio"];
+    for (var n = 0; n < audioNames.length; n++) {
+        try {
+            audioLayer = bgComp.layer(audioNames[n]);
+            if (audioLayer) break;
+        } catch (e) {}
     }
     
-    // Find audio layer in BACKGROUND comp
-    var audio = null;
-    
-    // Try different names
-    try { audio = bgComp.layer("audio_trimmed.wav"); } catch(e) {}
-    if (!audio) {
-        try { audio = bgComp.layer("AUDIO"); } catch(e) {}
-    }
-    if (!audio) {
-        // Find any audio layer
+    // Fallback: find first layer with audio
+    if (!audioLayer) {
         for (var i = 1; i <= bgComp.numLayers; i++) {
-            var lyr = bgComp.layer(i);
-            if (lyr instanceof AVLayer && lyr.hasAudio) {
-                audio = lyr;
+            var L = bgComp.layer(i);
+            if (L instanceof AVLayer && L.hasAudio) {
+                audioLayer = L;
                 break;
             }
         }
     }
     
-    if (!audio) {
+    if (!audioLayer) {
         $.writeln("No audio layer found in " + bgComp.name);
         return;
     }
-    
-    var mk = audio.property("Marker");
+
+    var mk = audioLayer.property("Marker");
     if (!mk) {
         $.writeln("No Marker property on audio layer in " + bgComp.name);
         return;
     }
-    
+
     // Clear existing markers
     for (var i = mk.numKeys; i >= 1; i--) mk.removeKey(i);
-    
-    // Add simple markers for each segment (just need count for color flip)
+
+    // Add markers at each segment time
     for (var k = 0; k < markers.length; k++) {
         var m = markers[k];
         var t = Number(m.time) || 0;
+        var markerComment = m.text || ("Segment " + (k + 1));
         
         try {
-            mk.setValueAtTime(t, new MarkerValue("Segment " + (k + 1)));
+            mk.setValueAtTime(t, new MarkerValue(markerComment));
         } catch (e) {
-            $.writeln("Background marker failed at " + t + "s: " + e.toString());
+            $.writeln("Background marker set failed at " + t + "s: " + e.toString());
         }
     }
     
-    $.writeln("Added " + markers.length + " markers to BACKGROUND audio for color flip");
+    $.writeln("Added " + markers.length + " markers to audio in " + bgComp.name);
 }
 
 
 function injectNovaSegmentsToLyricText(lyricComp, markers) {
-    // Build segments array and inject into LYRIC_TEXT or similar text layer
-    
-    // Find the lyric text layer
-    var lyricLayer = null;
-    var possibleNames = ["LYRIC_TEXT", "LYRIC TEXT", "LYRIC CURRENT", "Lyrics", "Text"];
-    
-    for (var n = 0; n < possibleNames.length; n++) {
-        try {
-            lyricLayer = lyricComp.layer(possibleNames[n]);
-            if (lyricLayer) break;
-        } catch(e) {}
-    }
-    
-    // If not found by name, find first text layer
-    if (!lyricLayer) {
-        for (var i = 1; i <= lyricComp.numLayers; i++) {
-            var lyr = lyricComp.layer(i);
-            if (lyr instanceof TextLayer) {
-                lyricLayer = lyr;
-                break;
-            }
-        }
-    }
-    
-    if (!lyricLayer) {
-        $.writeln("No text layer found in " + lyricComp.name);
+    // Find LYRIC_TEXT layer
+    var lyricText = lyricComp.layer("LYRIC_TEXT");
+    if (!lyricText) {
+        $.writeln("LYRIC_TEXT layer not found in " + lyricComp.name);
         return;
     }
+
+    var sourceText = lyricText.property("Source Text");
+    if (!sourceText) {
+        $.writeln("No Source Text property on LYRIC_TEXT");
+        return;
+    }
+
+    // Build the segments array string (now includes end times for tag display)
+    var segmentsArray = buildSegmentsArrayString(markers);
     
-    // Build the segments array for the expression
-    var segmentsCode = "var segments = [\n";
+    // Build the full Nova expression with:
+    // - Line break every 4 words
+    // - @apollova-mono tag between segments
+    // - Word count tracking for blur
+    var novaExpression = [
+        '// NOVA: Word-by-word reveal with motion blur support',
+        '// Segments injected by JSX',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var tag = "@apollova-mono";',
+        'var wordsPerLine = 4;',
+        '',
+        '// Check if we are in the gap between segments (show tag)',
+        'var inGap = false;',
+        'if (segIndex >= 1 && segIndex <= segments.length) {',
+        '    var seg = segments[segIndex - 1];',
+        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.5;',
+        '    if (time > lastWordTime && segIndex < segments.length) {',
+        '        var nextSegStart = segments[segIndex].t;',
+        '        if (time < nextSegStart - 0.1) {',
+        '            inGap = true;',
+        '        }',
+        '    }',
+        '}',
+        '',
+        'if (inGap) {',
+        '    tag;',
+        '} else if (segIndex < 1 || segIndex > segments.length) {',
+        '    "";',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var output = "";',
+        '    var wordCount = 0;',
+        '',
+        '    for (var i = 0; i < seg.words.length; i++) {',
+        '        if (time >= seg.words[i].s) {',
+        '            var word = seg.words[i].w;',
+        '            if (wordCount > 0) {',
+        '                // Line break every 4 words',
+        '                if (wordCount % wordsPerLine === 0) {',
+        '                    output += "\\r";',
+        '                } else {',
+        '                    output += " ";',
+        '                }',
+        '            }',
+        '            output += word;',
+        '            wordCount++;',
+        '        }',
+        '    }',
+        '    output;',
+        '}'
+    ].join('\n');
+
+    // Apply the expression
+    sourceText.expression = novaExpression;
     
-    for (var k = 0; k < markers.length; k++) {
-        var m = markers[k];
-        var text = escapeForExpression(m.text || "");
-        var wordsArr = m.words || [];
-        
-        // Build words array
-        var wordsCode = "[";
-        for (var w = 0; w < wordsArr.length; w++) {
-            var word = wordsArr[w];
-            var wordText = escapeForExpression(word.word || "");
-            var wordStart = Number(word.start) || 0;
-            var wordEnd = Number(word.end) || 0;
-            
-            wordsCode += '{word:"' + wordText + '",start:' + wordStart.toFixed(3) + ',end:' + wordEnd.toFixed(3) + '}';
-            if (w < wordsArr.length - 1) wordsCode += ",";
+    // Add Directional Blur effect for motion blur trail
+    addMotionBlurEffect(lyricComp, lyricText, markers);
+    
+    $.writeln("Injected Nova word-reveal expression with " + markers.length + " segments");
+}
+
+
+function addMotionBlurEffect(lyricComp, lyricText, markers) {
+    // Add Directional Blur effect to LYRIC_TEXT layer
+    var effects = lyricText.property("Effects");
+    
+    // Check if Directional Blur already exists
+    var dirBlur = null;
+    for (var i = 1; i <= effects.numProperties; i++) {
+        if (effects.property(i).matchName === "ADBE Motion Blur") {
+            dirBlur = effects.property(i);
+            break;
         }
-        wordsCode += "]";
+    }
+    
+    // Add if doesn't exist
+    if (!dirBlur) {
+        try {
+            dirBlur = effects.addProperty("ADBE Motion Blur");
+        } catch (e) {
+            $.writeln("Could not add Directional Blur effect: " + e.toString());
+            return;
+        }
+    }
+    
+    // Set direction to horizontal (from left) - 0 degrees
+    try {
+        dirBlur.property("Direction").setValue(0);
+    } catch (e) {}
+    
+    // Build segments array for blur expression
+    var segmentsArray = buildSegmentsArrayString(markers);
+    
+    // Add expression to Blur Length that spikes when new word appears
+    var blurExpression = [
+        '// Motion blur on word reveal',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var maxBlur = 50;',
+        'var fadeTime = 0.15;  // How fast blur fades out',
+        '',
+        'if (segIndex < 1 || segIndex > segments.length) {',
+        '    0;',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var blur = 0;',
+        '',
+        '    // Find the most recently revealed word',
+        '    for (var i = 0; i < seg.words.length; i++) {',
+        '        var wordStart = seg.words[i].s;',
+        '        var timeSinceWord = time - wordStart;',
+        '        if (timeSinceWord >= 0 && timeSinceWord < fadeTime) {',
+        '            // Word just appeared - calculate blur',
+        '            var wordBlur = maxBlur * (1 - timeSinceWord / fadeTime);',
+        '            if (wordBlur > blur) blur = wordBlur;',
+        '        }',
+        '    }',
+        '    blur;',
+        '}'
+    ].join('\n');
+    
+    try {
+        dirBlur.property("Blur Length").expression = blurExpression;
+        $.writeln("Added motion blur expression to LYRIC_TEXT");
+    } catch (e) {
+        $.writeln("Could not set blur expression: " + e.toString());
+    }
+}
+
+
+function buildSegmentsArrayString(markers) {
+    // Build: var segments = [{t:0.18, words:[{w:"It",s:0.18},{w:"ain't",s:0.64}]}, ...];
+    
+    var segmentStrings = [];
+    
+    for (var i = 0; i < markers.length; i++) {
+        var m = markers[i];
+        var t = Number(m.time) || 0;
+        var words = m.words || [];
         
-        segmentsCode += '    {text:"' + text + '",time:' + (Number(m.time) || 0).toFixed(3) + ',words:' + wordsCode + '}';
-        if (k < markers.length - 1) segmentsCode += ",";
-        segmentsCode += "\n";
+        // Build words array string
+        var wordStrings = [];
+        for (var j = 0; j < words.length; j++) {
+            var word = words[j];
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+            var s = Number(word.start) || 0;
+            wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
+        }
+        
+        var segStr = '{t:' + t.toFixed(3) + ',words:[' + wordStrings.join(',') + ']}';
+        segmentStrings.push(segStr);
     }
     
-    segmentsCode += "];";
-    
-    // Build the full expression
-    var fullExpression = segmentsCode + '\n\n' +
-        '// Find current segment based on time\n' +
-        'var audio = thisComp.layer("AUDIO") || thisComp.layer("audio_trimmed.wav");\n' +
-        'var currentSeg = null;\n' +
-        'for (var i = segments.length - 1; i >= 0; i--) {\n' +
-        '    if (time >= segments[i].time) {\n' +
-        '        currentSeg = segments[i];\n' +
-        '        break;\n' +
-        '    }\n' +
-        '}\n\n' +
-        '// Word-by-word reveal\n' +
-        'var output = "";\n' +
-        'if (currentSeg && currentSeg.words) {\n' +
-        '    for (var w = 0; w < currentSeg.words.length; w++) {\n' +
-        '        if (time >= currentSeg.words[w].start) {\n' +
-        '            output += currentSeg.words[w].word + " ";\n' +
-        '        }\n' +
-        '    }\n' +
-        '}\n' +
-        'output.replace(/\\s+$/, "");';
-    
-    // Apply expression to Source Text
-    var txtProp = lyricLayer.property("Source Text");
-    if (txtProp) {
-        txtProp.expression = fullExpression;
-        $.writeln("Injected word-by-word expression into " + lyricLayer.name);
-    }
+    return 'var segments = [\n    ' + segmentStrings.join(',\n    ') + '\n];';
 }
 
-
-function escapeForExpression(str) {
-    if (!str) return "";
-    return String(str)
-        .replace(/\\/g, "\\\\")
-        .replace(/"/g, '\\"')
-        .replace(/\r/g, "\\r")
-        .replace(/\n/g, "\\n");
-}
-
-
-// -----------------------------
-// AUDIO/FOOTAGE FUNCTIONS
-// -----------------------------
 
 function relinkAudioOnly(jobId, audioPath) {
     var outputFolder = findFolderByName("OUTPUT" + jobId);
@@ -420,7 +489,6 @@ function relinkAudioOnly(jobId, audioPath) {
         return;
     }
 
-    // Find the nested "Assets OT" folder inside
     var assetsFolder = null;
     for (var i = 1; i <= outputFolder.numItems; i++) {
         var it = outputFolder.item(i);
@@ -437,7 +505,7 @@ function relinkAudioOnly(jobId, audioPath) {
 
     var audioFile = new File(audioPath);
     if (!audioFile.exists) {
-        $.writeln("Audio file not found: " + audioPath);
+        $.writeln("Missing audio file for job " + jobId);
         return;
     }
 
@@ -446,8 +514,7 @@ function relinkAudioOnly(jobId, audioPath) {
         if (!(it instanceof FootageItem)) continue;
 
         var name = (it.name || "").toUpperCase();
-        
-        // Match audio files
+        // Match AUDIO, audio_trimmed.wav, or any .wav file
         var isAudio = (name === "AUDIO") || 
                       (name.indexOf("AUDIO") === 0) || 
                       (name.indexOf(".WAV") !== -1);
@@ -459,63 +526,6 @@ function relinkAudioOnly(jobId, audioPath) {
             } catch (e) {
                 $.writeln("Could not relink audio: " + e.toString());
             }
-        }
-    }
-}
-
-
-function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
-    var outputFolder = findFolderByName("OUTPUT" + jobId);
-    if (!outputFolder) {
-        $.writeln("OUTPUT" + jobId + " folder not found.");
-        return;
-    }
-
-    // Find the nested "Assets OT" folder inside
-    var assetsFolder = null;
-    for (var i = 1; i <= outputFolder.numItems; i++) {
-        var it = outputFolder.item(i);
-        if (it instanceof FolderItem && it.name.toUpperCase().indexOf("ASSETS OT") === 0) {
-            assetsFolder = it;
-            break;
-        }
-    }
-
-    if (!assetsFolder) {
-        $.writeln("Assets folder not found inside OUTPUT" + jobId);
-        return;
-    }
-
-    var audioFile = new File(audioPath);
-    var coverFile = new File(coverPath);
-    
-    if (!audioFile.exists) {
-        $.writeln("Missing audio file: " + audioPath);
-    }
-    if (!coverFile.exists) {
-        $.writeln("Missing cover file: " + coverPath);
-    }
-
-    for (var i = 1; i <= assetsFolder.numItems; i++) {
-        var it = assetsFolder.item(i);
-        if (!(it instanceof FootageItem)) continue;
-
-        var name = (it.name || "").toUpperCase();
-        try {
-            // Match audio
-            var isAudio = (name === "AUDIO") || 
-                          (name.indexOf("AUDIO") === 0) || 
-                          (name.indexOf(".WAV") !== -1);
-            
-            if (isAudio && audioFile.exists) {
-                it.replace(audioFile);
-                $.writeln("Replaced AUDIO inside Assets OT" + jobId);
-            } else if (name === "COVER" && coverFile.exists) {
-                it.replace(coverFile);
-                $.writeln("Replaced COVER inside Assets OT" + jobId);
-            }
-        } catch (e) {
-            $.writeln("Could not relink " + it.name + ": " + e.toString());
         }
     }
 }
@@ -542,13 +552,6 @@ function toAbsolute(p) {
     if (!p) return p;
     p = p.replace(/\\/g, "/");
 
-    // Check if already absolute (starts with drive letter or /)
-    if (p.match(/^[A-Za-z]:/) || p.charAt(0) === "/") {
-        var f = new File(p);
-        return f.fsName.replace(/\\/g, "/");
-    }
-
-    // Only prepend base for relative paths
     var f = new File(p);
     if (f.exists) {
         return f.fsName.replace(/\\/g, "/");
@@ -572,13 +575,6 @@ function ensureAudioLayer(comp) {
     var lyr = comp.layer("AUDIO");
     if (lyr) return lyr;
 
-    // Try audio_trimmed.wav
-    try {
-        lyr = comp.layer("audio_trimmed.wav");
-        if (lyr) return lyr;
-    } catch(e) {}
-
-    // Find any audio layer
     for (var i = 1; i <= comp.numLayers; i++) {
         var L = comp.layer(i);
         if (L instanceof AVLayer && L.hasAudio) {
@@ -587,6 +583,55 @@ function ensureAudioLayer(comp) {
         }
     }
     return null;
+}
+
+function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
+    var outputFolder = findFolderByName("OUTPUT" + jobId);
+    if (!outputFolder) {
+        $.writeln("OUTPUT" + jobId + " folder not found.");
+        return;
+    }
+
+    var assetsFolder = null;
+    for (var i = 1; i <= outputFolder.numItems; i++) {
+        var it = outputFolder.item(i);
+        if (it instanceof FolderItem && it.name.toUpperCase().indexOf("ASSETS OT") === 0) {
+            assetsFolder = it;
+            break;
+        }
+    }
+
+    if (!assetsFolder) {
+        $.writeln("Assets folder not found inside OUTPUT" + jobId);
+        return;
+    }
+
+    var audioFile = new File(audioPath);
+    var coverFile = new File(coverPath);
+
+    for (var i = 1; i <= assetsFolder.numItems; i++) {
+        var it = assetsFolder.item(i);
+        if (!(it instanceof FootageItem)) continue;
+
+        var name = (it.name || "").toUpperCase();
+        
+        // Match audio files
+        var isAudio = (name === "AUDIO") || 
+                      (name.indexOf("AUDIO") === 0) || 
+                      (name.indexOf(".WAV") !== -1);
+        
+        try {
+            if (isAudio && audioFile.exists) {
+                it.replace(audioFile);
+                $.writeln("Replaced " + it.name + " inside Assets OT" + jobId);
+            } else if (name === "COVER" && coverFile.exists) {
+                it.replace(coverFile);
+                $.writeln("Replaced COVER inside Assets OT" + jobId);
+            }
+        } catch (e) {
+            $.writeln("Could not relink " + it.name + ": " + e.toString());
+        }
+    }
 }
 
 function autoResizeCoverInOutput(jobId) {

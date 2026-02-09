@@ -12,7 +12,7 @@ class Config:
     
     # Whisper Settings
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
-    WHISPER_CACHE_DIR = "Visuals-Nova/whisper_models"
+    WHISPER_CACHE_DIR = "Apollova-Mono/whisper_models"
     
     # Job Settings
     TOTAL_JOBS = int(os.getenv("TOTAL_JOBS", "12"))
@@ -21,7 +21,7 @@ class Config:
     MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
     
     # File Paths
-    JOBS_DIR = "Visuals-Nova/jobs"
+    JOBS_DIR = "Apollova-Mono/jobs"
     
     # Audio Settings
     AUDIO_FORMAT = "mp3"

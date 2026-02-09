@@ -317,39 +317,19 @@ function injectNovaSegmentsToLyricText(lyricComp, markers) {
         return;
     }
 
-    // Build the segments array string (now includes end times for tag display)
-    var segmentsArray = buildSegmentsArrayString(markers);
+    // Build the segments array string
+    var segmentsArray = buildSegmentsArrayStringWithEnds(markers);
     
-    // Build the full Nova expression with:
-    // - Line break every 4 words
-    // - @apollova-mono tag between segments
-    // - Word count tracking for blur
+    // Build the LYRIC_TEXT expression (word-by-word reveal, 4 words per line)
     var novaExpression = [
-        '// NOVA: Word-by-word reveal with motion blur support',
-        '// Segments injected by JSX',
+        '// NOVA: Word-by-word reveal',
         segmentsArray,
         '',
         'var ctrl = thisComp.layer("LYRIC CONTROL");',
         'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
-        'var tag = "@apollova-mono";',
         'var wordsPerLine = 4;',
         '',
-        '// Check if we are in the gap between segments (show tag)',
-        'var inGap = false;',
-        'if (segIndex >= 1 && segIndex <= segments.length) {',
-        '    var seg = segments[segIndex - 1];',
-        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.5;',
-        '    if (time > lastWordTime && segIndex < segments.length) {',
-        '        var nextSegStart = segments[segIndex].t;',
-        '        if (time < nextSegStart - 0.1) {',
-        '            inGap = true;',
-        '        }',
-        '    }',
-        '}',
-        '',
-        'if (inGap) {',
-        '    tag;',
-        '} else if (segIndex < 1 || segIndex > segments.length) {',
+        'if (segIndex < 1 || segIndex > segments.length) {',
         '    "";',
         '} else {',
         '    var seg = segments[segIndex - 1];',
@@ -360,7 +340,6 @@ function injectNovaSegmentsToLyricText(lyricComp, markers) {
         '        if (time >= seg.words[i].s) {',
         '            var word = seg.words[i].w;',
         '            if (wordCount > 0) {',
-        '                // Line break every 4 words',
         '                if (wordCount % wordsPerLine === 0) {',
         '                    output += "\\r";',
         '                } else {',
@@ -378,53 +357,77 @@ function injectNovaSegmentsToLyricText(lyricComp, markers) {
     // Apply the expression
     sourceText.expression = novaExpression;
     
-    // Add Directional Blur effect for motion blur trail
-    addMotionBlurEffect(lyricComp, lyricText, markers);
+    // Add Gaussian Blur for word reveal effect
+    addGaussianBlurToLyricText(lyricText, markers);
     
     $.writeln("Injected Nova word-reveal expression with " + markers.length + " segments");
 }
 
 
-function addMotionBlurEffect(lyricComp, lyricText, markers) {
-    // Add Directional Blur effect to LYRIC_TEXT layer
+function buildSegmentsArrayStringWithEnds(markers) {
+    // Build: var segments = [{t:0.18, e:2.5, words:[{w:"It",s:0.18},{w:"ain't",s:0.64}]}, ...];
+    
+    var segmentStrings = [];
+    
+    for (var i = 0; i < markers.length; i++) {
+        var m = markers[i];
+        var t = Number(m.time) || 0;
+        var e = Number(m.end_time) || (t + 5);
+        var words = m.words || [];
+        
+        // Build words array string
+        var wordStrings = [];
+        for (var j = 0; j < words.length; j++) {
+            var word = words[j];
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+            var s = Number(word.start) || 0;
+            wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
+        }
+        
+        var segStr = '{t:' + t.toFixed(3) + ',e:' + e.toFixed(3) + ',words:[' + wordStrings.join(',') + ']}';
+        segmentStrings.push(segStr);
+    }
+    
+    return 'var segments = [\n    ' + segmentStrings.join(',\n    ') + '\n];';
+}
+
+
+function addGaussianBlurToLyricText(lyricText, markers) {
+    // Add Gaussian Blur effect to LYRIC_TEXT layer
     var effects = lyricText.property("Effects");
     
-    // Check if Directional Blur already exists
-    var dirBlur = null;
+    // Check if Gaussian Blur already exists
+    var gaussBlur = null;
     for (var i = 1; i <= effects.numProperties; i++) {
-        if (effects.property(i).matchName === "ADBE Motion Blur") {
-            dirBlur = effects.property(i);
+        var eff = effects.property(i);
+        if (eff.matchName === "ADBE Gaussian Blur 2") {
+            gaussBlur = eff;
             break;
         }
     }
     
     // Add if doesn't exist
-    if (!dirBlur) {
+    if (!gaussBlur) {
         try {
-            dirBlur = effects.addProperty("ADBE Motion Blur");
+            gaussBlur = effects.addProperty("ADBE Gaussian Blur 2");
         } catch (e) {
-            $.writeln("Could not add Directional Blur effect: " + e.toString());
+            $.writeln("Could not add Gaussian Blur effect: " + e.toString());
             return;
         }
     }
     
-    // Set direction to horizontal (from left) - 0 degrees
-    try {
-        dirBlur.property("Direction").setValue(0);
-    } catch (e) {}
-    
     // Build segments array for blur expression
-    var segmentsArray = buildSegmentsArrayString(markers);
+    var segmentsArray = buildSegmentsArrayStringWithEnds(markers);
     
-    // Add expression to Blur Length that spikes when new word appears
+    // Expression: blur spikes when word appears, quickly sharpens
     var blurExpression = [
-        '// Motion blur on word reveal',
+        '// Gaussian blur on word reveal',
         segmentsArray,
         '',
         'var ctrl = thisComp.layer("LYRIC CONTROL");',
         'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
-        'var maxBlur = 50;',
-        'var fadeTime = 0.15;  // How fast blur fades out',
+        'var wordBlurMax = 15;',
+        'var wordFadeTime = 0.12;',
         '',
         'if (segIndex < 1 || segIndex > segments.length) {',
         '    0;',
@@ -432,13 +435,12 @@ function addMotionBlurEffect(lyricComp, lyricText, markers) {
         '    var seg = segments[segIndex - 1];',
         '    var blur = 0;',
         '',
-        '    // Find the most recently revealed word',
+        '    // Word reveal blur (sharpens as word appears)',
         '    for (var i = 0; i < seg.words.length; i++) {',
         '        var wordStart = seg.words[i].s;',
         '        var timeSinceWord = time - wordStart;',
-        '        if (timeSinceWord >= 0 && timeSinceWord < fadeTime) {',
-        '            // Word just appeared - calculate blur',
-        '            var wordBlur = maxBlur * (1 - timeSinceWord / fadeTime);',
+        '        if (timeSinceWord >= 0 && timeSinceWord < wordFadeTime) {',
+        '            var wordBlur = wordBlurMax * (1 - timeSinceWord / wordFadeTime);',
         '            if (wordBlur > blur) blur = wordBlur;',
         '        }',
         '    }',
@@ -447,10 +449,223 @@ function addMotionBlurEffect(lyricComp, lyricText, markers) {
     ].join('\n');
     
     try {
-        dirBlur.property("Blur Length").expression = blurExpression;
-        $.writeln("Added motion blur expression to LYRIC_TEXT");
+        gaussBlur.property("Blurriness").expression = blurExpression;
+        $.writeln("Added Gaussian Blur expression to LYRIC_TEXT");
     } catch (e) {
         $.writeln("Could not set blur expression: " + e.toString());
+    }
+}
+
+
+function addLyricTextOpacity(lyricText, markers) {
+    // Add opacity expression for crossfade
+    var opacity = lyricText.property("Transform").property("Opacity");
+    
+    var segmentsArray = buildSegmentsArrayStringWithEnds(markers);
+    
+    var opacityExpression = [
+        '// Opacity - fade out at end, stay hidden until next segment starts',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var fadeDur = 0.15;  // Fast fade out',
+        '',
+        'if (segIndex < 1 || segIndex > segments.length) {',
+        '    0;',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.3;',
+        '',
+        '    // Check if we should be fading out (gap before next segment)',
+        '    if (segIndex < segments.length) {',
+        '        var nextSegStart = segments[segIndex].t;',
+        '',
+        '        // After last word, fade out',
+        '        if (time > lastWordTime && time < lastWordTime + fadeDur) {',
+        '            var progress = (time - lastWordTime) / fadeDur;',
+        '            linear(progress, 0, 1, 100, 0);',
+        '        }',
+        '        // Stay hidden until next segment starts',
+        '        else if (time >= lastWordTime + fadeDur && time < nextSegStart) {',
+        '            0;',
+        '        }',
+        '        // Next segment started - full opacity (words appear via text expression)',
+        '        else {',
+        '            100;',
+        '        }',
+        '    } else {',
+        '        // Last segment - just show normally, fade out at end',
+        '        if (time > lastWordTime && time < lastWordTime + fadeDur) {',
+        '            var progress = (time - lastWordTime) / fadeDur;',
+        '            linear(progress, 0, 1, 100, 0);',
+        '        } else if (time >= lastWordTime + fadeDur) {',
+        '            0;',
+        '        } else {',
+        '            100;',
+        '        }',
+        '    }',
+        '}'
+    ].join('\n');
+    
+    try {
+        opacity.expression = opacityExpression;
+        $.writeln("Added opacity expression to LYRIC_TEXT");
+    } catch (e) {
+        $.writeln("Could not set opacity expression: " + e.toString());
+    }
+}
+
+
+function setupTagLayer(lyricComp, markers) {
+    // Find or create TAG_TEXT layer
+    var tagLayer = null;
+    try {
+        tagLayer = lyricComp.layer("TAG_TEXT");
+    } catch (e) {}
+    
+    if (!tagLayer) {
+        // Create TAG_TEXT layer
+        try {
+            tagLayer = lyricComp.layers.addText("@apollova-mono");
+            tagLayer.name = "TAG_TEXT";
+            
+            // Position it in center (same as LYRIC_TEXT)
+            var lyricText = lyricComp.layer("LYRIC_TEXT");
+            if (lyricText) {
+                var lyricPos = lyricText.property("Transform").property("Position").value;
+                tagLayer.property("Transform").property("Position").setValue(lyricPos);
+            } else {
+                tagLayer.property("Transform").property("Position").setValue([lyricComp.width/2, lyricComp.height/2]);
+            }
+            
+            $.writeln("Created TAG_TEXT layer in " + lyricComp.name);
+        } catch (e) {
+            $.writeln("Could not create TAG_TEXT layer: " + e.toString());
+            return;
+        }
+    }
+    
+    // Add Gaussian Blur to tag layer
+    var effects = tagLayer.property("Effects");
+    var gaussBlur = null;
+    for (var i = 1; i <= effects.numProperties; i++) {
+        var eff = effects.property(i);
+        if (eff.matchName === "ADBE Gaussian Blur 2") {
+            gaussBlur = eff;
+            break;
+        }
+    }
+    if (!gaussBlur) {
+        try {
+            gaussBlur = effects.addProperty("ADBE Gaussian Blur 2");
+        } catch (e) {
+            $.writeln("Could not add Gaussian Blur to TAG_TEXT: " + e.toString());
+        }
+    }
+    
+    var segmentsArray = buildSegmentsArrayStringWithEnds(markers);
+    
+    // Tag opacity expression (visible only between segments)
+    var tagOpacityExpression = [
+        '// Tag appears between segments - quick flash',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var fadeDur = 0.1;  // Fast fade',
+        '',
+        'if (segIndex < 1 || segIndex >= segments.length) {',
+        '    0;',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.3;',
+        '    var nextSegStart = segments[segIndex].t;',
+        '    var gapDuration = nextSegStart - lastWordTime;',
+        '    var tagStart = lastWordTime + fadeDur;  // Tag appears after lyrics fade',
+        '    var tagEnd = nextSegStart - 0.2;  // Tag disappears before next segment',
+        '',
+        '    // Only show if there is enough gap',
+        '    if (gapDuration < 0.5) {',
+        '        0;',
+        '    }',
+        '    // Fade in',
+        '    else if (time >= tagStart && time < tagStart + fadeDur) {',
+        '        var progress = (time - tagStart) / fadeDur;',
+        '        linear(progress, 0, 1, 0, 100);',
+        '    }',
+        '    // Visible',
+        '    else if (time >= tagStart + fadeDur && time < tagEnd - fadeDur) {',
+        '        100;',
+        '    }',
+        '    // Fade out',
+        '    else if (time >= tagEnd - fadeDur && time < tagEnd) {',
+        '        var progress = (time - (tagEnd - fadeDur)) / fadeDur;',
+        '        linear(progress, 0, 1, 100, 0);',
+        '    }',
+        '    else {',
+        '        0;',
+        '    }',
+        '}'
+    ].join('\n');
+    
+    // Tag blur expression (blur in and out)
+    var tagBlurExpression = [
+        '// Tag blur for smooth appearance',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var maxBlur = 15;',
+        'var fadeDur = 0.1;',
+        '',
+        'if (segIndex < 1 || segIndex >= segments.length) {',
+        '    maxBlur;',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.3;',
+        '    var nextSegStart = segments[segIndex].t;',
+        '    var gapDuration = nextSegStart - lastWordTime;',
+        '    var tagStart = lastWordTime + fadeDur;',
+        '    var tagEnd = nextSegStart - 0.2;',
+        '',
+        '    if (gapDuration < 0.5) {',
+        '        maxBlur;',
+        '    }',
+        '    // Sharpen as fades in',
+        '    else if (time >= tagStart && time < tagStart + fadeDur) {',
+        '        var progress = (time - tagStart) / fadeDur;',
+        '        linear(progress, 0, 1, maxBlur, 0);',
+        '    }',
+        '    // Sharp while visible',
+        '    else if (time >= tagStart + fadeDur && time < tagEnd - fadeDur) {',
+        '        0;',
+        '    }',
+        '    // Blur as fades out',
+        '    else if (time >= tagEnd - fadeDur && time < tagEnd) {',
+        '        var progress = (time - (tagEnd - fadeDur)) / fadeDur;',
+        '        linear(progress, 0, 1, 0, maxBlur);',
+        '    }',
+        '    else {',
+        '        maxBlur;',
+        '    }',
+        '}'
+    ].join('\n');
+    
+    try {
+        tagLayer.property("Transform").property("Opacity").expression = tagOpacityExpression;
+        $.writeln("Added opacity expression to TAG_TEXT");
+    } catch (e) {
+        $.writeln("Could not set TAG opacity expression: " + e.toString());
+    }
+    
+    if (gaussBlur) {
+        try {
+            gaussBlur.property("Blurriness").expression = tagBlurExpression;
+            $.writeln("Added blur expression to TAG_TEXT");
+        } catch (e) {
+            $.writeln("Could not set TAG blur expression: " + e.toString());
+        }
     }
 }
 

@@ -54,7 +54,7 @@ def main():
         console.print(f"  {i:2}. {song['song_title']:<45} ({status})")
     
     console.print()
-    response = input("Run these Nova jobs? (Y/n): ").strip().lower()
+    response = input("Run these Mono jobs? (Y/n): ").strip().lower()
     if response == 'n':
         console.print("Cancelled.")
         return
@@ -109,7 +109,7 @@ def main():
     console.print(f"Time: {elapsed:.1f}s")
     
     if successful == num_jobs:
-        console.print(f"\n[green]✅ All Nova jobs ready![/green]")
+        console.print(f"\n[green]✅ All Mono jobs ready![/green]")
         console.print("[magenta]Next step:[/magenta] Run the After Effects JSX script")
         console.print("[dim]File → Scripts → Run Script File... → scripts/JSX/automateMV_nova.jsx[/dim]\n")
 

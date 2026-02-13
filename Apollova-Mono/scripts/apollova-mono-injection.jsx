@@ -1,9 +1,9 @@
 // -------------------------------------------------------
-// VISUALS NOVA - After Effects Automation
+// Apollova Mono - After Effects Automation
 // Modified Aurora template with word-by-word reveal
 // -------------------------------------------------------
 // Usage:
-//  1) Run main_nova.py to build /jobs/job_001 → job_012
+//  1) Run main_mono.py to build /jobs/job_001 → job_012
 //  2) Open AE project (same Aurora template)
 //  3) File → Scripts → Run Script File → select this file
 //  4) Pick the /jobs folder → items import + comps wired + queued
@@ -42,7 +42,7 @@ if (typeof JSON === "undefined") {
 // MAIN
 // -----------------------------
 function main() {
-    app.beginUndoGroup("NOVA Batch Music Video Build");
+    app.beginUndoGroup("mono Batch Music Video Build");
 
     clearAllJobComps();
 
@@ -53,7 +53,7 @@ function main() {
     var jsonFiles = [];
     
     for (var i = 0; i < subfolders.length; i++) {
-        // Look for nova_data.json in each job folder
+        // Look for mono_data.json in each job folder
         var files = subfolders[i].getFiles("mono_data.json");
         if (files && files.length > 0) {
             jsonFiles.push(files[0]);
@@ -61,23 +61,23 @@ function main() {
     }
     
     if (jsonFiles.length === 0) {
-        alert("No nova_data.json files found inside subfolders of " + jobsFolder.fsName);
+        alert("No mono_data.json files found inside subfolders of " + jobsFolder.fsName);
         return;
     }
 
     for (var j = 0; j < jsonFiles.length; j++) {
-        var novaFile = jsonFiles[j];
-        if (!novaFile.exists || !novaFile.open("r")) continue;
-        var novaText = novaFile.read();
-        novaFile.close();
-        if (!novaText) continue;
+        var monoFile = jsonFiles[j];
+        if (!monoFile.exists || !monoFile.open("r")) continue;
+        var monoText = monoFile.read();
+        monoFile.close();
+        if (!monoText) continue;
 
-        var novaData;
-        try { novaData = JSON.parse(novaText); }
-        catch (e) { alert("Error parsing " + novaFile.name + ": " + e.toString()); continue; }
+        var monoData;
+        try { monoData = JSON.parse(monoText); }
+        catch (e) { alert("Error parsing " + monoFile.name + ": " + e.toString()); continue; }
 
         // Also read job_data.json for paths and metadata
-        var jobFolder = novaFile.parent;
+        var jobFolder = monoFile.parent;
         var jobDataFile = new File(jobFolder.fsName + "/job_data.json");
         var jobData = {};
         
@@ -92,7 +92,7 @@ function main() {
         jobData.audio_trimmed = toAbsolute(jobData.audio_trimmed || (jobFolder.fsName + "/audio_trimmed.wav"));
         jobData.job_folder = jobFolder.fsName.replace(/\\/g, "/");
         
-        // For Nova, we may or may not have cover image (optional)
+        // For mono, we may or may not have cover image (optional)
         var hasCoverImage = false;
         if (jobData.cover_image) {
             jobData.cover_image = toAbsolute(jobData.cover_image);
@@ -102,9 +102,9 @@ function main() {
 
         var jobId = jobData.job_id || (j + 1);
         var songTitle = jobData.song_title || "Unknown";
-        var markers = novaData.markers || [];
+        var markers = monoData.markers || [];
 
-        $.writeln("──────── NOVA Job " + jobId + " ────────");
+        $.writeln("──────── MONO Job " + jobId + " ────────");
         $.writeln("Song: " + songTitle);
         $.writeln("Markers: " + markers.length);
 
@@ -117,7 +117,7 @@ function main() {
         // Duplicate MAIN template
         var template = findCompByName("MAIN");
         var newComp = template.duplicate();
-        newComp.name = "NOVA_JOB_" + ("00" + jobId).slice(-3);
+        newComp.name = "MONO_JOB_" + ("00" + jobId).slice(-3);
 
         // Move duplicated comp into correct OUTPUT folder
         moveItemToFolder(newComp, "OUTPUT" + jobId);
@@ -134,27 +134,27 @@ function main() {
         setOutputWorkAreaToAudio(jobId, jobData.audio_trimmed);
         updateSongTitle(jobId, songTitle);
 
-        // Lyrics - NOVA STYLE (word-by-word)
+        // Lyrics - MONO STYLE (word-by-word)
         var lyricComp;
         try { lyricComp = findCompByName("LYRIC FONT " + jobId); }
         catch (e) { $.writeln("Missing LYRIC FONT " + jobId + " – skipping lyrics."); continue; }
 
         // Add markers to AUDIO layer in LYRIC FONT comp
-        addNovaMarkersToAudio(lyricComp, markers);
+        addMonoMarkersToAudio(lyricComp, markers);
         
         // Inject word-by-word segments into LYRIC_TEXT expression
-        injectNovaSegmentsToLyricText(lyricComp, markers);
+        injectMonoSegmentsToLyricText(lyricComp, markers);
 
         // Add markers to BACKGROUND comp for color flip
         try {
             var bgComp = findCompByName("BACKGROUND " + jobId);
-            addNovaMarkersToBackground(bgComp, markers);
+            addMonoMarkersToBackground(bgComp, markers);
             $.writeln("Added markers to BACKGROUND " + jobId);
         } catch (e) {
             $.writeln("BACKGROUND " + jobId + " not found – skipping color flip markers.");
         }
 
-        // Album art (optional for Nova)
+        // Album art (optional for Mono)
         if (hasCoverImage) {
             try {
                 var assetsComp = findCompByName("Assets " + jobId);
@@ -182,8 +182,7 @@ function main() {
                     outputComp,
                     jobData.job_folder,
                     jobId,
-                    songTitle,
-                    "_NOVA"
+                    songTitle
                 );
                 $.writeln("Queued: " + renderPath);
             } else {
@@ -194,16 +193,16 @@ function main() {
         }
     }
 
-    alert("NOVA batch processing complete!\n\nReview in Render Queue, then click Render.");
+    alert("MONO batch processing complete!\n\nReview in Render Queue, then click Render.");
     app.endUndoGroup();
 }
 
 
 // -----------------------------
-// NOVA-SPECIFIC FUNCTIONS
+// Mono-SPECIFIC FUNCTIONS
 // -----------------------------
 
-function addNovaMarkersToAudio(lyricComp, markers) {
+function addMonoMarkersToAudio(lyricComp, markers) {
     // Add simple markers to AUDIO layer (just for timing triggers)
     // LYRIC CONTROL reads these to determine current segment index
     
@@ -246,7 +245,7 @@ function addNovaMarkersToAudio(lyricComp, markers) {
 }
 
 
-function addNovaMarkersToBackground(bgComp, markers) {
+function addMonoMarkersToBackground(bgComp, markers) {
     // Add markers to the audio layer in BACKGROUND comp for color flip
     // Find the audio layer (might be named "audio_trimmed.wav" or "AUDIO")
     
@@ -303,7 +302,7 @@ function addNovaMarkersToBackground(bgComp, markers) {
 }
 
 
-function injectNovaSegmentsToLyricText(lyricComp, markers) {
+function injectMonoSegmentsToLyricText(lyricComp, markers) {
     // Find LYRIC_TEXT layer
     var lyricText = lyricComp.layer("LYRIC_TEXT");
     if (!lyricText) {
@@ -321,8 +320,8 @@ function injectNovaSegmentsToLyricText(lyricComp, markers) {
     var segmentsArray = buildSegmentsArrayStringWithEnds(markers);
     
     // Build the LYRIC_TEXT expression (word-by-word reveal, 4 words per line)
-    var novaExpression = [
-        '// NOVA: Word-by-word reveal',
+    var monoExpression = [
+        '// Mono: Word-by-word reveal',
         segmentsArray,
         '',
         'var ctrl = thisComp.layer("LYRIC CONTROL");',
@@ -355,12 +354,12 @@ function injectNovaSegmentsToLyricText(lyricComp, markers) {
     ].join('\n');
 
     // Apply the expression
-    sourceText.expression = novaExpression;
+    sourceText.expression = monoExpression;
     
     // Add Gaussian Blur for word reveal effect
     addGaussianBlurToLyricText(lyricText, markers);
     
-    $.writeln("Injected Nova word-reveal expression with " + markers.length + " segments");
+    $.writeln("Injected Mono word-reveal expression with " + markers.length + " segments");
 }
 
 
@@ -1056,13 +1055,13 @@ function sanitizeFilename(name) {
 }
 
 function clearAllJobComps() {
-    $.writeln("Clearing all NOVA_JOB comps...");
+    $.writeln("Clearing all MONO_JOB comps...");
     var count = 0;
     
     for (var i = app.project.numItems; i >= 1; i--) {
         var it = app.project.item(i);
         
-        if (it instanceof CompItem && it.name.indexOf("NOVA_JOB_") === 0) {
+        if (it instanceof CompItem && it.name.indexOf("MONO_JOB_") === 0) {
             try {
                 it.remove();
                 count++;
@@ -1070,7 +1069,7 @@ function clearAllJobComps() {
         }
     }
     
-    $.writeln("Deleted " + count + " old NOVA job comps");
+    $.writeln("Deleted " + count + " old MONO job comps");
 }
 
 // -----------------------------

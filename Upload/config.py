@@ -55,7 +55,7 @@ class Config:
 
     # ── Paths ─────────────────────────────────────────────────────
     # Renders subfolder inside each template folder
-    renders_subfolder: str = "../jobs/renders"
+    renders_subfolder: str = "jobs/renders"
     state_db_path: str = "./data/upload_state.db"
     log_dir: str = "./logs"
 
@@ -123,20 +123,17 @@ class Config:
 
         return config
 
-    def get_watch_paths(self) -> dict[Path, str]:
-        """Return {renders_folder_path: account_name} for all configured templates.
+    def get_watch_paths(self) -> dict[str, tuple[Path, str]]:
+        """Return {folder_name: (renders_folder_path, account_name)} for all templates.
         
-        Only includes folders that actually exist on disk.
+        Uses folder_name as key to avoid Windows path resolution collisions.
+        Creates missing directories automatically.
         """
         root = Path(self.apollova_root)
         paths = {}
         for folder_name, account in self.folder_account_map.items():
             renders_path = root / folder_name / self.renders_subfolder
-            if renders_path.exists():
-                paths[renders_path.resolve()] = account
-            else:
-                # Still include it — we'll create it or warn
-                paths[renders_path.resolve()] = account
+            paths[folder_name] = (renders_path, account)
         return paths
 
     def get_template_from_path(self, file_path: str) -> str:

@@ -558,9 +558,9 @@ def watch_mode(
 
     # Display what we're watching
     lines = []
-    for path, account in watch_paths.items():
+    for folder_name, (path, account) in watch_paths.items():
         exists = "✓" if path.exists() else "✗ (will create)"
-        template = config.get_template_from_path(str(path))
+        template = folder_name.replace("Apollova-", "").lower()
         lines.append(f"  {template.capitalize():8s} → {account:8s}  {path}  {exists}")
 
     console.print(Panel(
@@ -581,8 +581,8 @@ def watch_mode(
     observer = Observer()
     watchers: list[FolderWatcher] = []
 
-    for watch_path, account in watch_paths.items():
-        template = config.get_template_from_path(str(watch_path))
+    for folder_name, (watch_path, account) in watch_paths.items():
+        template = folder_name.replace("Apollova-", "").lower()
         watcher = FolderWatcher(
             watch_path=watch_path,
             account=account,
@@ -698,8 +698,8 @@ def main() -> None:
 
     if args.upload_now:
         config.ensure_dirs()
-        for watch_path, account in config.get_watch_paths().items():
-            template = config.get_template_from_path(str(watch_path))
+        for folder_name, (watch_path, account) in config.get_watch_paths().items():
+            template = folder_name.replace("Apollova-", "").lower()
             watcher = FolderWatcher(
                 watch_path, account, template,
                 uploader, state, smart_scheduler, notifications, config,

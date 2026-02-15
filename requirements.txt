@@ -1,0 +1,18 @@
+# Core dependencies
+pytubefix
+pydub
+librosa
+requests
+watchdog
+rich
+python-dotenv
+Pillow
+colorthief
+bs4
+rapidfuzz
+stable-whisper
+plyer
+win10toast
+
+# Optional/test dependencies
+unittest

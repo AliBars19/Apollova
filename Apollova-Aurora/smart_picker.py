@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 # Ensure this script can find local modules
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.smart_picker import SmartSongPicker
 from scripts.song_database import SongDatabase

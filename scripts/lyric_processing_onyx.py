@@ -2,12 +2,21 @@
 Onyx Lyric Processing - Word-level timestamp extraction
 For hybrid template: word-by-word lyrics + spinning disc
 
-Uses the shared sliding window alignment engine for accurate lyrics.
+Bulletproof features:
+  - Multi-pass Whisper (4 passes with escalating aggressiveness)
+  - Manual regrouping for better segment splitting
+  - Hallucination detection
+  - Junk segment removal
+  - Duration-based quality validation
+  - Genius sliding window alignment
+  - Word timing rebuild after alignment
+
 Output: markers with {time, text, words[], color, end_time}
 """
 import os
 import json
 import re
+from pydub import AudioSegment
 from stable_whisper import load_model
 
 from scripts.config import Config
@@ -32,87 +41,86 @@ def transcribe_audio_onyx(job_folder, song_title=None):
         return {"markers": [], "total_markers": 0}
     
     try:
-        # Load model
-        os.makedirs(Config.WHISPER_CACHE_DIR, exist_ok=True)
+        audio_duration = _get_audio_duration(audio_path)
+        print(f"  Audio duration: {audio_duration:.1f}s")
         
+        os.makedirs(Config.WHISPER_CACHE_DIR, exist_ok=True)
         model = load_model(
             Config.WHISPER_MODEL,
             download_root=Config.WHISPER_CACHE_DIR,
             in_memory=False
         )
         
-        # Build context prompt
         initial_prompt = _build_initial_prompt(song_title)
         
-        # Primary transcription with word-level timestamps
-        result = model.transcribe(
-            audio_path,
-            word_timestamps=True,
-            vad=True,
-            vad_threshold=0.35,
-            suppress_silence=True,
-            regroup=False,  # Manual regrouping for Onyx
-            temperature=0,
-            initial_prompt=initial_prompt,
-            condition_on_previous_text=False,
-        )
+        # ============================================================
+        # MULTI-PASS TRANSCRIPTION
+        # ============================================================
+        result = _multi_pass_transcribe(model, audio_path, initial_prompt, audio_duration)
         
-        # Manual regrouping with better segment splitting
-        if result.segments:
+        if not result or not result.segments:
+            print("❌ Whisper returned no segments after all attempts")
+            return {"markers": [], "total_markers": 0}
+        
+        # ============================================================
+        # MANUAL REGROUPING (Onyx benefits from shorter segments)
+        # ============================================================
+        try:
             result = result.split_by_gap(0.5)
             result = result.split_by_punctuation(['.', '?', '!', ','])
             result = result.split_by_length(max_chars=50)
+        except Exception as e:
+            print(f"  ⚠ Regrouping failed (using defaults): {e}")
         
-        # Fallback if empty
-        if not result.segments:
-            print("  Empty transcription, retrying with fallback params...")
-            result = model.transcribe(
-                audio_path,
-                word_timestamps=True,
-                vad=False,
-                suppress_silence=False,
-                regroup=True,
-                temperature=0.3,
-                initial_prompt=initial_prompt,
-                condition_on_previous_text=False,
-            )
-        
-        if not result.segments:
-            print("❌ Whisper returned no segments")
-            return {"markers": [], "total_markers": 0}
-        
-        # Build raw markers from Whisper segments
+        # ============================================================
+        # BUILD MARKERS
+        # ============================================================
         markers = _build_markers_from_segments(result.segments)
         
         if not markers:
             print("❌ No valid markers generated")
             return {"markers": [], "total_markers": 0}
         
-        # Fetch Genius lyrics and align
+        print(f"  Raw Whisper output: {len(markers)} markers")
+        
+        # ============================================================
+        # CLEANUP PIPELINE
+        # ============================================================
+        markers = _remove_hallucinations(markers, initial_prompt)
+        markers = _remove_junk_markers(markers)
+        markers = _remove_stutter_duplicates(markers)
+        
+        if not markers:
+            print("❌ No markers remain after cleanup")
+            return {"markers": [], "total_markers": 0}
+        
+        print(f"  After cleanup: {len(markers)} markers")
+        
+        # ============================================================
+        # GENIUS ALIGNMENT
+        # ============================================================
         if song_title and Config.GENIUS_API_TOKEN:
             print("✎ Fetching Genius lyrics for alignment...")
             genius_text = fetch_genius_lyrics(song_title)
             
             if genius_text:
-                # Save reference
                 genius_path = os.path.join(job_folder, "genius_lyrics.txt")
                 with open(genius_path, "w", encoding="utf-8") as f:
                     f.write(genius_text)
                 
-                # Align using sliding window
                 print("✎ Aligning lyrics (sliding window)...")
                 markers = align_genius_to_whisper(
                     markers, genius_text, segment_text_key="text"
                 )
                 
-                # Rebuild word arrays from the new text
                 markers = _rebuild_words_after_alignment(markers)
         
-        # Assign alternating colors
+        # ============================================================
+        # FINAL CLEANUP
+        # ============================================================
+        markers = [m for m in markers if m["text"].strip()]
         _assign_colors(markers)
-        
-        # Fix any timing gaps
-        markers = _fix_marker_gaps(markers)
+        _fix_marker_gaps(markers)
         
         print(f"✓ Onyx transcription complete: {len(markers)} markers")
         
@@ -127,87 +135,148 @@ def transcribe_audio_onyx(job_folder, song_title=None):
 
 
 # ============================================================================
+# MULTI-PASS WHISPER
+# ============================================================================
+
+def _multi_pass_transcribe(model, audio_path, initial_prompt, audio_duration):
+    """Try multiple Whisper configs. Onyx uses regroup=False so we can manually split."""
+    min_expected = max(2, int(audio_duration / 3.5))
+    
+    passes = [
+        {
+            "name": "Pass 1 (strict)",
+            "params": dict(
+                word_timestamps=True, vad=True, vad_threshold=0.35,
+                suppress_silence=True, regroup=False,
+                temperature=0, initial_prompt=initial_prompt,
+                condition_on_previous_text=False,
+            )
+        },
+        {
+            "name": "Pass 2 (medium)",
+            "params": dict(
+                word_timestamps=True, vad=True, vad_threshold=0.2,
+                suppress_silence=False, regroup=False,
+                temperature=0.2, initial_prompt=initial_prompt,
+                condition_on_previous_text=False,
+            )
+        },
+        {
+            "name": "Pass 3 (loose)",
+            "params": dict(
+                word_timestamps=True, vad=False,
+                suppress_silence=False, regroup=False,
+                temperature=0.4, initial_prompt=initial_prompt,
+                condition_on_previous_text=False,
+            )
+        },
+        {
+            "name": "Pass 4 (no prompt)",
+            "params": dict(
+                word_timestamps=True, vad=False,
+                suppress_silence=False, regroup=True,
+                temperature=0.6, initial_prompt=None,
+                condition_on_previous_text=True,
+            )
+        },
+    ]
+    
+    best_result = None
+    best_count = 0
+    
+    for p in passes:
+        try:
+            print(f"  {p['name']}...")
+            result = model.transcribe(audio_path, **p["params"])
+            
+            if not result or not result.segments:
+                print(f"    → 0 segments")
+                continue
+            
+            count = sum(1 for s in result.segments if s.text.strip() and len(s.text.strip()) > 1)
+            print(f"    → {count} segments")
+            
+            if count > best_count:
+                best_count = count
+                best_result = result
+            
+            if count >= min_expected:
+                print(f"    ✓ Sufficient ({count} ≥ {min_expected} expected)")
+                return result
+            
+        except Exception as e:
+            print(f"    → Error: {e}")
+            continue
+    
+    if best_result:
+        print(f"  ⚠ Best: {best_count} segments (wanted {min_expected}+)")
+    
+    return best_result
+
+
+# ============================================================================
 # MARKER BUILDING
 # ============================================================================
 
 def _build_markers_from_segments(segments):
-    """Build marker objects from Whisper segments with word timing"""
+    """Build marker objects from Whisper segments with word timing."""
     markers = []
     
-    for seg_idx, segment in enumerate(segments):
+    for segment in segments:
         seg_text = segment.text.strip()
         seg_start = float(segment.start)
         seg_end = float(segment.end)
         
-        # Skip empty or very short segments
         if not seg_text or len(seg_text) < 2:
             continue
-        
-        # Skip overly long segments (merge errors)
         if seg_end - seg_start > 15:
-            print(f"   ⚠ Skipping overly long segment: {seg_text[:30]}...")
+            print(f"   ⚠ Skipping overly long segment ({seg_end - seg_start:.1f}s): {seg_text[:30]}...")
             continue
         
-        # Extract word timings
         words = _extract_word_timings(segment, seg_start, seg_end, seg_text)
         
-        marker = {
-            "time": seg_start,
+        markers.append({
+            "time": round(seg_start, 3),
             "text": seg_text,
             "words": words,
             "color": "",
-            "end_time": seg_end
-        }
-        
-        markers.append(marker)
+            "end_time": round(seg_end, 3)
+        })
     
     return markers
 
 
 def _extract_word_timings(segment, seg_start, seg_end, seg_text):
-    """Extract word-level timings from a Whisper segment"""
     words = []
     
     if hasattr(segment, 'words') and segment.words:
         for word in segment.words:
-            word_text = word.word.strip()
-            if not word_text:
+            wt = word.word.strip()
+            if not wt:
                 continue
-            
-            word_start = float(word.start)
-            word_end = float(word.end)
-            
-            # Validate word timing
-            word_duration = word_end - word_start
-            if word_duration > 5:
-                word_end = word_start + min(word_duration, 1.0)
-            
-            words.append({
-                "word": word_text,
-                "start": round(word_start, 3),
-                "end": round(word_end, 3)
-            })
-    else:
-        # Fallback: distribute words evenly
+            ws = float(word.start)
+            we = float(word.end)
+            if we - ws > 5:
+                we = ws + 1.0
+            words.append({"word": wt, "start": round(ws, 3), "end": round(we, 3)})
+    
+    if not words:
         word_list = seg_text.split()
         if word_list:
-            duration = seg_end - seg_start
-            word_duration = duration / len(word_list)
+            dur = seg_end - seg_start
+            wd = dur / len(word_list)
             for i, w in enumerate(word_list):
                 words.append({
                     "word": w,
-                    "start": round(seg_start + (i * word_duration), 3),
-                    "end": round(seg_start + ((i + 1) * word_duration), 3)
+                    "start": round(seg_start + i * wd, 3),
+                    "end": round(seg_start + (i + 1) * wd, 3)
                 })
     
     return words
 
 
 def _rebuild_words_after_alignment(markers):
-    """
-    After Genius alignment, rebuild word arrays with Genius text
-    but preserve Whisper timing.
-    """
+    """Rebuild word arrays with Genius text but Whisper timing."""
     for marker in markers:
         genius_words = marker["text"].split()
         whisper_words = marker.get("words", [])
@@ -215,12 +284,10 @@ def _rebuild_words_after_alignment(markers):
         if not genius_words or not whisper_words:
             continue
         
-        # If text didn't change, skip
-        whisper_text_joined = " ".join(w["word"] for w in whisper_words)
-        if whisper_text_joined.strip().lower() == marker["text"].strip().lower():
+        whisper_joined = " ".join(w["word"] for w in whisper_words)
+        if whisper_joined.strip().lower() == marker["text"].strip().lower():
             continue
         
-        # Rebuild words with Genius text but Whisper timing
         new_words = []
         
         if len(genius_words) <= len(whisper_words):
@@ -233,14 +300,13 @@ def _rebuild_words_after_alignment(markers):
         else:
             seg_start = marker["time"]
             seg_end = marker["end_time"]
-            duration = seg_end - seg_start
-            word_dur = duration / len(genius_words)
-            
+            dur = seg_end - seg_start
+            wd = dur / len(genius_words) if genius_words else dur
             for i, gw in enumerate(genius_words):
                 new_words.append({
                     "word": gw,
-                    "start": round(seg_start + (i * word_dur), 3),
-                    "end": round(seg_start + ((i + 1) * word_dur), 3)
+                    "start": round(seg_start + i * wd, 3),
+                    "end": round(seg_start + (i + 1) * wd, 3)
                 })
         
         marker["words"] = new_words
@@ -249,40 +315,137 @@ def _rebuild_words_after_alignment(markers):
 
 
 # ============================================================================
-# HELPER FUNCTIONS
+# HALLUCINATION & JUNK REMOVAL
 # ============================================================================
 
+def _remove_hallucinations(markers, initial_prompt):
+    patterns = [
+        r"lyrics?\s+(from|of|to)\s+the\s+song",
+        r"thank\s*you\s+(for\s+)?(watching|listening)",
+        r"(please\s+)?subscribe",
+        r"^\s*music\s*$",
+        r"^\s*\[?\s*music\s*\]?\s*$",
+        r"^\s*♪+\s*$",
+        r"subtitles?\s+by", r"captions?\s+by",
+        r"copyright\b", r"all\s+rights?\s+reserved",
+        r"^\s*\.\.\.\s*$", r"^\s*you$",
+    ]
+    
+    if initial_prompt:
+        pc = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
+        if len(pc) > 5:
+            patterns.append(re.escape(pc))
+    
+    filtered = []
+    removed = 0
+    
+    for m in markers:
+        text = m.get("text", "").strip()
+        if not text:
+            continue
+        tc = re.sub(r"[^a-zA-Z0-9\s]", "", text).lower().strip()
+        
+        is_bad = any(re.search(p, tc, re.IGNORECASE) for p in patterns if _safe_search(p, tc))
+        
+        if not is_bad and initial_prompt:
+            from rapidfuzz import fuzz
+            pc2 = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
+            if fuzz.ratio(tc, pc2) > 70:
+                is_bad = True
+        
+        if is_bad:
+            print(f"   🗑 Hallucination: '{text[:60]}'")
+            removed += 1
+        else:
+            filtered.append(m)
+    
+    if removed:
+        print(f"   Removed {removed} hallucinated segment(s)")
+    return filtered
+
+
+def _safe_search(pattern, text):
+    try:
+        return re.search(pattern, text, re.IGNORECASE)
+    except re.error:
+        return False
+
+
+def _remove_junk_markers(markers):
+    filtered = []
+    removed = 0
+    
+    for m in markers:
+        text = m.get("text", "").strip()
+        text_alpha = re.sub(r"[^a-zA-Z]", "", text)
+        
+        if len(text_alpha) < 2:
+            removed += 1
+            continue
+        
+        junk = [r"^[\W\s]+$", r"^(um|uh|hmm|ah|oh|ha|huh)+\s*$", r"^\.*$", r"^-+$"]
+        if any(re.search(p, text.lower().strip()) for p in junk):
+            removed += 1
+        else:
+            filtered.append(m)
+    
+    if removed:
+        print(f"   Removed {removed} junk segment(s)")
+    return filtered
+
+
+def _remove_stutter_duplicates(markers):
+    if len(markers) < 2:
+        return markers
+    
+    clean = re.compile(r"[^a-zA-Z0-9\s]")
+    removed = 0
+    
+    i = len(markers) - 1
+    while i > 0:
+        curr = clean.sub("", markers[i].get("text", "")).lower().strip()
+        prev = clean.sub("", markers[i - 1].get("text", "")).lower().strip()
+        
+        if curr and prev and curr == prev:
+            gap = markers[i]["time"] - markers[i - 1].get("end_time", markers[i - 1]["time"] + 2)
+            if gap < 0.5:
+                markers.pop(i)
+                removed += 1
+        i -= 1
+    
+    if removed:
+        print(f"   Removed {removed} stutter duplicate(s)")
+    return markers
+
+
+# ============================================================================
+# HELPERS
+# ============================================================================
+
+def _get_audio_duration(audio_path):
+    try:
+        return len(AudioSegment.from_file(audio_path)) / 1000.0
+    except Exception:
+        return 30.0
+
+
 def _build_initial_prompt(song_title):
-    """Build Whisper initial prompt from song title"""
     if not song_title:
         return None
-    
     if " - " in song_title:
         artist, track = song_title.split(" - ", 1)
-        return f"Lyrics from the song '{track}' by {artist}."
-    
-    return f"Lyrics from the song '{song_title}'."
+        return f"{track}, {artist}."
+    return f"{song_title}."
 
 
 def _assign_colors(markers):
-    """Assign alternating white/black colors to markers"""
-    for i, marker in enumerate(markers):
-        marker["color"] = "white" if i % 2 == 0 else "black"
+    for i, m in enumerate(markers):
+        m["color"] = "white" if i % 2 == 0 else "black"
 
 
 def _fix_marker_gaps(markers):
-    """Ensure word timings don't have large unexplained gaps"""
-    for marker in markers:
-        words = marker.get("words", [])
-        if len(words) < 2:
-            continue
-        
+    for m in markers:
+        words = m.get("words", [])
         for i in range(1, len(words)):
-            prev_end = words[i - 1]["end"]
-            curr_start = words[i]["start"]
-            gap = curr_start - prev_end
-            
-            if gap > 2.0:
-                words[i]["start"] = prev_end + 0.1
-    
-    return markers
+            if words[i]["start"] - words[i - 1]["end"] > 2.0:
+                words[i]["start"] = words[i - 1]["end"] + 0.1

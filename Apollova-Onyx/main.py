@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 """
 Apollova Onyx - Music Video Automation
-Hybrid template: Word-by-word lyrics (left) + Spinning disc with album art (right)
-
-NOTE: Onyx shares the nova_lyrics column with Mono for word-level transcription caching.
+Hybrid template: Word-by-word lyrics + spinning disc with album art
 """
 import os
+import sys
 import json
-import shutil
 from pathlib import Path
 from rich.console import Console
+
+# Add parent directory so we can import from shared scripts/
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.config import Config
 from scripts.audio_processing import download_audio, trim_audio
 from scripts.image_processing import download_image, extract_colors
 from scripts.lyric_processing_onyx import transcribe_audio_onyx
+from scripts.genius_processing import fetch_genius_image
 from scripts.song_database import SongDatabase
 
 console = Console()
 
-# Initialize song database with shared path
+# Shared database
 SHARED_DB = Path(__file__).parent.parent / "database" / "songs.db"
 song_db = SongDatabase(db_path=str(SHARED_DB))
 
 
 def check_job_progress(job_folder):
-    """Check which stages are already complete for a job"""
+    """Check which stages are already complete"""
     stages = {
         "audio_downloaded": os.path.exists(os.path.join(job_folder, "audio_source.mp3")),
         "audio_trimmed": os.path.exists(os.path.join(job_folder, "audio_trimmed.wav")),
@@ -34,7 +36,6 @@ def check_job_progress(job_folder):
         "job_complete": os.path.exists(os.path.join(job_folder, "job_data.json"))
     }
     
-    # Load existing job data if available
     job_data = {}
     json_path = os.path.join(job_folder, "job_data.json")
     if os.path.exists(json_path):
@@ -48,7 +49,7 @@ def check_job_progress(job_folder):
 
 
 def process_single_job(job_id):
-    """Process a single job with database caching"""
+    """Process a single Onyx job"""
     job_folder = os.path.join(os.path.dirname(__file__), Config.JOBS_DIR, f"job_{job_id:03}")
     os.makedirs(job_folder, exist_ok=True)
     
@@ -56,49 +57,43 @@ def process_single_job(job_id):
     
     stages, job_data = check_job_progress(job_folder)
     
-    # === Check if job is already complete ===
+    # Check if already complete
     if stages["job_complete"] and all([
-        stages["audio_downloaded"],
-        stages["audio_trimmed"],
-        stages["onyx_data_created"],
-        stages["image_downloaded"]
+        stages["audio_downloaded"], stages["audio_trimmed"],
+        stages["onyx_data_created"], stages["image_downloaded"]
     ]):
         song_title = job_data.get("song_title", "Unknown")
         console.print(f"[green]✓ Job {job_id:03} already complete: {song_title}[/green]")
         return True
     
-    # === Get Song Title FIRST ===
+    # === Get Song Title ===
     song_title = job_data.get("song_title")
     if not song_title:
         song_title = input(f"[Job {job_id}] Song Title (Artist - Song): ").strip()
     else:
         console.print(f"[dim]Song: {song_title}[/dim]")
     
-    # === Check Database for Cached Parameters ===
+    # === Check Database Cache ===
     cached_song = song_db.get_song(song_title)
-    cached_nova_lyrics = None  # Changed from cached_onyx_lyrics
+    cached_onyx_lyrics = None
+    cached_image_url = None
+    cached_colors = None
     
     if cached_song:
-        console.print(f"[green]✓ Found '{song_title}' in database![/green]")
-        
-        # Use cached parameters
+        console.print(f"[green]✓ Found '{song_title}' in database! Loading cached parameters...[/green]")
         audio_url = cached_song["youtube_url"]
         start_time = cached_song["start_time"]
         end_time = cached_song["end_time"]
         cached_image_url = cached_song["genius_image_url"]
         cached_colors = cached_song["colors"]
-        
-        # Get word-level lyrics from nova_lyrics column (shared with Mono)
-        cached_nova_lyrics = song_db.get_nova_lyrics(song_title)
+        cached_onyx_lyrics = song_db.get_onyx_lyrics(song_title)
         
         console.print(f"[dim]  URL: {audio_url}[/dim]")
         console.print(f"[dim]  Time: {start_time} → {end_time}[/dim]")
-        if cached_nova_lyrics:
-            console.print(f"[dim]  Cached word-level lyrics: {len(cached_nova_lyrics.get('markers', []))} markers ⚡[/dim]")
+        if cached_onyx_lyrics:
+            console.print(f"[dim]  Cached Onyx lyrics: {len(cached_onyx_lyrics.get('markers', []))} markers ⚡[/dim]")
     else:
         console.print(f"[yellow]'{song_title}' not in database. Creating new entry...[/yellow]")
-        cached_image_url = None
-        cached_colors = None
     
     # === Audio Download ===
     if not stages["audio_downloaded"]:
@@ -117,12 +112,7 @@ def process_single_job(job_id):
     else:
         audio_path = os.path.join(job_folder, "audio_source.mp3")
         console.print("✓ Audio already downloaded")
-        if cached_song:
-            audio_url = cached_song["youtube_url"]
-        elif "youtube_url" in job_data:
-            audio_url = job_data.get("youtube_url", "unknown")
-        else:
-            audio_url = "unknown"
+        audio_url = cached_song["youtube_url"] if cached_song else job_data.get("youtube_url", "unknown")
     
     # === Audio Trimming ===
     if not stages["audio_trimmed"]:
@@ -131,10 +121,9 @@ def process_single_job(job_id):
             end_time = cached_song["end_time"]
             console.print(f"[dim]Using cached timing: {start_time} → {end_time}[/dim]")
         else:
-            start_time = input(f"[Job {job_id}] Start time (MM:SS or press Enter for 00:00): ").strip()
+            start_time = input(f"[Job {job_id}] Start time (MM:SS or Enter for 00:00): ").strip()
             if not start_time:
                 start_time = "00:00"
-            
             if start_time == "00:00":
                 end_time = "01:01"
                 console.print(f"[dim]Auto-set end time to {end_time}[/dim]")
@@ -155,81 +144,82 @@ def process_single_job(job_id):
             end_time = cached_song["end_time"]
         else:
             start_time = job_data.get("start_time", "00:00")
-            end_time = job_data.get("end_time", "01:00")
+            end_time = job_data.get("end_time", "01:01")
     
-    # === Image Download ===
-    if not stages["image_downloaded"]:
-        console.print("[cyan]Downloading cover art...[/cyan]")
+    # === Image Download (Required for Onyx disc) ===
+    genius_image_url = cached_image_url or "unknown"
+    if cached_image_url and not stages["image_downloaded"]:
+        console.print("[green]✓ Using cached image URL[/green]")
+        console.print("[cyan]Downloading image...[/cyan]")
         try:
-            if cached_image_url and cached_image_url != "fetched_from_genius":
-                image_path = download_image(job_folder, cached_image_url)
-                genius_image_url = cached_image_url
-            else:
-                # Try to get from Genius - use the function that returns both path and URL
-                from scripts.genius_processing import fetch_genius_image_with_url
-                image_path, genius_image_url = fetch_genius_image_with_url(song_title, job_folder)
-                if not image_path:
-                    console.print("[yellow]Could not find cover art automatically[/yellow]")
-                    image_url = input(f"[Job {job_id}] Cover image URL: ").strip()
-                    image_path = download_image(job_folder, image_url)
-                    genius_image_url = image_url
+            image_path = download_image(job_folder, cached_image_url)
         except Exception as e:
-            console.print(f"[red]Failed to download image: {e}[/red]")
-            return False
-    else:
+            console.print(f"[yellow]Cached image failed: {e}[/yellow]")
+            cached_image_url = None
+    
+    if not cached_image_url and not stages["image_downloaded"]:
+        console.print("[cyan]Fetching cover image from Genius...[/cyan]")
+        try:
+            image_path = fetch_genius_image(song_title, job_folder)
+            if image_path:
+                genius_image_url = "fetched_from_genius"
+            else:
+                image_url = input(f"[Job {job_id}] Enter Cover Image URL manually: ").strip()
+                console.print("[cyan]Downloading image...[/cyan]")
+                image_path = download_image(job_folder, image_url)
+                genius_image_url = image_url
+        except Exception as e:
+            console.print(f"[yellow]Auto-fetch failed: {e}[/yellow]")
+            image_url = input(f"[Job {job_id}] Enter Cover Image URL manually: ").strip()
+            console.print("[cyan]Downloading image...[/cyan]")
+            try:
+                image_path = download_image(job_folder, image_url)
+                genius_image_url = image_url
+            except Exception as e2:
+                console.print(f"[red]Failed to download image: {e2}[/red]")
+                return False
+    elif stages["image_downloaded"]:
         image_path = os.path.join(job_folder, "cover.png")
-        console.print("✓ Cover art already downloaded")
-        genius_image_url = cached_image_url if cached_image_url else None
+        console.print("✓ Image already downloaded")
     
     # === Color Extraction ===
     if cached_colors:
+        console.print(f"[green]✓ Using cached colors: {', '.join(cached_colors)}[/green]")
         colors = cached_colors
-        console.print(f"[dim]Using cached colors[/dim]")
     else:
-        console.print("[cyan]Extracting colors from cover...[/cyan]")
-        try:
-            colors = extract_colors(image_path)
-        except Exception as e:
-            console.print(f"[yellow]Color extraction failed: {e}[/yellow]")
-            colors = ["#1a1a2e", "#16213e"]  # Fallback colors
+        console.print("[cyan]Extracting colors...[/cyan]")
+        colors = extract_colors(job_folder)
     
-    # === Onyx Data Generation (Word-level transcription) ===
+    # === Onyx Transcription (Onyx manages onyx_lyrics column) ===
     onyx_data_path = os.path.join(job_folder, "onyx_data.json")
     
-    if not stages["onyx_data_created"]:
-        # Check if we have cached word-level lyrics from nova_lyrics column
-        if cached_nova_lyrics and cached_nova_lyrics.get("markers"):
-            console.print("[green]⚡ Using cached word-level lyrics from database[/green]")
-            onyx_data = cached_nova_lyrics.copy()
-            
-            # Add colors and cover image path
+    if cached_onyx_lyrics:
+        console.print(f"[green]✓ Using cached Onyx transcription ({len(cached_onyx_lyrics.get('markers', []))} markers) ⚡[/green]")
+        onyx_data = cached_onyx_lyrics
+        onyx_data["colors"] = colors
+        onyx_data["cover_image"] = "cover.png"
+        with open(onyx_data_path, "w", encoding="utf-8") as f:
+            json.dump(onyx_data, f, indent=4, ensure_ascii=False)
+    elif not stages["onyx_data_created"]:
+        console.print("[cyan]Transcribing with word-level timestamps (Onyx)...[/cyan]")
+        try:
+            onyx_data = transcribe_audio_onyx(job_folder, song_title)
             onyx_data["colors"] = colors
             onyx_data["cover_image"] = "cover.png"
-            
             with open(onyx_data_path, "w", encoding="utf-8") as f:
                 json.dump(onyx_data, f, indent=4, ensure_ascii=False)
-        else:
-            console.print("[cyan]Transcribing audio (word-level)...[/cyan]")
-            try:
-                onyx_data = transcribe_audio_onyx(job_folder, song_title)
-                
-                # Add colors and cover image path
-                onyx_data["colors"] = colors
-                onyx_data["cover_image"] = "cover.png"
-                
-                with open(onyx_data_path, "w", encoding="utf-8") as f:
-                    json.dump(onyx_data, f, indent=4, ensure_ascii=False)
-            except Exception as e:
-                console.print(f"[yellow]Warning: Transcription failed: {e}[/yellow]")
-                onyx_data = {"markers": [], "colors": colors, "cover_image": "cover.png"}
-                with open(onyx_data_path, "w", encoding="utf-8") as f:
-                    json.dump(onyx_data, f)
+            console.print(f"[green]✓ Onyx data: {len(onyx_data.get('markers', []))} markers[/green]")
+        except Exception as e:
+            console.print(f"[red]Failed to generate Onyx data: {e}[/red]")
+            import traceback
+            traceback.print_exc()
+            return False
     else:
         with open(onyx_data_path, "r", encoding="utf-8") as f:
             onyx_data = json.load(f)
-        console.print("✓ Onyx data already created")
+        console.print(f"✓ Onyx data already generated ({len(onyx_data.get('markers', []))} markers)")
     
-    # === Save to Database ===
+    # === Save to Database (Onyx manages onyx_lyrics column) ===
     if not cached_song:
         console.print(f"[cyan]💾 Saving '{song_title}' to database...[/cyan]")
         song_db.add_song(
@@ -237,29 +227,20 @@ def process_single_job(job_id):
             youtube_url=audio_url,
             start_time=start_time,
             end_time=end_time,
-            genius_image_url=genius_image_url if 'genius_image_url' in locals() else None,
-            transcribed_lyrics=None,  # Don't overwrite Aurora's lyrics
+            genius_image_url=genius_image_url,
+            transcribed_lyrics=None,  # Don't touch Aurora's column
             colors=colors,
-            beats=None  # Onyx doesn't use beats
+            beats=None
         )
+        song_db.update_onyx_lyrics(song_title, onyx_data)
         console.print("[green]✓ Song saved to database[/green]")
     else:
         song_db.mark_song_used(song_title)
         console.print(f"[green]✓ Marked '{song_title}' as used[/green]")
         
-        # Update colors if needed
-        if colors and not cached_colors:
-            song_db.update_colors_and_beats(song_title, colors, None)
-    
-    # Save word-level lyrics to nova_lyrics column (shared with Mono)
-    if onyx_data and onyx_data.get("markers"):
-        # Only save the markers part to nova_lyrics (without colors/cover_image)
-        lyrics_data = {
-            "markers": onyx_data["markers"],
-            "total_markers": len(onyx_data["markers"])
-        }
-        song_db.update_nova_lyrics(song_title, lyrics_data)
-        console.print("[green]✓ Word-level lyrics saved to database (nova_lyrics)[/green]")
+        song_db.update_colors_and_beats(song_title, colors, None)
+        if not cached_onyx_lyrics:
+            song_db.update_onyx_lyrics(song_title, onyx_data)
     
     # === Save Job Data ===
     job_data = {
@@ -285,83 +266,26 @@ def process_single_job(job_id):
     return True
 
 
-def check_existing_jobs():
-    """Check if jobs folder already has completed jobs and offer to delete"""
-    jobs_dir = os.path.join(os.path.dirname(__file__), Config.JOBS_DIR)
-    
-    if not os.path.exists(jobs_dir):
-        return True  # No jobs folder, continue
-    
-    # Check for existing job folders
-    existing_jobs = []
-    for i in range(1, 13):
-        job_folder = os.path.join(jobs_dir, f"job_{i:03}")
-        job_data_path = os.path.join(job_folder, "job_data.json")
-        if os.path.exists(job_data_path):
-            existing_jobs.append(i)
-    
-    if not existing_jobs:
-        return True  # No completed jobs, continue
-    
-    console.print(f"[yellow]⚠️  Found {len(existing_jobs)} existing completed jobs in {jobs_dir}[/yellow]")
-    console.print(f"[dim]   Jobs: {', '.join(str(j) for j in existing_jobs)}[/dim]")
-    
-    response = input("\nDelete existing jobs and start fresh? (y/N): ").strip().lower()
-    
-    if response == 'y':
-        for i in range(1, 13):
-            job_folder = os.path.join(jobs_dir, f"job_{i:03}")
-            if os.path.exists(job_folder):
-                try:
-                    shutil.rmtree(job_folder)
-                    console.print(f"[dim]   Deleted job_{i:03}[/dim]")
-                except Exception as e:
-                    console.print(f"[red]   Failed to delete job_{i:03}: {e}[/red]")
-        console.print("[green]✓ Cleared existing jobs[/green]\n")
-        return True
-    else:
-        console.print("[yellow]Keeping existing jobs. Will skip completed ones.[/yellow]\n")
-        return True
-
-
 def batch_generate_jobs():
-    """Generate all jobs with database caching"""
-    console.print("\n[bold magenta]💿 Apollova Onyx - Music Video Automation[/bold magenta]\n")
-    
-    # Check for existing jobs first
-    check_existing_jobs()
-    
-    # Validate config
+    """Generate all Onyx jobs"""
+    console.print("\n[bold magenta]💿 Apollova Onyx - Hybrid Lyric Videos[/bold magenta]\n")
     Config.validate()
     
-    # Create jobs directory
-    os.makedirs(Config.JOBS_DIR, exist_ok=True)
+    jobs_dir = os.path.join(os.path.dirname(__file__), Config.JOBS_DIR)
+    os.makedirs(jobs_dir, exist_ok=True)
     
-    # Show database stats
     stats = song_db.get_stats()
     if stats["total_songs"] > 0:
         console.print(f"[dim]📊 Database: {stats['total_songs']} songs, "
-                     f"{stats['cached_lyrics']} with cached lyrics[/dim]\n")
+                      f"{stats['cached_lyrics']} with cached lyrics[/dim]\n")
     
-    # Process each job
-    total_jobs = Config.TOTAL_JOBS
-    
-    for job_id in range(1, total_jobs + 1):
+    for job_id in range(1, Config.TOTAL_JOBS + 1):
         success = process_single_job(job_id)
-        
         if not success:
             console.print(f"\n[yellow]⚠️  Job {job_id} had errors, continuing...[/yellow]")
     
     console.print("\n[bold green]✅ All Onyx jobs processed![/bold green]")
-    
-    # Show updated stats
-    stats = song_db.get_stats()
-    console.print(f"\n[cyan]📊 Database now has:[/cyan]")
-    console.print(f"   {stats['total_songs']} songs")
-    console.print(f"   {stats['cached_lyrics']} with cached lyrics")
-    console.print(f"   {stats['total_uses']} total uses")
-    
-    console.print("\n[cyan]Next step:[/cyan] Run the After Effects JSX script")
+    console.print("\n[cyan]Next:[/cyan] Run the After Effects JSX script")
     console.print("[dim]File → Scripts → Run Script File... → scripts/JSX/automateMV_onyx.jsx[/dim]\n")
 
 

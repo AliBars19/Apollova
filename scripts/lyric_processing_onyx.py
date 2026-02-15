@@ -319,22 +319,17 @@ def _rebuild_words_after_alignment(markers):
 # ============================================================================
 
 def _remove_hallucinations(markers, initial_prompt):
+    """Remove segments where Whisper hallucinated. Only kills exact prompt regurgitation."""
     patterns = [
-        r"lyrics?\s+(from|of|to)\s+the\s+song",
-        r"thank\s*you\s+(for\s+)?(watching|listening)",
-        r"(please\s+)?subscribe",
-        r"^\s*music\s*$",
+        r"^thank\s*you\s+(for\s+)?(watching|listening)\s*\.?$",
+        r"^(please\s+)?subscribe\b",
+        r"^\s*music\s*\.?$",
         r"^\s*\[?\s*music\s*\]?\s*$",
         r"^\s*♪+\s*$",
-        r"subtitles?\s+by", r"captions?\s+by",
-        r"copyright\b", r"all\s+rights?\s+reserved",
-        r"^\s*\.\.\.\s*$", r"^\s*you$",
+        r"^subtitles?\s+by\b", r"^captions?\s+by\b",
+        r"^copyright\b", r"^all\s+rights?\s+reserved",
+        r"^\s*\.\.\.\s*$", r"^\s*you\s*\.?$",
     ]
-    
-    if initial_prompt:
-        pc = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
-        if len(pc) > 5:
-            patterns.append(re.escape(pc))
     
     filtered = []
     removed = 0
@@ -345,12 +340,14 @@ def _remove_hallucinations(markers, initial_prompt):
             continue
         tc = re.sub(r"[^a-zA-Z0-9\s]", "", text).lower().strip()
         
-        is_bad = any(re.search(p, tc, re.IGNORECASE) for p in patterns if _safe_search(p, tc))
+        is_bad = any(_safe_search(p, tc) for p in patterns)
         
+        # Only kill if segment is basically JUST the prompt (>85% match + short)
         if not is_bad and initial_prompt:
             from rapidfuzz import fuzz
-            pc2 = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
-            if fuzz.ratio(tc, pc2) > 70:
+            pc = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
+            similarity = fuzz.ratio(tc, pc)
+            if similarity > 85 and len(tc.split()) <= len(pc.split()) + 2:
                 is_bad = True
         
         if is_bad:

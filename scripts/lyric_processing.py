@@ -256,42 +256,28 @@ def _multi_pass_transcribe(model, audio_path, initial_prompt, audio_duration):
 def _remove_hallucinations(segments, initial_prompt):
     """
     Remove segments where Whisper hallucinated:
-    - Regurgitated the initial_prompt (e.g. "Lyrics from the song...")
     - Common Whisper hallucination patterns (music tags, thank yous, etc.)
-    - Segments that are suspiciously similar to the prompt
+    - Segments that are EXACTLY the prompt text with nothing else added
+    
+    IMPORTANT: Does NOT remove segments that contain the song title as part
+    of actual lyrics. "I'm running up that hill" is a real lyric even though
+    the song is called "Running Up That Hill". We only remove segments that
+    are purely the prompt text with no additional lyrical content.
     """
-    # Static hallucination patterns
+    # Static hallucination patterns — these are NEVER real lyrics
     hallucination_patterns = [
-        r"lyrics?\s+(from|of|to)\s+the\s+song",
-        r"thank\s*you\s+(for\s+)?(watching|listening)",
-        r"(please\s+)?subscribe",
-        r"^\s*music\s*$",
+        r"^thank\s*you\s+(for\s+)?(watching|listening)\s*\.?$",
+        r"^(please\s+)?subscribe\b",
+        r"^\s*music\s*\.?$",
         r"^\s*\[?\s*music\s*\]?\s*$",
         r"^\s*♪+\s*$",
-        r"subtitles?\s+by",
-        r"captions?\s+by",
-        r"copyright\b",
-        r"all\s+rights?\s+reserved",
+        r"^subtitles?\s+by\b",
+        r"^captions?\s+by\b",
+        r"^copyright\b",
+        r"^all\s+rights?\s+reserved",
         r"^\s*\.\.\.\s*$",
-        r"^\s*you$",
+        r"^\s*you\s*\.?$",
     ]
-    
-    # Add the actual prompt text as a pattern
-    if initial_prompt:
-        prompt_clean = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
-        if len(prompt_clean) > 5:
-            hallucination_patterns.append(re.escape(prompt_clean))
-            # Also catch partial prompt matches
-            for chunk in prompt_clean.split():
-                if len(chunk) > 6:
-                    continue  # Skip short common words
-            # Catch "Lyrics from the song" style
-            if "by" in prompt_clean:
-                parts = prompt_clean.split("by")
-                for part in parts:
-                    part = part.strip()
-                    if len(part) > 10:
-                        hallucination_patterns.append(re.escape(part))
     
     filtered = []
     removed = 0
@@ -312,11 +298,16 @@ def _remove_hallucinations(segments, initial_prompt):
             except re.error:
                 continue
         
-        # Also check: if the segment is very similar to the prompt itself
+        # Check for EXACT prompt regurgitation only
+        # "Running Up That Hill, Kate Bush." being repeated verbatim = hallucination
+        # "I'm running up that hill" = real lyric (has extra words)
         if not is_hallucination and initial_prompt:
-            prompt_clean_full = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
+            prompt_clean = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
             from rapidfuzz import fuzz
-            if fuzz.ratio(text_clean, prompt_clean_full) > 70:
+            # Only flag if the segment is basically JUST the prompt (>85% match)
+            # AND the segment is short (real lyrics tend to have more content)
+            similarity = fuzz.ratio(text_clean, prompt_clean)
+            if similarity > 85 and len(text_clean.split()) <= len(prompt_clean.split()) + 2:
                 is_hallucination = True
         
         if is_hallucination:

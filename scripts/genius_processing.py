@@ -433,28 +433,69 @@ def _parse_song_title(song_title):
 def _find_best_hit(hits, artist, title):
     """
     Find the best matching hit from Genius search results.
-    Prioritizes exact artist matches to avoid wrong songs.
+    
+    Priorities:
+      1. Exact artist match + NOT a translation
+      2. Artist in full title + NOT a translation
+      3. Any non-translation result
+      4. First result (last resort)
+    
+    Filters out translations (Türkçe Çeviri, Tradução, Traduction, etc.)
+    which Genius sometimes ranks higher than the original.
     """
+    # Translation indicators in Genius result titles
+    translation_markers = [
+        "türkçe çeviri", "tradução", "traduction", "traducción",
+        "перевод", "översättning", "übersetzung", "terjemahan",
+        "翻訳", "번역", "traduzione", "vertaling",
+        "genius türkçe", "genius brasil", "genius traductions",
+        "genius traducciones", "genius traduções",
+    ]
+    
+    def _is_translation(hit):
+        full_title = hit["result"].get("full_title", "").lower()
+        primary_artist = hit["result"].get("primary_artist", {}).get("name", "").lower()
+        # Check title and artist for translation markers
+        for marker in translation_markers:
+            if marker in full_title or marker in primary_artist:
+                return True
+        return False
+    
+    # Split hits into originals and translations
+    originals = [h for h in hits if not _is_translation(h)]
+    
+    # If no originals found, use all hits (better than nothing)
+    pool = originals if originals else hits
+    
     if not artist:
-        return hits[0]
+        return pool[0]
     
     artist_lower = artist.lower()
     
-    # First pass: look for exact artist match
-    for hit in hits:
+    # First pass: exact artist match in non-translations
+    for hit in pool:
         result = hit["result"]
         primary_artist = result.get("primary_artist", {}).get("name", "").lower()
         
         if artist_lower in primary_artist or primary_artist in artist_lower:
             return hit
     
-    # Second pass: check featured artists / full title
-    for hit in hits:
+    # Second pass: artist mentioned in full title of non-translations
+    for hit in pool:
         result = hit["result"]
         full_title = result.get("full_title", "").lower()
         
         if artist_lower in full_title:
             return hit
     
-    # Default to first result
-    return hits[0]
+    # Third pass: title match in non-translations
+    title_lower = title.lower() if title else ""
+    for hit in pool:
+        result = hit["result"]
+        hit_title = result.get("title", "").lower()
+        
+        if title_lower in hit_title or hit_title in title_lower:
+            return hit
+    
+    # Default to first non-translation (or first overall)
+    return pool[0]

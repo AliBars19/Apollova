@@ -56,7 +56,8 @@ def transcribe_audio_onyx(job_folder, song_title=None):
         # ============================================================
         # MULTI-PASS TRANSCRIPTION
         # ============================================================
-        result = _multi_pass_transcribe(audio_path, initial_prompt, audio_duration)
+        language = _detect_language(song_title)
+        result = _multi_pass_transcribe(audio_path, initial_prompt, audio_duration, language)
         
         if not result or not result.segments:
             print("❌ Whisper returned no segments after all attempts")
@@ -119,8 +120,14 @@ def transcribe_audio_onyx(job_folder, song_title=None):
         # FINAL CLEANUP
         # ============================================================
         markers = [m for m in markers if m["text"].strip()]
+        markers = _remove_non_target_script(markers, "text", song_title)
         _assign_colors(markers)
         _fix_marker_gaps(markers)
+        
+        if markers and audio_duration > 0:
+            ratio = len(markers) / audio_duration * 10
+            if ratio < 1.0:
+                print(f"  ⚠ LOW QUALITY: only {len(markers)} markers for {audio_duration:.0f}s — consider adjusting timestamps")
         
         print(f"✓ Onyx transcription complete: {len(markers)} markers")
         
@@ -138,9 +145,11 @@ def transcribe_audio_onyx(job_folder, song_title=None):
 # MULTI-PASS WHISPER
 # ============================================================================
 
-def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
+def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration, language=None):
     """Try multiple Whisper configs with VRAM management. Onyx uses regroup=False for manual split."""
     min_expected = max(2, int(audio_duration / 3.5))
+    
+    lang_params = {"language": language} if language else {}
     
     passes = [
         {
@@ -150,6 +159,7 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
                 suppress_silence=True, regroup=False,
                 temperature=0, initial_prompt=initial_prompt,
                 condition_on_previous_text=False,
+                **lang_params,
             )
         },
         {
@@ -159,6 +169,7 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
                 suppress_silence=False, regroup=False,
                 temperature=0.2, initial_prompt=initial_prompt,
                 condition_on_previous_text=False,
+                **lang_params,
             )
         },
         {
@@ -168,6 +179,7 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
                 suppress_silence=False, regroup=False,
                 temperature=0.4, initial_prompt=initial_prompt,
                 condition_on_previous_text=False,
+                **lang_params,
             )
         },
         {
@@ -495,6 +507,63 @@ def _build_initial_prompt(song_title):
         artist, track = song_title.split(" - ", 1)
         return f"{track}, {artist}."
     return f"{song_title}."
+
+
+def _detect_language(song_title):
+    """Detect likely language from song title to help Whisper."""
+    if not song_title:
+        return "en"
+    title_lower = song_title.lower()
+    spanish = ["despacito", "danza kuduro", "taki taki", "gata only",
+               "telepatia", "ozuna", "don omar", "luis fonsi", "floyymenor",
+               "bad bunny", "j balvin", "daddy yankee", "nicky jam",
+               "maluma", "shakira", "reggaeton", "latino"]
+    for s in spanish:
+        if s in title_lower:
+            return "es"
+    french = ["stromae", "papaoutai", "edith piaf", "daft punk"]
+    for f in french:
+        if f in title_lower:
+            return "fr"
+    if "nimco happy" in title_lower or "isii nafta" in title_lower:
+        return "so"
+    if "ckay" in title_lower and "nwantiti" in title_lower:
+        return "ig"
+    return "en"
+
+
+def _remove_non_target_script(items, text_key, song_title=None):
+    """Remove items with non-Latin script (Greek/Cyrillic translation leaks)."""
+    if not items:
+        return items
+    lang = _detect_language(song_title) if song_title else "en"
+    latin_languages = {"en", "es", "fr", "pt", "it", "de", "so", "ig"}
+    if lang not in latin_languages:
+        return items
+    filtered = []
+    removed = 0
+    for item in items:
+        text = item.get(text_key, "").strip()
+        if not text:
+            continue
+        latin_count = 0
+        non_latin_count = 0
+        for char in text:
+            if char.isalpha():
+                cp = ord(char)
+                if cp < 0x0250 or (0x1E00 <= cp <= 0x1EFF):
+                    latin_count += 1
+                else:
+                    non_latin_count += 1
+        total = latin_count + non_latin_count
+        if total > 0 and non_latin_count / total > 0.4:
+            print(f"   🗑 Non-Latin script: '{text[:50]}'")
+            removed += 1
+        else:
+            filtered.append(item)
+    if removed:
+        print(f"   Removed {removed} non-target script segment(s)")
+    return filtered
 
 
 def _assign_colors(markers):

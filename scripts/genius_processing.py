@@ -72,7 +72,8 @@ def fetch_genius_image(song_title, job_folder):
         print("  No Genius results found for image")
         return None
     
-    song_info = hits[0]["result"]
+    best_hit = _find_best_hit(hits, artist, title)
+    song_info = best_hit["result"]
     image_url = song_info.get("song_art_image_url") or song_info.get("header_image_url")
     
     if not image_url:

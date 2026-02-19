@@ -55,7 +55,8 @@ def transcribe_audio(job_folder, song_title=None):
         # ============================================================
         # MULTI-PASS TRANSCRIPTION (with VRAM management)
         # ============================================================
-        result = _multi_pass_transcribe(audio_path, initial_prompt, audio_duration)
+        language = _detect_language(song_title)
+        result = _multi_pass_transcribe(audio_path, initial_prompt, audio_duration, language)
         
         if not result or not result.segments:
             print("❌ Whisper returned no segments after all attempts")
@@ -129,15 +130,22 @@ def transcribe_audio(job_folder, song_title=None):
         # Remove any segments that ended up empty after alignment
         segments = [s for s in segments if s["lyric_current"].strip()]
         
+        # Strip non-Latin script lines (Greek/Cyrillic from bad Genius matches)
+        segments = _remove_non_target_script(segments, "lyric_current", song_title)
+        
         # Wrap long lines for AE display
         for seg in segments:
             seg["lyric_current"] = _wrap_line(seg["lyric_current"])
-            # These are ALWAYS empty — AE handles prev/next via expressions
             seg["lyric_prev"] = ""
             seg["lyric_next1"] = ""
             seg["lyric_next2"] = ""
-            # Remove internal tracking field
             seg.pop("end_time", None)
+        
+        # Quality warning for low-segment jobs
+        if segments and audio_duration > 0:
+            ratio = len(segments) / audio_duration * 10
+            if ratio < 1.0:
+                print(f"  ⚠ LOW QUALITY: only {len(segments)} segments for {audio_duration:.0f}s — consider adjusting timestamps")
         
         # Save
         lyrics_path = os.path.join(job_folder, "lyrics.txt")
@@ -156,7 +164,7 @@ def transcribe_audio(job_folder, song_title=None):
 # MULTI-PASS WHISPER TRANSCRIPTION
 # ============================================================================
 
-def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
+def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration, language=None):
     """
     Try multiple Whisper configurations, from strict to aggressive.
     Returns the best result based on segment count vs. audio duration.
@@ -166,12 +174,14 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
       - On OOM: unloads model, clears VRAM, retries on CPU
       - Explicitly deletes model after completion
     
-    Pass 1: Strict — VAD on, temp=0, suppress silence (cleanest)
-    Pass 2: Medium — VAD on, lower threshold, temp=0.2
-    Pass 3: Loose  — VAD off, temp=0.4
-    Pass 4: Nuclear — No prompt at all, temp=0.6, previous text on
+    Language hinting:
+      - If language is detected from song title, forces it on passes 1-3
+      - Pass 4 (nuclear) always auto-detects to catch edge cases
     """
     min_expected = max(2, int(audio_duration / 3.5))
+    
+    # Build language params for each pass
+    lang_params = {"language": language} if language else {}
     
     passes = [
         {
@@ -181,6 +191,7 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
                 suppress_silence=True, regroup=True,
                 temperature=0, initial_prompt=initial_prompt,
                 condition_on_previous_text=False,
+                **lang_params,
             )
         },
         {
@@ -190,6 +201,7 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
                 suppress_silence=False, regroup=True,
                 temperature=0.2, initial_prompt=initial_prompt,
                 condition_on_previous_text=False,
+                **lang_params,
             )
         },
         {
@@ -199,6 +211,7 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
                 regroup=True, temperature=0.4,
                 initial_prompt=initial_prompt,
                 condition_on_previous_text=False,
+                **lang_params,
             )
         },
         {
@@ -208,6 +221,7 @@ def _multi_pass_transcribe(audio_path, initial_prompt, audio_duration):
                 regroup=True, temperature=0.6,
                 initial_prompt=None,
                 condition_on_previous_text=True,
+                # No language hint — let Whisper auto-detect as last resort
             )
         },
     ]
@@ -504,10 +518,7 @@ def _get_audio_duration(audio_path):
 def _build_initial_prompt(song_title):
     """
     Build Whisper initial prompt from song title.
-    
     Kept SHORT and natural to minimize hallucination risk.
-    Just artist and song name — no "Lyrics from the song" phrasing
-    that Whisper loves to regurgitate.
     """
     if not song_title:
         return None
@@ -517,6 +528,109 @@ def _build_initial_prompt(song_title):
         return f"{track}, {artist}."
     
     return f"{song_title}."
+
+
+def _detect_language(song_title):
+    """
+    Detect likely language from song title to help Whisper.
+    
+    Known non-English songs get their language code.
+    Most songs default to English since the database is primarily English music.
+    Returns None to let Whisper auto-detect for ambiguous cases.
+    """
+    if not song_title:
+        return "en"
+    
+    title_lower = song_title.lower()
+    
+    # Known Spanish songs/artists
+    spanish_indicators = [
+        "despacito", "danza kuduro", "taki taki", "gata only",
+        "telepatia", "ozuna", "don omar", "luis fonsi", "floyymenor",
+        "bad bunny", "j balvin", "daddy yankee", "nicky jam",
+        "maluma", "shakira", "reggaeton", "latino",
+    ]
+    for indicator in spanish_indicators:
+        if indicator in title_lower:
+            return "es"
+    
+    # Known French songs/artists
+    french_indicators = ["stromae", "papaoutai", "edith piaf", "daft punk"]
+    for indicator in french_indicators:
+        if indicator in title_lower:
+            return "fr"
+    
+    # Known Somali
+    if "nimco happy" in title_lower or "isii nafta" in title_lower:
+        return "so"
+    
+    # Known Nigerian/Pidgin
+    if "ckay" in title_lower and "nwantiti" in title_lower:
+        return "ig"  # Igbo
+    
+    # Default: English for everything else
+    return "en"
+
+
+def _remove_non_target_script(segments, text_key, song_title=None):
+    """
+    Remove segments that contain non-target script characters.
+    
+    Catches Greek, Cyrillic, Arabic, CJK etc. that leak in from
+    Genius translation pages embedded within the original lyrics.
+    
+    Preserves:
+      - Latin characters (English, Spanish, French, etc.)
+      - Common accented chars (é, ñ, ü, etc.)
+      - Known non-English songs (Spanish, French, etc.)
+    """
+    if not segments:
+        return segments
+    
+    # Determine what scripts are expected
+    lang = _detect_language(song_title) if song_title else "en"
+    
+    # Latin-based languages: allow all Latin + accented characters
+    latin_languages = {"en", "es", "fr", "pt", "it", "de", "so", "ig"}
+    
+    if lang not in latin_languages:
+        # Non-Latin language — don't filter, we expect non-Latin chars
+        return segments
+    
+    filtered = []
+    removed = 0
+    
+    for seg in segments:
+        text = seg.get(text_key, "").strip()
+        if not text:
+            continue
+        
+        # Count characters by script type
+        latin_count = 0
+        non_latin_count = 0
+        
+        for char in text:
+            if char.isalpha():
+                cp = ord(char)
+                # Latin + Latin Extended + Latin Supplement (covers accented chars)
+                if cp < 0x0250 or (0x1E00 <= cp <= 0x1EFF):
+                    latin_count += 1
+                else:
+                    non_latin_count += 1
+        
+        total_alpha = latin_count + non_latin_count
+        
+        # If more than 40% of alphabetic chars are non-Latin, it's a translation leak
+        if total_alpha > 0 and non_latin_count / total_alpha > 0.4:
+            print(f"   🗑 Non-Latin script: '{text[:50]}'")
+            removed += 1
+        else:
+            filtered.append(seg)
+    
+    if removed:
+        print(f"   Removed {removed} non-target script segment(s)")
+    
+    return filtered
 
 
 def _wrap_line(text, limit=None):

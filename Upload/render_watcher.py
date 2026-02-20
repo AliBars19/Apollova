@@ -296,15 +296,18 @@ class VideoUploader:
                 with open(file_path, "rb") as f:
                     resp = self.session.post(
                         f"{self.config.api_base_url}/api/upload",
-                        files={"file": (filename, f, "video/mp4")},
+                        files={"video": (filename, f, "video/mp4")},
                         data={"account": account},
                         timeout=self.config.upload_timeout,
                     )
 
                 if resp.status_code == 200:
                     result = resp.json()
-                    logger.info(f"Uploaded {filename} → {account} (id={result.get('id', '?')})")
-                    return result
+                    # API returns { success: true, video: { id: "...", ... } }
+                    video_data = result.get("video", result)
+                    vid = video_data.get("id", "?")
+                    logger.info(f"Uploaded {filename} → {account} (id={vid})")
+                    return video_data
 
                 if resp.status_code == 401:
                     self._authenticated = False
@@ -333,12 +336,17 @@ class VideoUploader:
             logger.info(f"TEST: Would schedule {video_id} at {scheduled_at}")
             return True
         try:
-            resp = self.session.put(
+            resp = self.session.patch(
                 f"{self.config.api_base_url}/api/videos/{video_id}",
                 json={"scheduledAt": scheduled_at, "status": "scheduled"},
                 timeout=self.config.api_timeout,
             )
-            return resp.status_code == 200
+            if resp.status_code == 200:
+                logger.info(f"Scheduled {video_id} at {scheduled_at}")
+                return True
+            else:
+                logger.error(f"Schedule failed for {video_id}: HTTP {resp.status_code} - {resp.text[:300]}")
+                return False
         except requests.RequestException as e:
             logger.error(f"Schedule error for {video_id}: {e}")
             return False
@@ -442,6 +450,7 @@ class FolderWatcher(FileSystemEventHandler):
         # ── Schedule ─────────────────────────────────────────────
         slot = self.scheduler.get_next_slot(self.account)
         slot_iso = slot.isoformat()
+        logger.info(f"Scheduling {file_path.name} (video_id={video_id}) at {slot_iso}")
 
         if self.uploader.schedule_video(video_id, slot_iso):
             self.state.mark_scheduled(record_id, slot_iso)

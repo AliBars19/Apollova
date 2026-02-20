@@ -16,7 +16,7 @@ from typing import Optional
 def _load_dotenv(path: str) -> None:
     """Minimal .env loader — no external dependency needed."""
     try:
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             for line in f:
                 line = line.strip()
                 if not line or line.startswith("#"):
@@ -162,11 +162,14 @@ class Config:
     def validate_or_exit(self) -> None:
         errors = self.validate()
         if errors:
-            print("❌ Configuration errors:")
-            for err in errors:
-                print(f"   • {err}")
-            print("\nCreate a .env file with at minimum:")
-            print("   GATE_PASSWORD=your_admin_password")
+            try:
+                print("Configuration errors:")
+                for err in errors:
+                    print(f"   - {err}")
+                print("\nCreate a .env file with at minimum:")
+                print("   GATE_PASSWORD=your_admin_password")
+            except Exception:
+                pass
             sys.exit(1)
 
     def ensure_dirs(self) -> None:

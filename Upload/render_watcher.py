@@ -54,16 +54,12 @@ from config import Config
 from notification import NotificationService
 
 try:
-    from rich.console import Console
+    from rich.console import Console as RichConsole
     from rich.table import Table
     from rich.panel import Panel
+    _RICH = True
 except ImportError:
-    # Minimal fallback if rich isn't installed
-    class Console:
-        def print(self, *a, **kw):
-            import re
-            text = " ".join(str(x) for x in a)
-            print(re.sub(r'\[/?[^\]]*\]', '', text))
+    _RICH = False
     class Table:
         def __init__(self, **kw): self._rows = []
         def add_column(self, *a, **kw): pass
@@ -73,7 +69,41 @@ except ImportError:
         def __str__(self): return str(self.c)
 
 
-console = Console()
+class _NullConsole:
+    """Silent console that does nothing — used when running headless."""
+    def print(self, *a, **kw):
+        pass
+
+
+def _is_headless() -> bool:
+    """Detect if we're running without a terminal (Task Scheduler, service, etc.)."""
+    try:
+        if sys.stdout is None or sys.stderr is None:
+            return True
+        if not hasattr(sys.stdout, "isatty"):
+            return True
+        return not sys.stdout.isatty()
+    except Exception:
+        return True
+
+
+def _make_console():
+    """Create appropriate console: Rich if interactive, silent if headless."""
+    if _is_headless():
+        return _NullConsole()
+    if _RICH:
+        return RichConsole()
+    # Fallback: plain print with markup stripped
+    import re as _re
+    class _PlainConsole:
+        def print(self, *a, **kw):
+            text = " ".join(str(x) for x in a)
+            print(_re.sub(r'\[/?[^\]]*\]', '', text))
+    return _PlainConsole()
+
+
+IS_HEADLESS = _is_headless()
+console = _make_console()
 logger = logging.getLogger("apollova")
 
 
@@ -212,7 +242,7 @@ class VideoUploader:
                 return True
             try:
                 resp = self.session.post(
-                    f"{self.config.api_base_url}/api/gate",
+                    f"{self.config.api_base_url}/api/auth/gate",
                     json={"password": self.config.gate_password},
                     timeout=self.config.api_timeout,
                 )
@@ -556,24 +586,27 @@ def watch_mode(
 
     watch_paths = config.get_watch_paths()
 
-    # Display what we're watching
-    lines = []
-    for folder_name, (path, account) in watch_paths.items():
-        exists = "✓" if path.exists() else "✗ (will create)"
-        template = folder_name.replace("Apollova-", "").lower()
-        lines.append(f"  {template.capitalize():8s} → {account:8s}  {path}  {exists}")
+    # Display what we're watching (may fail headless — non-fatal)
+    try:
+        lines = []
+        for folder_name, (path, account) in watch_paths.items():
+            exists = "✓" if path.exists() else "✗ (will create)"
+            template = folder_name.replace("Apollova-", "").lower()
+            lines.append(f"  {template.capitalize():8s} → {account:8s}  {path}  {exists}")
 
-    console.print(Panel(
-        "[bold]Watching render folders:[/bold]\n" +
-        "\n".join(lines) + "\n\n"
-        f"[bold]Schedule:[/bold] {config.schedule_interval_minutes}min intervals, "
-        f"{config.schedule_day_start_hour}:00–{config.schedule_day_end_hour}:00\n"
-        f"[bold]Limit:[/bold] {config.videos_per_day_per_account}/day per account "
-        f"(overflow → next day)\n"
-        "[dim]Press Ctrl+C to stop[/dim]",
-        title="👁️ Render Watcher Active",
-        border_style="cyan",
-    ))
+        console.print(Panel(
+            "[bold]Watching render folders:[/bold]\n" +
+            "\n".join(lines) + "\n\n"
+            f"[bold]Schedule:[/bold] {config.schedule_interval_minutes}min intervals, "
+            f"{config.schedule_day_start_hour}:00–{config.schedule_day_end_hour}:00\n"
+            f"[bold]Limit:[/bold] {config.videos_per_day_per_account}/day per account "
+            f"(overflow → next day)\n"
+            "[dim]Press Ctrl+C to stop[/dim]",
+            title="Render Watcher Active",
+            border_style="cyan",
+        ))
+    except Exception:
+        pass  # Console output failed (headless) — non-fatal
 
     config.ensure_dirs()
 
@@ -605,30 +638,41 @@ def watch_mode(
             total_unprocessed += len(unprocessed)
 
     if total_unprocessed > 0:
-        console.print(f"\n[yellow]Found {total_unprocessed} unprocessed videos across all folders[/yellow]")
-        try:
-            resp = input("Upload them now? (y/N): ").strip().lower()
-            if resp == "y":
-                for w in watchers:
-                    for video in w.scan_unprocessed():
-                        w._process_video(video)
-        except (EOFError, KeyboardInterrupt):
-            pass
+        logger.info(f"Found {total_unprocessed} unprocessed videos")
+        should_upload = True
+        if not IS_HEADLESS:
+            try:
+                console.print(f"\n[yellow]Found {total_unprocessed} unprocessed videos across all folders[/yellow]")
+                resp = input("Upload them now? (y/N): ").strip().lower()
+                should_upload = resp == "y"
+            except (EOFError, KeyboardInterrupt, OSError):
+                should_upload = False
+        else:
+            logger.info(f"Headless mode: auto-uploading {total_unprocessed} existing videos")
+
+        if should_upload:
+            for w in watchers:
+                for video in w.scan_unprocessed():
+                    w._process_video(video)
 
     # Start watching
     observer.start()
     logger.info("Render watcher started")
-    console.print("\n[green]Watching for new renders...[/green]\n")
+    try:
+        console.print("\n[green]Watching for new renders...[/green]\n")
+    except Exception:
+        pass  # Encoding error in headless mode — non-fatal
 
     try:
         while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Shutting down...[/yellow]")
+            time.sleep(10)
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Watcher stopped")
+    except Exception as e:
+        logger.exception(f"Watch loop crashed: {e}")
+    finally:
         observer.stop()
-        logger.info("Watcher stopped by user")
-
-    observer.join()
+        observer.join()
 
 
 # ─── Main ────────────────────────────────────────────────────────
@@ -735,4 +779,21 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        # Ensure any crash gets logged — critical for debugging Task Scheduler failures
+        logging.getLogger("apollova").exception(f"Fatal crash: {e}")
+        # Also write to a crash file in case logging isn't set up yet
+        try:
+            from pathlib import Path
+            crash_file = Path(__file__).parent / "logs" / "crash.log"
+            crash_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(crash_file, "a", encoding="utf-8") as f:
+                import traceback
+                f.write(f"\n{'='*60}\n")
+                f.write(f"{datetime.now().isoformat()}\n")
+                traceback.print_exc(file=f)
+        except Exception:
+            pass
+        raise

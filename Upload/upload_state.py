@@ -175,6 +175,30 @@ class StateManager:
 
     # ── Status Updates ───────────────────────────────────────────
 
+    def try_claim(self, record_id: int) -> bool:
+        """Atomically claim a record for uploading. Returns False if already claimed.
+        
+        This prevents double-uploads when multiple filesystem events fire
+        for the same file. Only the first thread to call try_claim wins.
+        """
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                # Only claim if still in PENDING state
+                cursor = conn.execute(
+                    """UPDATE uploads SET upload_status = ?, updated_at = ?
+                       WHERE id = ? AND upload_status = ?""",
+                    (UploadStatus.UPLOADING, _now(), record_id, UploadStatus.PENDING),
+                )
+                conn.commit()
+                claimed = cursor.rowcount > 0
+                if claimed:
+                    self._log(conn, record_id, "claimed", "uploading", "")
+                    conn.commit()
+                return claimed
+            finally:
+                conn.close()
+
     def mark_uploading(self, record_id: int) -> None:
         self._update(record_id, upload_status=UploadStatus.UPLOADING, _action="upload_start")
 

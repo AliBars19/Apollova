@@ -381,6 +381,8 @@ class FolderWatcher(FileSystemEventHandler):
         self.notifications = notifications
         self.config = config
         self._seen: dict[str, float] = {}  # debounce tracker
+        self._processing: set[str] = set()  # files currently being processed
+        self._lock = threading.Lock()       # guards _processing set
 
     def on_created(self, event):
         if not event.is_directory:
@@ -400,22 +402,36 @@ class FolderWatcher(FileSystemEventHandler):
             return
         self._seen[str(path)] = now
 
+        # Acquire lock to check + claim this file atomically
+        with self._lock:
+            key = str(path)
+            if key in self._processing:
+                return  # Another thread is already handling this file
+            self._processing.add(key)
+
         # Process in separate thread so we don't block the observer
         threading.Thread(target=self._process_video, args=(path,), daemon=True).start()
 
     def _process_video(self, file_path: Path) -> None:
         """Upload and schedule a single video the moment it's ready."""
-        # Already done?
-        if self.state.is_processed(str(file_path)):
-            return
+        try:
+            self._process_video_inner(file_path)
+        finally:
+            # Always release the file lock when done
+            with self._lock:
+                self._processing.discard(str(file_path))
 
-        # Wait for AE to finish writing
+    def _process_video_inner(self, file_path: Path) -> None:
+        """Upload and schedule a single video the moment it's ready."""
+        # Wait for AE to fully finish writing (30s stability check)
         if not self._wait_for_stable(file_path):
             logger.warning(f"File not stable, skipping: {file_path.name}")
             return
 
-        console.print(f"[cyan]📹 {file_path.name}[/cyan] [dim]({self.template} → {self.account})[/dim]")
-        logger.info(f"New video: {file_path.name} ({self.template} → {self.account})")
+        # File might have been deleted by another thread while we waited
+        if not file_path.exists():
+            logger.info(f"File gone (already processed): {file_path.name}")
+            return
 
         # Hash + register in DB
         try:
@@ -425,6 +441,8 @@ class FolderWatcher(FileSystemEventHandler):
             logger.error(f"Cannot read {file_path.name}: {e}")
             return
 
+        # Atomic claim: add record and immediately try to mark as uploading.
+        # If it's already past "pending", another thread got it first.
         record_id = self.state.add_upload(
             file_path=str(file_path),
             template=self.template,
@@ -433,8 +451,14 @@ class FolderWatcher(FileSystemEventHandler):
             file_size=file_size,
         )
 
+        if not self.state.try_claim(record_id):
+            logger.debug(f"Already claimed by another thread: {file_path.name}")
+            return
+
+        console.print(f"[cyan]📹 {file_path.name}[/cyan] [dim]({self.template} → {self.account})[/dim]")
+        logger.info(f"New video: {file_path.name} ({self.template} → {self.account})")
+
         # ── Upload ───────────────────────────────────────────────
-        self.state.mark_uploading(record_id)
         result = self.uploader.upload_video(str(file_path), self.account)
 
         if not result or "id" not in result:
@@ -460,16 +484,23 @@ class FolderWatcher(FileSystemEventHandler):
                 f"  [green]✓ Uploaded & scheduled → {slot.strftime('%H:%M')} {day_label}[/green]"
             )
             self.notifications.video_uploaded(file_path.name, self.account, slot.strftime("%H:%M %d/%m"))
+
+            # ── Auto-delete local file after successful upload + schedule ──
+            try:
+                file_path.unlink()
+                logger.info(f"Deleted local file: {file_path.name}")
+            except OSError as e:
+                logger.warning(f"Could not delete {file_path.name}: {e}")
         else:
             self.state.mark_schedule_failed(record_id, "Schedule API failed")
             console.print(f"  [yellow]⚠ Uploaded but scheduling failed[/yellow]")
 
-    def _wait_for_stable(self, file_path: Path, timeout: float = 120) -> bool:
-        """Wait for file size to stop changing (AE finished writing)."""
+    def _wait_for_stable(self, file_path: Path, timeout: float = 180) -> bool:
+        """Wait for file size to stop changing, then wait an extra 30s to be safe."""
         start = time.time()
         wait = self.config.file_stable_wait
 
-        for _ in range(self.config.file_stable_checks + 5):  # extra attempts for large files
+        for _ in range(self.config.file_stable_checks + 10):  # extra attempts for large files
             if time.time() - start > timeout:
                 return False
             try:
@@ -484,10 +515,20 @@ class FolderWatcher(FileSystemEventHandler):
                     try:
                         with open(file_path, "rb") as f:
                             f.read(1)
-                        return True
                     except (PermissionError, OSError):
                         time.sleep(wait)
                         continue
+
+                    # File is stable and unlocked — wait 30s for AE to fully move on
+                    logger.info(f"File stable, waiting 30s before upload: {file_path.name}")
+                    time.sleep(30)
+
+                    # Final check: file still exists and size unchanged
+                    try:
+                        if file_path.stat().st_size == size2:
+                            return True
+                    except FileNotFoundError:
+                        return False
             except FileNotFoundError:
                 return False
         return False

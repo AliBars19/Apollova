@@ -45,10 +45,12 @@ class Config:
     # ── Folder → Account Mapping ──────────────────────────────────
     # Key   = folder name under apollova_root (contains jobs/renders/)
     # Value = account name used in the website API
+    #
+    # When Onyx gets its own account, just change "nova" → "onyx" below.
     folder_account_map: dict[str, str] = field(default_factory=lambda: {
         "Apollova-Aurora": "aurora",
-        "Apollova-Mono":   "mono",
-        "Apollova-Onyx":   "onyx",      # ← change to "onyx" when ready
+        "Apollova-Mono":   "nova",
+        "Apollova-Onyx":   "nova",      # ← change to "onyx" when ready
     })
 
     # ── Paths ─────────────────────────────────────────────────────
@@ -74,7 +76,7 @@ class Config:
     # ── File Handling ─────────────────────────────────────────────
     file_stable_wait: float = 3.0             # seconds between size checks
     file_stable_checks: int = 3
-    debounce_seconds: float = 5.0
+    debounce_seconds: float = 30.0
     video_extensions: list[str] = field(default_factory=lambda: [".mp4", ".mov"])
 
     # ── Notifications ─────────────────────────────────────────────

@@ -16,7 +16,6 @@ def fetch_genius_image(song_title, job_folder):
     
     headers = {"Authorization": f"Bearer {Config.GENIUS_API_TOKEN}"}
     
-    # Parse "Artist - Song" format
     artist = None
     title = song_title.strip()
     if " - " in song_title:
@@ -26,7 +25,6 @@ def fetch_genius_image(song_title, job_folder):
     
     query = f"{title} {artist}" if artist else title
     
-    # Search Genius
     try:
         response = requests.get(
             f"{Config.GENIUS_BASE_URL}/search",
@@ -41,13 +39,11 @@ def fetch_genius_image(song_title, job_folder):
         print(f"  Genius search failed: {e}")
         return None
     
-    # Get first result
     hits = data.get("response", {}).get("hits", [])
     if not hits:
         print("  No Genius results found")
         return None
     
-    # Get song art URL
     song_info = hits[0]["result"]
     image_url = song_info.get("song_art_image_url") or song_info.get("header_image_url")
     
@@ -55,7 +51,6 @@ def fetch_genius_image(song_title, job_folder):
         print("  No image found in Genius result")
         return None
     
-    # Download the image
     try:
         return download_image(job_folder, image_url)
     except Exception as e:
@@ -72,7 +67,6 @@ def fetch_genius_lyrics(song_title):
     
     headers = {"Authorization": f"Bearer {Config.GENIUS_API_TOKEN}"}
     
-    # Parse "Artist - Song" format
     artist = None
     title = song_title.strip()
     if " - " in song_title:
@@ -82,7 +76,6 @@ def fetch_genius_lyrics(song_title):
     
     query = f"{title} {artist}" if artist else title
     
-    # Search Genius
     try:
         response = requests.get(
             f"{Config.GENIUS_BASE_URL}/search",
@@ -97,7 +90,6 @@ def fetch_genius_lyrics(song_title):
         print(f"  Genius search failed: {e}")
         return None
     
-    # Get first result
     hits = data.get("response", {}).get("hits", [])
     if not hits:
         print("  No Genius results found")
@@ -105,14 +97,12 @@ def fetch_genius_lyrics(song_title):
     
     url = hits[0]["result"]["url"]
     
-    # Fetch lyrics page
     try:
         html = requests.get(url, timeout=10).text
     except Exception as e:
         print(f"  Failed to fetch Genius page: {e}")
         return None
     
-    # Extract from __PRELOADED_STATE__ JSON
     state_match = re.search(
         r'window\.__PRELOADED_STATE__\s*=\s*(\{.*?\});',
         html,
@@ -126,10 +116,8 @@ def fetch_genius_lyrics(song_title):
         state_data = json.loads(state_match.group(1))
         body_children = state_data["songPage"]["lyricsData"]["body"]["children"]
         
-        # Recursively extract text
         full_text = _extract_text_recursive(body_children)
         
-        # Clean and filter
         lines = [
             ln.strip()
             for ln in full_text.splitlines()
@@ -168,7 +156,6 @@ def _fallback_html_extraction(html):
     if not blocks:
         return None
     
-    # Clean HTML tags
     cleaned = []
     for block in blocks:
         block = re.sub(r'<br\s*/?>', '\n', block)
@@ -177,7 +164,6 @@ def _fallback_html_extraction(html):
     
     text = unescape("\n".join(cleaned))
     
-    # Filter lines
     lines = []
     for ln in text.splitlines():
         ln = ln.strip()
@@ -185,7 +171,6 @@ def _fallback_html_extraction(html):
             continue
         if ln.startswith("[") and ln.endswith("]"):
             continue
-        # Skip metadata
         low = ln.lower()
         if "contributors" in low or "translations" in low:
             continue

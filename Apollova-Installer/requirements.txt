@@ -1,11 +1,13 @@
-# Apollova GUI - Requirements
+# Apollova - Requirements
 # Install with: pip install -r requirements.txt
 
-# Core dependencies
+# Core
 pytubefix>=6.0.0
 pydub>=0.25.1
 librosa>=0.10.0
 requests>=2.28.0
+
+# Optional (for .env support)
 python-dotenv>=1.0.0
 
 # Image processing
@@ -17,6 +19,6 @@ beautifulsoup4>=4.12.0
 rapidfuzz>=3.0.0
 stable-whisper>=2.15.0
 
-# Note: FFmpeg must be installed separately and available in PATH
-# Download from: https://ffmpeg.org/download.html
-# Or use: choco install ffmpeg (Windows with Chocolatey)
+# NOTE: FFmpeg must be installed separately
+# Windows: choco install ffmpeg
+# Or download from: https://ffmpeg.org/download.html

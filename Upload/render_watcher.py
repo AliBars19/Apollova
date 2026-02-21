@@ -359,6 +359,10 @@ class FolderWatcher(FileSystemEventHandler):
     
     When a video finishes rendering (file size stabilises), it's immediately
     uploaded and scheduled — no waiting for a batch of 12.
+    
+    Uses a queue-based approach: filesystem events just add filenames to a set,
+    and a single worker thread processes them one at a time. This eliminates
+    all race conditions from multiple events firing for the same file.
     """
 
     def __init__(
@@ -380,57 +384,63 @@ class FolderWatcher(FileSystemEventHandler):
         self.scheduler = scheduler
         self.notifications = notifications
         self.config = config
-        self._seen: dict[str, float] = {}  # debounce tracker
-        self._processing: set[str] = set()  # files currently being processed
-        self._lock = threading.Lock()       # guards _processing set
+
+        # Queue: pending filenames to process (set = auto-dedup)
+        self._pending: set[str] = set()
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        # Single worker thread — no races possible
+        self._worker = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker.start()
 
     def on_created(self, event):
         if not event.is_directory:
-            self._debounced_handle(event.src_path)
+            self._enqueue(event.src_path)
 
     def on_modified(self, event):
         if not event.is_directory:
-            self._debounced_handle(event.src_path)
+            self._enqueue(event.src_path)
 
-    def _debounced_handle(self, src_path: str) -> None:
+    def _enqueue(self, src_path: str) -> None:
         path = Path(src_path)
         if path.suffix.lower() not in self.config.video_extensions:
             return
-
-        now = time.time()
-        if now - self._seen.get(str(path), 0) < self.config.debounce_seconds:
-            return
-        self._seen[str(path)] = now
-
-        # Acquire lock to check + claim this file atomically
         with self._lock:
-            key = str(path)
-            if key in self._processing:
-                return  # Another thread is already handling this file
-            self._processing.add(key)
+            self._pending.add(str(path))
+        self._event.set()  # Wake the worker
 
-        # Process in separate thread so we don't block the observer
-        threading.Thread(target=self._process_video, args=(path,), daemon=True).start()
+    def _worker_loop(self) -> None:
+        """Single worker: pulls files from the pending set one at a time."""
+        while True:
+            self._event.wait(timeout=5)
+            self._event.clear()
+
+            while True:
+                # Grab one file from the pending set
+                with self._lock:
+                    if not self._pending:
+                        break
+                    file_str = self._pending.pop()
+
+                file_path = Path(file_str)
+                try:
+                    self._process_video(file_path)
+                except Exception as e:
+                    logger.exception(f"Error processing {file_path.name}: {e}")
 
     def _process_video(self, file_path: Path) -> None:
         """Upload and schedule a single video the moment it's ready."""
-        try:
-            self._process_video_inner(file_path)
-        finally:
-            # Always release the file lock when done
-            with self._lock:
-                self._processing.discard(str(file_path))
+        # Already in DB as uploaded? Skip entirely.
+        if self.state.is_processed(str(file_path)):
+            return
 
-    def _process_video_inner(self, file_path: Path) -> None:
-        """Upload and schedule a single video the moment it's ready."""
-        # Wait for AE to fully finish writing (30s stability check)
+        # Wait for AE to fully finish writing
         if not self._wait_for_stable(file_path):
             logger.warning(f"File not stable, skipping: {file_path.name}")
             return
 
-        # File might have been deleted by another thread while we waited
+        # File might have been deleted while we waited
         if not file_path.exists():
-            logger.info(f"File gone (already processed): {file_path.name}")
             return
 
         # Hash + register in DB
@@ -441,8 +451,7 @@ class FolderWatcher(FileSystemEventHandler):
             logger.error(f"Cannot read {file_path.name}: {e}")
             return
 
-        # Atomic claim: add record and immediately try to mark as uploading.
-        # If it's already past "pending", another thread got it first.
+        # Atomic claim via DB
         record_id = self.state.add_upload(
             file_path=str(file_path),
             template=self.template,
@@ -452,8 +461,7 @@ class FolderWatcher(FileSystemEventHandler):
         )
 
         if not self.state.try_claim(record_id):
-            logger.debug(f"Already claimed by another thread: {file_path.name}")
-            return
+            return  # Already claimed (shouldn't happen with single worker, but safe)
 
         console.print(f"[cyan]📹 {file_path.name}[/cyan] [dim]({self.template} → {self.account})[/dim]")
         logger.info(f"New video: {file_path.name} ({self.template} → {self.account})")

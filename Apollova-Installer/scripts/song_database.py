@@ -3,7 +3,6 @@ import sqlite3
 import json
 import os
 from datetime import datetime
-from pathlib import Path
 
 
 class SongDatabase:
@@ -40,10 +39,7 @@ class SongDatabase:
         conn.close()
     
     def get_song(self, song_title):
-        """
-        Get song parameters from database
-        Returns dict with all parameters or None if not found
-        """
+        """Get song parameters from database"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -72,13 +68,10 @@ class SongDatabase:
     
     def add_song(self, song_title, youtube_url, start_time, end_time, 
                  genius_image_url=None, transcribed_lyrics=None, colors=None, beats=None):
-        """
-        Add new song to database or update if exists
-        """
+        """Add new song to database or update if exists"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # Convert lists/dicts to JSON strings
         lyrics_json = json.dumps(transcribed_lyrics) if transcribed_lyrics else None
         colors_json = json.dumps(colors) if colors else None
         beats_json = json.dumps(beats) if beats else None
@@ -104,10 +97,7 @@ class SongDatabase:
         conn.close()
     
     def mark_song_used(self, song_title):
-        """
-        Mark a song as used (increment use_count and update last_used)
-        Use this when loading cached data without updating the data itself
-        """
+        """Mark a song as used"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -120,69 +110,6 @@ class SongDatabase:
         
         conn.commit()
         conn.close()
-    
-    def update_lyrics(self, song_title, transcribed_lyrics):
-        """Update transcribed lyrics for a song"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        lyrics_json = json.dumps(transcribed_lyrics)
-        
-        cursor.execute("""
-            UPDATE songs 
-            SET transcribed_lyrics = ?, last_used = CURRENT_TIMESTAMP
-            WHERE LOWER(song_title) = LOWER(?)
-        """, (lyrics_json, song_title))
-        
-        conn.commit()
-        conn.close()
-    
-    def update_image_url(self, song_title, genius_image_url):
-        """Update Genius image URL for a song"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            UPDATE songs 
-            SET genius_image_url = ?, last_used = CURRENT_TIMESTAMP
-            WHERE LOWER(song_title) = LOWER(?)
-        """, (genius_image_url, song_title))
-        
-        conn.commit()
-        conn.close()
-    
-    def update_colors_and_beats(self, song_title, colors, beats):
-        """Update colors and beats for a song"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        colors_json = json.dumps(colors) if colors else None
-        beats_json = json.dumps(beats) if beats else None
-        
-        cursor.execute("""
-            UPDATE songs 
-            SET colors = ?, beats = ?, last_used = CURRENT_TIMESTAMP
-            WHERE LOWER(song_title) = LOWER(?)
-        """, (colors_json, beats_json, song_title))
-        
-        conn.commit()
-        conn.close()
-    
-    def list_all_songs(self):
-        """Get list of all songs in database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT song_title, use_count, last_used 
-            FROM songs 
-            ORDER BY last_used DESC
-        """)
-        
-        songs = cursor.fetchall()
-        conn.close()
-        
-        return songs
     
     def search_songs(self, query):
         """Search for songs by partial title match"""
@@ -201,22 +128,6 @@ class SongDatabase:
         conn.close()
         
         return songs
-    
-    def delete_song(self, song_title):
-        """Delete a song from the database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            DELETE FROM songs 
-            WHERE LOWER(song_title) = LOWER(?)
-        """, (song_title,))
-        
-        deleted_count = cursor.rowcount
-        conn.commit()
-        conn.close()
-        
-        return deleted_count > 0
     
     def get_stats(self):
         """Get database statistics"""

@@ -1,11 +1,14 @@
 import os
-from dotenv import load_dotenv
+from pathlib import Path
 
-# Load environment variables
-load_dotenv()
+# Try to load dotenv if available
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 class Config:
-    
     # API Settings
     GENIUS_API_TOKEN = os.getenv("GENIUS_API_TOKEN", "")
     GENIUS_BASE_URL = "https://api.genius.com"
@@ -19,9 +22,6 @@ class Config:
     
     # Processing Settings
     MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
-    
-    # File Paths
-    JOBS_DIR = "jobs"
     
     # Audio Settings
     AUDIO_FORMAT = "mp3"

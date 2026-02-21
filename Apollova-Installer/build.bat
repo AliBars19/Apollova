@@ -1,13 +1,13 @@
 @echo off
-REM Apollova GUI - Build Script for Windows
-REM Creates a standalone .exe using PyInstaller
+REM Apollova - Build Script for Windows
+REM Creates standalone .exe with bundled JSX scripts
 
 echo ========================================
-echo    Apollova GUI - Build Script
+echo    Apollova Build Script
 echo ========================================
 echo.
 
-REM Check if PyInstaller is installed
+REM Check PyInstaller
 pip show pyinstaller >nul 2>&1
 if %errorlevel% neq 0 (
     echo Installing PyInstaller...
@@ -20,9 +20,9 @@ if exist "dist" rmdir /s /q "dist"
 if exist "build" rmdir /s /q "build"
 if exist "*.spec" del /q "*.spec"
 
-REM Build the executable
+REM Build the executable with bundled JSX
 echo.
-echo Building Apollova.exe...
+echo Building Apollova.exe with bundled JSX scripts...
 echo.
 
 pyinstaller --onefile ^
@@ -30,6 +30,7 @@ pyinstaller --onefile ^
     --name "Apollova" ^
     --icon "assets/icon.ico" ^
     --add-data "scripts;scripts" ^
+    --add-data "scripts/JSX;scripts/JSX" ^
     --hidden-import "PIL" ^
     --hidden-import "PIL.Image" ^
     --hidden-import "colorthief" ^
@@ -42,7 +43,7 @@ pyinstaller --onefile ^
 
 if %errorlevel% neq 0 (
     echo.
-    echo ❌ Build failed! Check the errors above.
+    echo Build FAILED! Check errors above.
     pause
     exit /b 1
 )
@@ -52,46 +53,60 @@ echo ========================================
 echo    Build Complete!
 echo ========================================
 echo.
-echo Output: dist\Apollova.exe
-echo.
 
-REM Create distribution folder
+REM Create distribution folder structure
 echo Creating distribution package...
-if not exist "dist\Apollova" mkdir "dist\Apollova"
-move "dist\Apollova.exe" "dist\Apollova\" >nul
 
-REM Copy additional files
-if exist "assets" xcopy /s /q "assets" "dist\Apollova\assets\" >nul
-mkdir "dist\Apollova\database" 2>nul
-mkdir "dist\Apollova\jobs" 2>nul
-mkdir "dist\Apollova\whisper_models" 2>nul
+set DIST_DIR=dist\Apollova
+if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
 
-REM Create .env template
-echo GENIUS_API_TOKEN=your_token_here> "dist\Apollova\.env.example"
-echo WHISPER_MODEL=small>> "dist\Apollova\.env.example"
+REM Move exe
+move "dist\Apollova.exe" "%DIST_DIR%\" >nul
+
+REM Create required directories
+mkdir "%DIST_DIR%\templates" 2>nul
+mkdir "%DIST_DIR%\Apollova-Aurora\jobs" 2>nul
+mkdir "%DIST_DIR%\Apollova-Mono\jobs" 2>nul
+mkdir "%DIST_DIR%\Apollova-Onyx\jobs" 2>nul
+mkdir "%DIST_DIR%\database" 2>nul
+mkdir "%DIST_DIR%\whisper_models" 2>nul
+
+REM Copy assets if exists
+if exist "assets" xcopy /s /q "assets" "%DIST_DIR%\assets\" >nul
 
 REM Create README
-echo Apollova - Lyric Video Job Generator> "dist\Apollova\README.txt"
-echo.>> "dist\Apollova\README.txt"
-echo SETUP:>> "dist\Apollova\README.txt"
-echo 1. Install FFmpeg and add to PATH>> "dist\Apollova\README.txt"
-echo 2. Rename .env.example to .env>> "dist\Apollova\README.txt"
-echo 3. Add your Genius API token to .env>> "dist\Apollova\README.txt"
-echo 4. Run Apollova.exe>> "dist\Apollova\README.txt"
-echo.>> "dist\Apollova\README.txt"
-echo USAGE:>> "dist\Apollova\README.txt"
-echo 1. Enter song details and generate jobs>> "dist\Apollova\README.txt"
-echo 2. Open After Effects template>> "dist\Apollova\README.txt"
-echo 3. Run JSX automation script>> "dist\Apollova\README.txt"
-echo 4. Select jobs folder>> "dist\Apollova\README.txt"
-echo 5. Render!>> "dist\Apollova\README.txt"
+(
+echo Apollova - Lyric Video Generator
+echo =================================
+echo.
+echo SETUP:
+echo 1. Install FFmpeg and add to PATH
+echo 2. Place your .aep templates in the templates/ folder:
+echo    - Apollova-Aurora.aep
+echo    - Apollova-Mono.aep  
+echo    - Apollova-Onyx.aep
+echo 3. Run Apollova.exe
+echo.
+echo FIRST RUN:
+echo - After Effects path will be auto-detected
+echo - If not found, go to Settings tab and browse manually
+echo - Enter your Genius API token in Settings for lyrics
+echo.
+echo USAGE:
+echo 1. Job Creation tab: Enter song details and generate jobs
+echo 2. JSX Injection tab: Launch AE and inject data
+echo 3. Review comps in AE and add to render queue
+echo.
+echo SUPPORT: apollova.co.uk
+) > "%DIST_DIR%\README.txt"
 
 echo.
-echo Distribution package created: dist\Apollova\
+echo Distribution package created: %DIST_DIR%\
 echo.
-echo Don't forget to:
-echo   1. Add FFmpeg to the package (ffmpeg.exe, ffprobe.exe)
-echo   2. Pre-download Whisper model (optional, for faster first run)
+echo IMPORTANT - Before distributing:
+echo   1. Add your .aep template files to templates\ folder
+echo   2. Optionally add FFmpeg binaries
+echo   3. Test the complete workflow
 echo.
 
 pause

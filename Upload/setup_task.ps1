@@ -7,13 +7,13 @@
 # ═══════════════════════════════════════════════════════════════
 
 $TaskName = "Apollova Render Watcher"
-$BatPath = "$PSScriptRoot\start_watcher.bat"
+$VbsPath = "$PSScriptRoot\start_watcher.vbs"
 $WorkingDir = $PSScriptRoot
-$Description = "Monitors After Effects render folders and auto-uploads videos"
+$Description = "Monitors After Effects render folders and auto-uploads videos (hidden)"
 
 # Validate
-if (-not (Test-Path $BatPath)) {
-    Write-Host "ERROR: start_watcher.bat not found at $BatPath" -ForegroundColor Red
+if (-not (Test-Path $VbsPath)) {
+    Write-Host "ERROR: start_watcher.vbs not found at $VbsPath" -ForegroundColor Red
     exit 1
 }
 
@@ -24,9 +24,10 @@ if ($existing) {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
 }
 
-# Create the task — runs the .bat file
+# Create the task — runs the hidden .vbs launcher
 $Action = New-ScheduledTaskAction `
-    -Execute $BatPath `
+    -Execute "wscript.exe" `
+    -Argument "`"$VbsPath`"" `
     -WorkingDirectory $WorkingDir
 
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
@@ -54,10 +55,10 @@ Register-ScheduledTask `
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
 if ($task) {
     Write-Host ""
-    Write-Host "SUCCESS: '$TaskName' registered!" -ForegroundColor Green
+    Write-Host "SUCCESS: '$TaskName' registered (hidden mode)!" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Trigger:  Runs at login for $env:USERNAME" -ForegroundColor Cyan
-    Write-Host "  Launcher: $BatPath" -ForegroundColor Cyan
+    Write-Host "  Launcher: $VbsPath (no CMD window)" -ForegroundColor Cyan
     Write-Host "  WorkDir:  $WorkingDir" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Commands:" -ForegroundColor Yellow

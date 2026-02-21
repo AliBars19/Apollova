@@ -866,15 +866,19 @@ Database: {DATABASE_DIR}"""
             return
         
         # Launch After Effects with the script
+        # The script itself will open the template via app.open()
         try:
+            # Only pass the script - it will open the .aep via app.open()
             cmd = [ae_path, "-r", str(temp_jsx)]
             subprocess.Popen(cmd)
             
             messagebox.showinfo(
                 "Launched",
-                f"After Effects is launching with the {template.upper()} template.\n\n"
-                "The JSX script will run automatically.\n"
-                "Please wait for the injection to complete."
+                f"After Effects is launching...\n\n"
+                f"Template: {template_path.name}\n"
+                f"Jobs: {jobs_dir}\n\n"
+                "The script will open the project and inject the jobs.\n"
+                "Please wait for the process to complete."
             )
             
         except Exception as e:
@@ -1206,10 +1210,17 @@ Database: {DATABASE_DIR}"""
                         dest = output_dir / f"job_{i:03}"
                         dest.mkdir(parents=True, exist_ok=True)
                         
+                        # Copy common files
                         for file in ['audio_trimmed.wav', 'lyrics.txt', 'beats.json']:
                             src = job_folder / file
                             if src.exists():
                                 shutil.copy(src, dest / file)
+                        
+                        # Copy template-specific data file
+                        for data_file in ['mono_data.json', 'onyx_data.json']:
+                            src = job_folder / data_file
+                            if src.exists():
+                                shutil.copy(src, dest / data_file)
                         
                         if image_path.exists():
                             shutil.copy(image_path, dest / "cover.png")
@@ -1257,6 +1268,54 @@ Database: {DATABASE_DIR}"""
             self.root.after(0, lambda: self.generate_btn.configure(state='normal'))
             self.root.after(0, lambda: self.cancel_btn.configure(state='disabled'))
             self.root.after(0, self._check_existing_jobs)
+    
+    def _build_markers_from_lyrics(self, lyrics_data):
+        """Convert lyrics.txt format to markers format for Mono/Onyx"""
+        markers = []
+        
+        for i, seg in enumerate(lyrics_data):
+            text = seg.get('lyric_current', '') or seg.get('text', '')
+            
+            # Skip empty segments
+            if not text or not text.strip():
+                continue
+            
+            # Clean up text
+            clean_text = text.replace('\\r', ' ').replace('\r', ' ')
+            clean_text = ' '.join(clean_text.split()).strip()
+            
+            time_val = seg.get('t', 0) or seg.get('time', 0)
+            
+            # Build words array with timing
+            words = []
+            word_list = clean_text.split()
+            avg_word_duration = 0.25  # 250ms per word estimate
+            
+            for w_idx, word in enumerate(word_list):
+                words.append({
+                    "word": word,
+                    "start": time_val + (w_idx * avg_word_duration),
+                    "end": time_val + ((w_idx + 1) * avg_word_duration)
+                })
+            
+            # Calculate end_time (next segment's time or +3 seconds)
+            if i < len(lyrics_data) - 1:
+                next_time = lyrics_data[i + 1].get('t', 0) or lyrics_data[i + 1].get('time', 0)
+                end_time = next_time if next_time > time_val else time_val + 3
+            else:
+                end_time = time_val + 3
+            
+            marker = {
+                "time": time_val,
+                "text": clean_text,
+                "words": words,
+                "color": "white" if len(markers) % 2 == 0 else "black",
+                "end_time": end_time
+            }
+            
+            markers.append(marker)
+        
+        return markers
     
     def _process_single_song(self, job_number, song_title, youtube_url, start_time, end_time, 
                               template, output_dir, return_data=False):
@@ -1380,6 +1439,22 @@ Database: {DATABASE_DIR}"""
         
         with open(job_folder / "job_data.json", 'w') as f:
             json.dump(job_data, f, indent=4)
+        
+        # Create template-specific data files (mono_data.json / onyx_data.json)
+        if template in ['mono', 'onyx']:
+            markers = self._build_markers_from_lyrics(lyrics_data)
+            template_data = {
+                "markers": markers,
+                "total_markers": len(markers)
+            }
+            if template == 'onyx':
+                template_data["colors"] = colors
+                template_data["cover_image"] = "cover.png" if image_path.exists() else None
+            
+            data_filename = f"{template}_data.json"
+            with open(job_folder / data_filename, 'w', encoding='utf-8') as f:
+                json.dump(template_data, f, indent=4, ensure_ascii=False)
+            self._log(f"  ✓ Created {data_filename} ({len(markers)} markers)")
         
         # Save to database if not cached (only in manual mode to avoid duplicates)
         if not cached and not self.use_smart_picker:

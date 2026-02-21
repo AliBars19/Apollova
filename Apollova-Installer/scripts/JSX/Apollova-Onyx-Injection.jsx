@@ -1,13 +1,13 @@
 // -------------------------------------------------------
 // APOLLOVA ONYX - After Effects Automation
-// Uses pre-injected paths from GUI (no folder prompt)
+// Word-by-word lyrics with vinyl disc aesthetic
 // -------------------------------------------------------
-
-// -----------------------------
-// INJECTED PATHS (replaced by GUI)
-// -----------------------------
-var JOBS_PATH = "{{JOBS_PATH}}";
-var TEMPLATE_PATH = "{{TEMPLATE_PATH}}";
+// Usage:
+//  1) Run main_onyx.py to build /jobs/job_001 → job_012
+//  2) Open AE project with OUTPUT1-12, PRE-OUTPUT, LYRIC FONT, etc.
+//  3) File → Scripts → Run Script File → select this file
+//  4) Pick the /jobs folder → items import + comps wired + queued
+// -------------------------------------------------------
 
 // -----------------------------
 // JSON Polyfill (for older AE)
@@ -39,9 +39,30 @@ if (typeof JSON === "undefined") {
 
 
 // -----------------------------
+// INJECTED PATHS (replaced by GUI)
+// -----------------------------
+var JOBS_PATH = "{{JOBS_PATH}}";
+var TEMPLATE_PATH = "{{TEMPLATE_PATH}}";
+
+// -----------------------------
 // MAIN
 // -----------------------------
 function main() {
+    // First, open the template project if path was injected
+    if (TEMPLATE_PATH.indexOf("{{") === -1 && TEMPLATE_PATH !== "") {
+        var templateFile = new File(TEMPLATE_PATH);
+        if (templateFile.exists) {
+            app.open(templateFile);
+            $.writeln("Opened template: " + TEMPLATE_PATH);
+        } else {
+            alert("Template file not found:\n" + TEMPLATE_PATH);
+            return;
+        }
+    }
+    
+    // Keep AE open after script runs
+    app.exitAfterLaunchAndEval = false;
+    
     app.beginUndoGroup("ONYX Batch Music Video Build");
 
     clearAllJobComps();
@@ -50,13 +71,11 @@ function main() {
     var jobsFolder;
     if (JOBS_PATH.indexOf("{{") === -1 && JOBS_PATH !== "") {
         jobsFolder = new Folder(JOBS_PATH);
-        $.writeln("Using injected jobs path: " + JOBS_PATH);
     } else {
         jobsFolder = Folder.selectDialog("Select your /jobs folder (Apollova-Onyx/jobs)");
     }
-    
     if (!jobsFolder || !jobsFolder.exists) {
-        alert("Jobs folder not found: " + JOBS_PATH);
+        alert("Jobs folder not found: " + (JOBS_PATH || "not specified"));
         return;
     }
 
@@ -64,51 +83,51 @@ function main() {
     var jsonFiles = [];
     
     for (var i = 0; i < subfolders.length; i++) {
-        var files = subfolders[i].getFiles("job_data.json");
+        // Look for onyx_data.json in each job folder
+        var files = subfolders[i].getFiles("onyx_data.json");
         if (files && files.length > 0) {
             jsonFiles.push(files[0]);
         }
     }
     
     if (jsonFiles.length === 0) {
-        alert("No job_data.json files found inside subfolders of " + jobsFolder.fsName);
+        alert("No onyx_data.json files found inside subfolders of " + jobsFolder.fsName);
         return;
     }
 
     for (var j = 0; j < jsonFiles.length; j++) {
-        var jobFile = jsonFiles[j];
-        if (!jobFile.exists || !jobFile.open("r")) continue;
-        var jobText = jobFile.read();
-        jobFile.close();
-        if (!jobText) continue;
+        var onyxFile = jsonFiles[j];
+        if (!onyxFile.exists || !onyxFile.open("r")) continue;
+        var onyxText = onyxFile.read();
+        onyxFile.close();
+        if (!onyxText) continue;
 
-        var jobData;
-        try { jobData = JSON.parse(jobText); }
-        catch (e) { alert("Error parsing " + jobFile.name + ": " + e.toString()); continue; }
+        var onyxData;
+        try { onyxData = JSON.parse(onyxText); }
+        catch (e) { alert("Error parsing " + onyxFile.name + ": " + e.toString()); continue; }
 
-        var jobFolder = jobFile.parent;
+        // Get job folder from actual file location (reliable)
+        var jobFolder = onyxFile.parent;
         
-        // Read lyrics.txt and convert to markers
-        var lyricsFile = new File(jobFolder.fsName + "/lyrics.txt");
-        var markers = [];
+        // Also read job_data.json for paths and metadata
+        var jobDataFile = new File(jobFolder.fsName + "/job_data.json");
+        var jobData = {};
         
-        if (lyricsFile.exists && lyricsFile.open("r")) {
-            var lyricsText = lyricsFile.read();
-            lyricsFile.close();
-            try {
-                var lyricsData = JSON.parse(lyricsText);
-                markers = convertLyricsToMarkers(lyricsData);
-            } catch (e) {
-                $.writeln("Could not parse lyrics.txt: " + e.toString());
-            }
+        if (jobDataFile.exists && jobDataFile.open("r")) {
+            var jobDataText = jobDataFile.read();
+            jobDataFile.close();
+            try { jobData = JSON.parse(jobDataText); }
+            catch (e) { $.writeln("Could not parse job_data.json"); }
         }
 
+        // Convert paths to absolute WITH FALLBACKS
         jobData.audio_trimmed = toAbsolute(jobData.audio_trimmed) || (jobFolder.fsName + "/audio_trimmed.wav");
-        jobData.cover_image = toAbsolute(jobData.cover_image) || (jobFolder.fsName + "/cover.png");
+        jobData.cover_image = toAbsolute(jobData.cover_image) || (jobFolder.fsName + "/cover.jpg");
         jobData.job_folder = jobFolder.fsName.replace(/\\/g, "/");
         
         var jobId = jobData.job_id || (j + 1);
         var songTitle = jobData.song_title || "Unknown";
+        var markers = onyxData.markers || [];
         var colors = jobData.colors || [];
 
         $.writeln("──────── ONYX Job " + jobId + " ────────");
@@ -122,196 +141,563 @@ function main() {
             alert("Missing audio:\n" + jobData.audio_trimmed); 
             continue; 
         }
+        if (!coverFile.exists) {
+            alert("Missing cover image:\n" + jobData.cover_image);
+            continue;
+        }
 
         // Duplicate MAIN template
         var template = findCompByName("MAIN");
         var newComp = template.duplicate();
         newComp.name = "ONYX_JOB_" + ("00" + jobId).slice(-3);
 
+        // Move duplicated comp into correct OUTPUT folder
         moveItemToFolder(newComp, "OUTPUT" + jobId);
 
-        if (coverFile.exists) {
-            relinkFootageInsideOutputFolder(jobId, jobData.audio_trimmed, jobData.cover_image);
-        } else {
-            relinkAudioOnly(jobId, jobData.audio_trimmed);
-        }
+        // Relink audio and cover in Assets folder
+        relinkFootageInsideOutputFolder(jobId, jobData.audio_trimmed, jobData.cover_image);
         
+        // Set durations for all comps
         setAllCompDurations(jobId, jobData.audio_trimmed);
+        
+        // Update song title
         updateSongTitle(jobId, songTitle);
 
+        // Apply background colors (4-Color Gradient like Aurora)
         if (colors && colors.length >= 2) {
             applyBackgroundColors(jobId, colors);
+            $.writeln("Applied background colors for job " + jobId);
         }
 
+        // Get LYRIC FONT comp (inside PRE-OUTPUT)
         var lyricComp;
-        try { lyricComp = findCompByName("LYRIC FONT " + jobId); } 
-        catch (e) { $.writeln("Missing LYRIC FONT " + jobId); continue; }
+        try { 
+            lyricComp = findCompByName("LYRIC FONT " + jobId); 
+        } catch (e) { 
+            $.writeln("Missing LYRIC FONT " + jobId + " – skipping lyrics."); 
+            continue; 
+        }
 
+        // Add markers to AUDIO layer in LYRIC FONT comp
         addOnyxMarkersToAudio(lyricComp, markers);
+        
+        // Inject word-by-word segments into LYRIC_TEXT expression (3 words per line)
         injectOnyxSegmentsToLyricText(lyricComp, markers);
 
-        if (coverFile.exists) {
-            try {
-                var assetsComp = findCompByName("Assets " + jobId);
-                retargetImageLayersToFootage(assetsComp, "COVER");
-            } catch (e) {}
+        // Retarget album art in Assets comp
+        try {
+            var assetsComp = findCompByName("Assets " + jobId);
+            retargetImageLayersToFootage(assetsComp, "COVER");
+            $.writeln("Album art retargeted for job " + jobId);
+        } catch (e) {
+            $.writeln("Assets " + jobId + " not found – skipping album art.");
         }
 
+        // Add to render queue
         try {
             var outputComp = findCompByName("OUTPUT " + jobId);
-            var renderPath = addToRenderQueue(outputComp, jobData.job_folder, jobId, songTitle, "_ONYX");
+            var renderPath = addToRenderQueue(
+                outputComp,
+                jobData.job_folder,
+                jobId,
+                songTitle,
+                "_ONYX"
+            );
             $.writeln("Queued: " + renderPath);
         } catch (e) {
             $.writeln("Render queue error: " + e);
         }
     }
 
-    alert("ONYX: All " + jsonFiles.length + " jobs processed!\n\nReview in Render Queue, then click Render.");
+    alert("ONYX batch processing complete!\n\nReview in Render Queue, then click Render.");
     app.endUndoGroup();
 }
 
 
 // -----------------------------
-// Convert lyrics.txt to markers
+// ONYX-SPECIFIC FUNCTIONS
 // -----------------------------
-function convertLyricsToMarkers(lyricsData) {
-    var markers = [];
-    for (var i = 0; i < lyricsData.length; i++) {
-        var seg = lyricsData[i];
-        var text = seg.lyric_current || seg.text || "";
-        if (!text || text.replace(/\s/g, "") === "") continue;
-        
-        var cleanText = text.replace(/\\r/g, " ").replace(/\s+/g, " ").trim();
-        var marker = {
-            time: seg.t || seg.time || 0,
-            text: cleanText,
-            words: seg.words || buildWordsFromText(cleanText, seg.t || 0)
-        };
-        
-        if (i < lyricsData.length - 1) {
-            marker.end_time = lyricsData[i + 1].t || lyricsData[i + 1].time || (marker.time + 3);
-        } else {
-            marker.end_time = marker.time + 3;
-        }
-        markers.push(marker);
-    }
-    return markers;
-}
 
-function buildWordsFromText(text, startTime) {
-    var words = text.split(/\s+/);
-    var result = [];
-    for (var i = 0; i < words.length; i++) {
-        if (words[i]) {
-            result.push({
-                word: words[i],
-                start: startTime + (i * 0.3),
-                end: startTime + ((i + 1) * 0.3)
-            });
-        }
-    }
-    return result;
-}
-
-
-// -----------------------------
-// Onyx-specific functions
-// -----------------------------
 function addOnyxMarkersToAudio(lyricComp, markers) {
+    // Add markers to AUDIO layer for timing triggers
     var audio = ensureAudioLayer(lyricComp);
-    if (!audio) return;
+    if (!audio) { 
+        $.writeln("No AUDIO layer found in " + lyricComp.name); 
+        return; 
+    }
 
     var mk = audio.property("Marker");
-    if (!mk) return;
+    if (!mk) { 
+        $.writeln("No Marker prop on AUDIO in " + lyricComp.name); 
+        return; 
+    }
 
+    // Clear existing markers
     for (var i = mk.numKeys; i >= 1; i--) mk.removeKey(i);
 
     var lastT = 0;
     for (var k = 0; k < markers.length; k++) {
         var m = markers[k];
         var t = Number(m.time) || 0;
+        var markerComment = m.text || ("Segment " + (k + 1));
+        
         try {
-            mk.setValueAtTime(t, new MarkerValue(m.text || ""));
+            mk.setValueAtTime(t, new MarkerValue(markerComment));
             if (t > lastT) lastT = t;
-        } catch (e) {}
+        } catch (e) {
+            $.writeln("Marker set failed at " + t + "s: " + e.toString());
+        }
     }
     
-    if (lastT + 2 > lyricComp.duration) lyricComp.duration = lastT + 2;
-    $.writeln("Added " + markers.length + " markers to AUDIO");
+    if (lastT + 2 > lyricComp.duration) {
+        lyricComp.duration = lastT + 2;
+    }
+    
+    $.writeln("Added " + markers.length + " markers to AUDIO in " + lyricComp.name);
 }
+
 
 function injectOnyxSegmentsToLyricText(lyricComp, markers) {
-    var lyricText = null;
-    try { lyricText = lyricComp.layer("LYRIC_TEXT"); } catch(e) {}
+    // Find LYRIC_TEXT layer
+    var lyricText = lyricComp.layer("LYRIC_TEXT");
+    if (!lyricText) {
+        $.writeln("LYRIC_TEXT layer not found in " + lyricComp.name);
+        return;
+    }
+
+    var sourceText = lyricText.property("Source Text");
+    if (!sourceText) {
+        $.writeln("No Source Text property on LYRIC_TEXT");
+        return;
+    }
+
+    // Build the segments array string
+    var segmentsArray = buildSegmentsArrayStringWithEnds(markers);
     
-    if (!lyricText) {
-        for (var i = 1; i <= lyricComp.numLayers; i++) {
-            var lyr = lyricComp.layer(i);
-            if (lyr.name.toUpperCase().indexOf("LYRIC") !== -1 && lyr.property("Source Text")) {
-                lyricText = lyr;
-                break;
-            }
-        }
-    }
-    if (!lyricText) {
-        for (var i = 1; i <= lyricComp.numLayers; i++) {
-            if (lyricComp.layer(i).property("Source Text")) {
-                lyricText = lyricComp.layer(i);
-                break;
-            }
-        }
-    }
-    if (!lyricText) return;
+    // Build the LYRIC_TEXT expression (word-by-word reveal, 3 words per line for Onyx)
+    var onyxExpression = [
+        '// ONYX: Word-by-word reveal (3 words per line)',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var wordsPerLine = 3;  // Onyx uses 3 words per line',
+        '',
+        'if (segIndex < 1 || segIndex > segments.length) {',
+        '    "";',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var output = "";',
+        '    var wordCount = 0;',
+        '',
+        '    for (var i = 0; i < seg.words.length; i++) {',
+        '        if (time >= seg.words[i].s) {',
+        '            var word = seg.words[i].w;',
+        '            if (wordCount > 0) {',
+        '                if (wordCount % wordsPerLine === 0) {',
+        '                    output += "\\r";',
+        '                } else {',
+        '                    output += " ";',
+        '                }',
+        '            }',
+        '            output += word;',
+        '            wordCount++;',
+        '        }',
+        '    }',
+        '    output;',
+        '}'
+    ].join('\n');
 
-    var segmentsCode = "var segments = [\n";
-    for (var k = 0; k < markers.length; k++) {
-        var m = markers[k];
-        var wordsArr = m.words || [];
-        var wordsStr = "[";
-        for (var w = 0; w < wordsArr.length; w++) {
-            wordsStr += '{word:"' + escapeForExpression(wordsArr[w].word || "") + '",start:' + (wordsArr[w].start || 0) + ',end:' + (wordsArr[w].end || 0) + '}';
-            if (w < wordsArr.length - 1) wordsStr += ",";
-        }
-        wordsStr += "]";
-        segmentsCode += '    {time:' + (m.time || 0) + ',text:"' + escapeForExpression(m.text || "") + '",words:' + wordsStr + ',end_time:' + (m.end_time || (m.time + 3)) + '}';
-        if (k < markers.length - 1) segmentsCode += ",";
-        segmentsCode += "\n";
-    }
-    segmentsCode += "];\n\n";
+    // Apply the expression
+    sourceText.expression = onyxExpression;
+    
+    // Add Gaussian Blur for word reveal effect
+    addGaussianBlurToLyricText(lyricText, markers);
+    
+    $.writeln("Injected Onyx word-reveal expression with " + markers.length + " segments");
+}
 
-    var expression = segmentsCode +
-        'var t = time;\nvar output = "";\nvar currentSeg = null;\n\n' +
-        'for (var i = segments.length - 1; i >= 0; i--) {\n' +
-        '    if (t >= segments[i].time) { currentSeg = segments[i]; break; }\n}\n\n' +
-        'if (currentSeg && currentSeg.words && currentSeg.words.length > 0) {\n' +
-        '    var revealedWords = [];\n' +
-        '    for (var w = 0; w < currentSeg.words.length; w++) {\n' +
-        '        if (t >= currentSeg.words[w].start) revealedWords.push(currentSeg.words[w].word);\n' +
-        '    }\n' +
-        '    var lines = [];\n' +
-        '    for (var i = 0; i < revealedWords.length; i += 3) {\n' +
-        '        lines.push(revealedWords.slice(i, Math.min(i + 3, revealedWords.length)).join(" "));\n' +
-        '    }\n' +
-        '    output = lines.join("\\n");\n' +
-        '} else if (currentSeg) { output = currentSeg.text; }\n\noutput;';
+
+function buildSegmentsArrayStringWithEnds(markers) {
+    // Build: var segments = [{t:0.18, e:2.5, words:[{w:"It",s:0.18},{w:"ain't",s:0.64}]}, ...];
+    var segmentStrings = [];
+    
+    for (var i = 0; i < markers.length; i++) {
+        var m = markers[i];
+        var t = Number(m.time) || 0;
+        var e = Number(m.end_time) || (t + 5);
+        var words = m.words || [];
+        
+        // Build words array string
+        var wordStrings = [];
+        for (var j = 0; j < words.length; j++) {
+            var word = words[j];
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+            var s = Number(word.start) || 0;
+            wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
+        }
+        
+        var segStr = '{t:' + t.toFixed(3) + ',e:' + e.toFixed(3) + ',words:[' + wordStrings.join(',') + ']}';
+        segmentStrings.push(segStr);
+    }
+    
+    return 'var segments = [\n    ' + segmentStrings.join(',\n    ') + '\n];';
+}
+
+
+function addGaussianBlurToLyricText(lyricText, markers) {
+    // Add Gaussian Blur effect to LYRIC_TEXT layer
+    var effects = lyricText.property("Effects");
+    
+    // Check if Gaussian Blur already exists
+    var gaussBlur = null;
+    for (var i = 1; i <= effects.numProperties; i++) {
+        var eff = effects.property(i);
+        if (eff.matchName === "ADBE Gaussian Blur 2") {
+            gaussBlur = eff;
+            break;
+        }
+    }
+    
+    // Add if doesn't exist
+    if (!gaussBlur) {
+        try {
+            gaussBlur = effects.addProperty("ADBE Gaussian Blur 2");
+        } catch (e) {
+            $.writeln("Could not add Gaussian Blur effect: " + e.toString());
+            return;
+        }
+    }
+    
+    // Build segments array for blur expression
+    var segmentsArray = buildSegmentsArrayStringWithEnds(markers);
+    
+    // Expression: blur spikes when word appears, quickly sharpens
+    var blurExpression = [
+        '// Gaussian blur on word reveal',
+        segmentsArray,
+        '',
+        'var ctrl = thisComp.layer("LYRIC CONTROL");',
+        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var wordBlurMax = 15;',
+        'var wordFadeTime = 0.12;',
+        '',
+        'if (segIndex < 1 || segIndex > segments.length) {',
+        '    0;',
+        '} else {',
+        '    var seg = segments[segIndex - 1];',
+        '    var blur = 0;',
+        '',
+        '    // Word reveal blur (sharpens as word appears)',
+        '    for (var i = 0; i < seg.words.length; i++) {',
+        '        var wordStart = seg.words[i].s;',
+        '        var timeSinceWord = time - wordStart;',
+        '        if (timeSinceWord >= 0 && timeSinceWord < wordFadeTime) {',
+        '            var wordBlur = wordBlurMax * (1 - timeSinceWord / wordFadeTime);',
+        '            if (wordBlur > blur) blur = wordBlur;',
+        '        }',
+        '    }',
+        '    blur;',
+        '}'
+    ].join('\n');
+    
+    try {
+        gaussBlur.property("Blurriness").expression = blurExpression;
+        $.writeln("Added Gaussian Blur expression to LYRIC_TEXT");
+    } catch (e) {
+        $.writeln("Could not set blur expression: " + e.toString());
+    }
+}
+
+
+function setAllCompDurations(jobId, audioPath) {
+    // Import audio to get accurate duration
+    var audioFile = new File(audioPath);
+    if (!audioFile.exists) {
+        $.writeln("Audio file not found for duration check: " + audioPath);
+        return;
+    }
+    
+    var imported = app.project.importFile(new ImportOptions(audioFile));
+    var dur = imported.duration;
+    imported.remove();
+    
+    $.writeln("Audio duration for job " + jobId + ": " + dur + "s");
+
+    // Set OUTPUT comp duration
+    try {
+        var outputComp = findCompByName("OUTPUT " + jobId);
+        outputComp.duration = dur;
+        outputComp.workAreaStart = 0;
+        outputComp.workAreaDuration = dur;
+        $.writeln("Set OUTPUT " + jobId + " duration to " + dur + "s");
+    } catch(e) {
+        $.writeln("Could not set OUTPUT " + jobId + " duration: " + e.toString());
+    }
+    
+    // Set PRE-OUTPUT comp duration
+    try {
+        var preOutputComp = findCompByName("PRE-OUTPUT " + jobId);
+        preOutputComp.duration = dur;
+        preOutputComp.workAreaStart = 0;
+        preOutputComp.workAreaDuration = dur;
+        $.writeln("Set PRE-OUTPUT " + jobId + " duration to " + dur + "s");
+    } catch(e) {
+        $.writeln("Could not set PRE-OUTPUT " + jobId + " duration: " + e.toString());
+    }
+    
+    // Set LYRIC FONT comp duration
+    try {
+        var lyricComp = findCompByName("LYRIC FONT " + jobId);
+        lyricComp.duration = dur;
+        lyricComp.workAreaStart = 0;
+        lyricComp.workAreaDuration = dur;
+        $.writeln("Set LYRIC FONT " + jobId + " duration to " + dur + "s");
+    } catch(e) {
+        $.writeln("Could not set LYRIC FONT " + jobId + " duration: " + e.toString());
+    }
+    
+    // Set BACKGROUND comp duration
+    try {
+        var bgComp = findCompByName("BACKGROUND " + jobId);
+        bgComp.duration = dur;
+        bgComp.workAreaStart = 0;
+        bgComp.workAreaDuration = dur;
+        $.writeln("Set BACKGROUND " + jobId + " duration to " + dur + "s");
+    } catch(e) {
+        $.writeln("Could not set BACKGROUND " + jobId + " duration: " + e.toString());
+    }
+    
+    // Set Assets comp duration
+    try {
+        var assetsComp = findCompByName("Assets " + jobId);
+        assetsComp.duration = dur;
+        assetsComp.workAreaStart = 0;
+        assetsComp.workAreaDuration = dur;
+        $.writeln("Set Assets " + jobId + " duration to " + dur + "s");
+    } catch(e) {
+        $.writeln("Could not set Assets " + jobId + " duration: " + e.toString());
+    }
+}
+
+
+function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
+    var outputFolder = findFolderByName("OUTPUT" + jobId);
+    if (!outputFolder) {
+        $.writeln("OUTPUT" + jobId + " folder not found.");
+        return;
+    }
+
+    // Find the nested "Assets OTX" folder inside
+    var assetsFolder = null;
+    for (var i = 1; i <= outputFolder.numItems; i++) {
+        var it = outputFolder.item(i);
+        if (it instanceof FolderItem && it.name.toUpperCase().indexOf("ASSETS OT") === 0) {
+            assetsFolder = it;
+            break;
+        }
+    }
+
+    if (!assetsFolder) {
+        $.writeln("Assets folder not found inside OUTPUT" + jobId);
+        return;
+    }
+
+    var audioFile = new File(audioPath);
+    var coverFile = new File(coverPath);
+
+    for (var i = 1; i <= assetsFolder.numItems; i++) {
+        var it = assetsFolder.item(i);
+        if (!(it instanceof FootageItem)) continue;
+
+        var name = (it.name || "").toUpperCase();
+        
+        // Match audio files
+        var isAudio = (name === "AUDIO") || 
+                      (name.indexOf("AUDIO") === 0) || 
+                      (name.indexOf(".WAV") !== -1);
+        
+        // Match cover files
+        var isCover = (name === "COVER") ||
+                      (name === "COVER.PNG") ||
+                      (name === "COVER.JPG") ||
+                      (name.indexOf("COVER") === 0);
+        
+        try {
+            if (isAudio && audioFile.exists) {
+                it.replace(audioFile);
+                $.writeln("Replaced " + it.name + " inside Assets OT" + jobId);
+            } else if (isCover && coverFile.exists) {
+                it.replace(coverFile);
+                $.writeln("Replaced " + it.name + " inside Assets OT" + jobId);
+            }
+        } catch (e) {
+            $.writeln("Could not relink " + it.name + ": " + e.toString());
+        }
+    }
+}
+
+
+function applyBackgroundColors(jobId, colors) {
+    if (!colors || colors.length < 2) {
+        $.writeln("Not enough colors for job " + jobId);
+        return;
+    }
+
+    var bgComp;
+    try {
+        bgComp = findCompByName("BACKGROUND " + jobId);
+    } catch (_) {
+        $.writeln("BACKGROUND " + jobId + " not found");
+        return;
+    }
+
+    // Find the Gradient layer
+    var gradientLayer = bgComp.layer("Gradient");
+    if (!gradientLayer) {
+        $.writeln("Gradient layer not found in BACKGROUND " + jobId);
+        return;
+    }
+
+    // Find the 4-Color Gradient effect
+    var effectParade = gradientLayer.property("ADBE Effect Parade");
+    if (!effectParade) {
+        $.writeln("No effects on Gradient layer in BACKGROUND " + jobId);
+        return;
+    }
+
+    var gradient4Color = effectParade.property("4-Color Gradient");
+    if (!gradient4Color) {
+        $.writeln("4-Color Gradient effect not found on Gradient layer in BACKGROUND " + jobId);
+        return;
+    }
 
     try {
-        lyricText.property("Source Text").expression = expression;
-        $.writeln("Injected Onyx expression");
+        var color1Prop = gradient4Color.property("Color 1");
+        var color2Prop = gradient4Color.property("Color 2");
+        var color3Prop = gradient4Color.property("Color 3");
+        var color4Prop = gradient4Color.property("Color 4");
+
+        if (color1Prop) color1Prop.setValue(hexToRGB(colors[0]));
+        if (color2Prop) color2Prop.setValue(hexToRGB(colors[1]));
+        if (color3Prop) color3Prop.setValue(hexToRGB(colors.length > 2 ? colors[2] : colors[0]));
+        if (color4Prop) color4Prop.setValue(hexToRGB(colors[0]));
+
+        $.writeln("4-Color Gradient updated for job " + jobId);
     } catch (e) {
-        $.writeln("Failed to inject expression: " + e.toString());
+        $.writeln("Failed to apply gradient colors for job " + jobId + ": " + e.toString());
     }
 }
 
-function escapeForExpression(str) {
-    if (!str) return "";
-    return String(str).replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "");
+
+function updateSongTitle(jobId, titleText) {
+    if (!titleText) return;
+    try {
+        var assetsComp = findCompByName("Assets " + jobId);
+        if (!assetsComp) { $.writeln("Assets " + jobId + " not found."); return; }
+
+        var targetTextLayer = null;
+        for (var i = 1; i <= assetsComp.numLayers; i++) {
+            var lyr = assetsComp.layer(i);
+            var txtProp = lyr.property("Source Text");
+            if (txtProp) { targetTextLayer = lyr; break; }
+        }
+
+        if (!targetTextLayer) {
+            $.writeln("No text layer found in " + assetsComp.name);
+            return;
+        }
+
+        var txtProp = targetTextLayer.property("Source Text");
+        var doc = txtProp.value;
+        doc.text = String(titleText);
+        txtProp.setValue(doc);
+
+        $.writeln("Set song title for job " + jobId + ": " + titleText);
+    } catch (e) {
+        $.writeln("Could not update title for job " + jobId + ": " + e.toString());
+    }
+}
+
+
+function retargetImageLayersToFootage(assetComp, footageName) {
+    if (!assetComp) return;
+
+    var coverFootage = null;
+    for (var i = 1; i <= app.project.numItems; i++) {
+        var it = app.project.item(i);
+        if (it instanceof FootageItem && it.name.toUpperCase() === footageName.toUpperCase()) {
+            coverFootage = it;
+            break;
+        }
+    }
+
+    if (!coverFootage) {
+        $.writeln("Footage '" + footageName + "' not found.");
+        return;
+    }
+
+    for (var L = 1; L <= assetComp.numLayers; L++) {
+        var lyr = assetComp.layer(L);
+        if (!(lyr instanceof AVLayer)) continue;
+        if (!(lyr.source instanceof FootageItem)) continue;
+
+        var srcName = (lyr.source.name || "").toLowerCase();
+        var lyrName = (lyr.name || "").toLowerCase();
+
+        var isCoverLayer =
+            lyrName === "cover" ||
+            lyrName === "cover.png" ||
+            lyrName.indexOf("album") !== -1 ||
+            lyrName.indexOf("art") !== -1 ||
+            srcName === "cover" ||
+            srcName === "cover.png" ||
+            srcName.indexOf("album") !== -1;
+
+        if (!isCoverLayer) continue;
+
+        try {
+            lyr.replaceSource(coverFootage, false);
+            $.writeln("Replaced album art layer in " + assetComp.name);
+        } catch (e) {
+            $.writeln("Could not replace layer: " + e.toString());
+        }
+    }
+}
+
+
+function addToRenderQueue(comp, jobFolder, jobId, songTitle, suffix) {
+    try {
+        jobFolder = String(jobFolder).replace(/\\/g, "/");
+        
+        var jobFolderObj = new Folder(jobFolder);
+        var root = jobFolderObj.parent;
+        
+        var renderDir = new Folder(root.fsName + "/renders");
+        if (!renderDir.exists) {
+            renderDir.create();
+        }
+
+        var safeTitle = sanitizeFilename(songTitle);
+        var filename = safeTitle + (suffix || "") + ".mp4";
+        var outPath = renderDir.fsName.replace(/\\/g, "/") + "/" + filename;
+        var outFile = new File(outPath);
+
+        var rq = app.project.renderQueue.items.add(comp);
+        rq.outputModule(1).file = outFile;
+
+        return outPath;
+    } catch (err) {
+        $.writeln("addToRenderQueue error: " + err.toString());
+        return null;
+    }
 }
 
 
 // -----------------------------
-// Helper Functions
+// SHARED HELPER FUNCTIONS
 // -----------------------------
+
 function findFolderByName(name) {
     for (var i = 1; i <= app.project.numItems; i++) {
         var it = app.project.item(i);
@@ -328,9 +714,16 @@ function moveItemToFolder(item, folderName) {
 function toAbsolute(p) {
     if (!p) return p;
     p = p.replace(/\\/g, "/");
+
     var f = new File(p);
-    if (f.exists) return f.fsName.replace(/\\/g, "/");
-    return p;
+    if (f.exists) {
+        return f.fsName.replace(/\\/g, "/");
+    }
+
+    var base = File($.fileName).parent.parent.parent;
+    f = new File(base.fsName + "/" + p);
+
+    return f.fsName.replace(/\\/g, "/");
 }
 
 function hexToRGB(hex) {
@@ -356,6 +749,7 @@ function findCompByName(name) {
 function ensureAudioLayer(comp) {
     var lyr = comp.layer("AUDIO");
     if (lyr) return lyr;
+
     for (var i = 1; i <= comp.numLayers; i++) {
         var L = comp.layer(i);
         if (L instanceof AVLayer && L.hasAudio) {
@@ -366,159 +760,33 @@ function ensureAudioLayer(comp) {
     return null;
 }
 
-function relinkFootageInsideOutputFolder(jobId, audioPath, imagePath) {
-    var folder = findFolderByName("OUTPUT" + jobId);
-    if (!folder) return;
-
-    for (var i = 1; i <= folder.numItems; i++) {
-        var it = folder.item(i);
-        if (!(it instanceof FootageItem)) continue;
-        var n = it.name.toUpperCase();
-
-        if (n.indexOf("AUDIO") !== -1 || n.indexOf("WAV") !== -1 || n.indexOf("MP3") !== -1) {
-            var af = new File(audioPath);
-            if (af.exists) try { it.replace(af); } catch(e) {}
-        }
-        if (n.indexOf("COVER") !== -1 || n.indexOf("IMAGE") !== -1 || n.indexOf("ART") !== -1 || n.indexOf("PNG") !== -1) {
-            var imgf = new File(imagePath);
-            if (imgf.exists) try { it.replace(imgf); } catch(e) {}
-        }
-    }
-}
-
-function relinkAudioOnly(jobId, audioPath) {
-    var folder = findFolderByName("OUTPUT" + jobId);
-    if (!folder) return;
-    for (var i = 1; i <= folder.numItems; i++) {
-        var it = folder.item(i);
-        if (!(it instanceof FootageItem)) continue;
-        var n = it.name.toUpperCase();
-        if (n.indexOf("AUDIO") !== -1 || n.indexOf("WAV") !== -1 || n.indexOf("MP3") !== -1) {
-            var af = new File(audioPath);
-            if (af.exists) try { it.replace(af); } catch(e) {}
-        }
-    }
-}
-
-function setAllCompDurations(jobId, audioPath) {
-    var audioFile = new File(audioPath);
-    if (!audioFile.exists) return;
-    var imported = app.project.importFile(new ImportOptions(audioFile));
-    var dur = imported.duration;
-    imported.remove();
-
-    try {
-        var outputComp = findCompByName("OUTPUT " + jobId);
-        outputComp.duration = dur;
-        outputComp.workAreaStart = 0;
-        outputComp.workAreaDuration = dur;
-    } catch(e) {}
-
-    try {
-        var lyricComp = findCompByName("LYRIC FONT " + jobId);
-        lyricComp.duration = dur;
-        lyricComp.workAreaStart = 0;
-        lyricComp.workAreaDuration = dur;
-    } catch(e) {}
-
-    try {
-        var bgComp = findCompByName("BACKGROUND " + jobId);
-        bgComp.duration = dur;
-        bgComp.workAreaStart = 0;
-        bgComp.workAreaDuration = dur;
-    } catch(e) {}
-}
-
-function applyBackgroundColors(jobId, colors) {
-    if (!colors || colors.length < 2) return;
-    var bgComp;
-    try { bgComp = findCompByName("BACKGROUND " + jobId); } catch (_) { return; }
-
-    var gradientLayer = bgComp.layer("Gradient");
-    if (!gradientLayer) return;
-
-    var effectParade = gradientLayer.property("ADBE Effect Parade");
-    if (!effectParade) return;
-
-    var gradient4Color = effectParade.property("4-Color Gradient");
-    if (!gradient4Color) return;
-
-    try {
-        var c1 = gradient4Color.property("Color 1");
-        var c2 = gradient4Color.property("Color 2");
-        var c3 = gradient4Color.property("Color 3");
-        var c4 = gradient4Color.property("Color 4");
-        if (c1) c1.setValue(hexToRGB(colors[0]));
-        if (c2) c2.setValue(hexToRGB(colors[1]));
-        if (c3) c3.setValue(hexToRGB(colors.length > 2 ? colors[2] : colors[0]));
-        if (c4) c4.setValue(hexToRGB(colors[0]));
-    } catch (e) {}
-}
-
-function updateSongTitle(jobId, titleText) {
-    if (!titleText) return;
-    try {
-        var assetsComp = findCompByName("Assets " + jobId);
-        for (var i = 1; i <= assetsComp.numLayers; i++) {
-            var lyr = assetsComp.layer(i);
-            var txtProp = lyr.property("Source Text");
-            if (txtProp) {
-                var doc = txtProp.value;
-                doc.text = String(titleText);
-                txtProp.setValue(doc);
-                return;
-            }
-        }
-    } catch (e) {}
-}
-
-function retargetImageLayersToFootage(assetComp, footageName) {
-    if (!assetComp) return;
-    var coverFootage = null;
-    for (var i = 1; i <= app.project.numItems; i++) {
-        var it = app.project.item(i);
-        if (it instanceof FootageItem && it.name.toUpperCase() === footageName.toUpperCase()) {
-            coverFootage = it; break;
-        }
-    }
-    if (!coverFootage) return;
-    for (var L = 1; L <= assetComp.numLayers; L++) {
-        var lyr = assetComp.layer(L);
-        if (!(lyr instanceof AVLayer) || !(lyr.source instanceof FootageItem)) continue;
-        var lyrName = (lyr.name || "").toLowerCase();
-        if (lyrName === "cover" || lyrName.indexOf("album") !== -1 || lyrName.indexOf("art") !== -1) {
-            try { lyr.replaceSource(coverFootage, false); } catch (e) {}
-        }
-    }
-}
-
-function addToRenderQueue(comp, jobFolder, jobId, songTitle, suffix) {
-    try {
-        jobFolder = String(jobFolder).replace(/\\/g, "/");
-        var root = new Folder(jobFolder).parent;
-        var renderDir = new Folder(root.fsName + "/renders");
-        if (!renderDir.exists) renderDir.create();
-        var safeTitle = sanitizeFilename(songTitle);
-        var outPath = renderDir.fsName.replace(/\\/g, "/") + "/" + safeTitle + (suffix || "") + ".mp4";
-        var rq = app.project.renderQueue.items.add(comp);
-        rq.outputModule(1).file = new File(outPath);
-        return outPath;
-    } catch (err) { return null; }
-}
-
 function sanitizeFilename(name) {
     if (!name) return "untitled";
-    return String(name).replace(/[\/\\:*?"<>|]/g, "").replace(/\s+/g, " ").trim();
+    return String(name)
+        .replace(/[\/\\:*?"<>|]/g, "")
+        .replace(/\s+/g, " ")
+        .replace(/^\s+|\s+$/g, "");
 }
 
 function clearAllJobComps() {
+    $.writeln("Clearing all ONYX_JOB comps...");
+    var count = 0;
+    
     for (var i = app.project.numItems; i >= 1; i--) {
         var it = app.project.item(i);
+        
         if (it instanceof CompItem && it.name.indexOf("ONYX_JOB_") === 0) {
-            try { it.remove(); } catch (e) {}
+            try {
+                it.remove();
+                count++;
+            } catch (e) {}
         }
     }
+    
+    $.writeln("Deleted " + count + " old ONYX job comps");
 }
 
+// -----------------------------
+// RUN
 // -----------------------------
 main();

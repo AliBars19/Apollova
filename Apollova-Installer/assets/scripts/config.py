@@ -1,21 +1,30 @@
 import os
 from pathlib import Path
 
-# Try to load dotenv if available
+# Resolve the base install directory (assets/../)
+# This file lives at: <install>/assets/scripts/config.py
+_SCRIPTS_DIR = Path(__file__).parent          # .../assets/scripts
+_ASSETS_DIR  = _SCRIPTS_DIR.parent            # .../assets
+_BASE_DIR    = _ASSETS_DIR.parent             # .../  (install root)
+
+# Load .env from install root so Genius API token etc. are picked up
 try:
     from dotenv import load_dotenv
-    load_dotenv()
+    _env_file = _BASE_DIR / ".env"
+    load_dotenv(dotenv_path=str(_env_file))
 except ImportError:
     pass
+
 
 class Config:
     # API Settings
     GENIUS_API_TOKEN = os.getenv("GENIUS_API_TOKEN", "")
     GENIUS_BASE_URL = "https://api.genius.com"
-    
+
     # Whisper Settings
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
-    WHISPER_CACHE_DIR = "whisper_models"
+    # Absolute path so models always land in the right place regardless of cwd
+    WHISPER_CACHE_DIR = str(_BASE_DIR / "whisper_models")
     
     # Job Settings
     TOTAL_JOBS = int(os.getenv("TOTAL_JOBS", "12"))

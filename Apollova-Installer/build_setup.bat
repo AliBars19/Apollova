@@ -15,31 +15,35 @@ rmdir /s /q build_temp 2>nul
 del /q Setup.spec 2>nul
 del /q Setup.exe 2>nul
 
+REM Get absolute path to icon
+set "SCRIPT_DIR=%~dp0"
+set "ICON_PATH=%SCRIPT_DIR%assets\icon.ico"
+
 REM Check if icon exists and build command accordingly
-if exist "assets\icon.ico" (
-    echo Found icon: assets\icon.ico
+if exist "%ICON_PATH%" (
+    echo Found icon: %ICON_PATH%
     echo Building Setup.exe with icon...
     python -m PyInstaller ^
         --onefile ^
         --windowed ^
         --name "Setup" ^
-        --icon "assets\icon.ico" ^
-        --distpath "." ^
-        --workpath "build_temp" ^
-        --specpath "build_temp" ^
+        --icon "%ICON_PATH%" ^
+        --distpath "%SCRIPT_DIR%." ^
+        --workpath "%SCRIPT_DIR%build_temp" ^
+        --specpath "%SCRIPT_DIR%build_temp" ^
         --clean ^
-        setup.py
+        "%SCRIPT_DIR%setup.py"
 ) else (
-    echo No icon found at assets\icon.ico, building without icon...
+    echo No icon found at %ICON_PATH%, building without icon...
     python -m PyInstaller ^
         --onefile ^
         --windowed ^
         --name "Setup" ^
-        --distpath "." ^
-        --workpath "build_temp" ^
-        --specpath "build_temp" ^
+        --distpath "%SCRIPT_DIR%." ^
+        --workpath "%SCRIPT_DIR%build_temp" ^
+        --specpath "%SCRIPT_DIR%build_temp" ^
         --clean ^
-        setup.py
+        "%SCRIPT_DIR%setup.py"
 )
 
 REM Cleanup

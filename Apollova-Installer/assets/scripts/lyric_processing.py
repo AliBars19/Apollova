@@ -32,8 +32,9 @@ def transcribe_audio(job_folder, song_title=None):
             suppress_silence=False,
             regroup=True,
             temperature=0,
+            word_timestamps=True,
         )
-        
+
         if not result.segments:
             print("  Retrying with fallback params...")
             result = model.transcribe(
@@ -42,22 +43,34 @@ def transcribe_audio(job_folder, song_title=None):
                 suppress_silence=False,
                 regroup=True,
                 temperature=0.5,
+                word_timestamps=True,
             )
-        
+
         if not result.segments:
             print("❌ Whisper returned no segments")
             return None
-        
-        segments = [
-            {
-                "t": float(seg.start),
-                "lyric_prev": "",
+
+        # Build segments with word-level timestamps (needed for Mono/Onyx word-by-word reveal)
+        segments = []
+        for seg in result.segments:
+            words = []
+            if hasattr(seg, "words") and seg.words:
+                for w in seg.words:
+                    words.append({
+                        "word":  w.word.strip() if hasattr(w, "word") else str(w),
+                        "start": float(w.start) if hasattr(w, "start") else float(seg.start),
+                        "end":   float(w.end)   if hasattr(w, "end")   else float(seg.end),
+                    })
+            segments.append({
+                "t":             float(seg.start),
+                "end":           float(seg.end),
+                "lyric_prev":    "",
                 "lyric_current": seg.text.strip(),
-                "lyric_next1": "",
-                "lyric_next2": ""
-            }
-            for seg in result.segments
-        ]
+                "lyric_next1":   "",
+                "lyric_next2":   "",
+                "words":         words,
+            })
+
         
         genius_text = None
         if song_title and Config.GENIUS_API_TOKEN:

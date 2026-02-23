@@ -6,9 +6,9 @@ pytubefix>=6.0.0
 pydub>=0.25.1
 librosa>=0.10.0
 
-# Transcription (CPU version)
-openai-whisper>=20231117
-stable-whisper>=2.15.0
+# Transcription
+openai-whisper
+stable-ts>=2.16.0
 
 # Lyrics
 lyricsgenius>=3.0.0
@@ -19,5 +19,5 @@ colorthief>=0.2.1
 Pillow>=10.0.0
 requests>=2.28.0
 
-# Build tools (for creating launcher)
-pyinstaller>=6.0.0
+# Environment / config
+python-dotenv>=1.0.0

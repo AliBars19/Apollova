@@ -981,7 +981,7 @@ Database: {DATABASE_DIR}"""
             jsx_source = BUNDLED_JSX_DIR / jsx_name
             if not jsx_source.exists():
                 # Fallback: check install dir
-                jsx_source = INSTALL_DIR / "scripts" / "JSX" / jsx_name
+                jsx_source = ASSETS_DIR / "scripts" / "JSX" / jsx_name
             
             if not jsx_source.exists():
                 messagebox.showerror("Error", f"JSX script not found: {jsx_name}\n\nPlease reinstall the application.")
@@ -1051,7 +1051,7 @@ Database: {DATABASE_DIR}"""
             # Check JSX script exists
             jsx_source = BUNDLED_JSX_DIR / jsx_name if jsx_name else None
             if jsx_source and not jsx_source.exists():
-                jsx_source = INSTALL_DIR / "scripts" / "JSX" / jsx_name
+                jsx_source = ASSETS_DIR / "scripts" / "JSX" / jsx_name
             jsx_ok = jsx_source and jsx_source.exists()
             
             if jobs_ok:
@@ -1190,7 +1190,7 @@ Database: {DATABASE_DIR}"""
             # Find JSX source
             jsx_source = BUNDLED_JSX_DIR / jsx_name
             if not jsx_source.exists():
-                jsx_source = INSTALL_DIR / "scripts" / "JSX" / jsx_name
+                jsx_source = ASSETS_DIR / "scripts" / "JSX" / jsx_name
             
             if not jsx_source.exists():
                 return False, f"JSX not found: {jsx_name}"
@@ -1644,51 +1644,62 @@ Database: {DATABASE_DIR}"""
             self.root.after(0, self._check_existing_jobs)
     
     def _build_markers_from_lyrics(self, lyrics_data):
-        """Convert lyrics.txt format to markers format for Mono/Onyx"""
+        """Convert lyrics.txt format to markers format for Mono/Onyx.
+        Uses real word-level timestamps from Whisper when available,
+        otherwise falls back to estimated timing."""
         markers = []
-        
+
         for i, seg in enumerate(lyrics_data):
             text = seg.get('lyric_current', '') or seg.get('text', '')
-            
-            # Skip empty segments
             if not text or not text.strip():
                 continue
-            
-            # Clean up text
+
             clean_text = text.replace('\\r', ' ').replace('\r', ' ')
             clean_text = ' '.join(clean_text.split()).strip()
-            
-            time_val = seg.get('t', 0) or seg.get('time', 0)
-            
-            # Build words array with timing
-            words = []
-            word_list = clean_text.split()
-            avg_word_duration = 0.25  # 250ms per word estimate
-            
-            for w_idx, word in enumerate(word_list):
-                words.append({
-                    "word": word,
-                    "start": time_val + (w_idx * avg_word_duration),
-                    "end": time_val + ((w_idx + 1) * avg_word_duration)
-                })
-            
-            # Calculate end_time (next segment's time or +3 seconds)
-            if i < len(lyrics_data) - 1:
-                next_time = lyrics_data[i + 1].get('t', 0) or lyrics_data[i + 1].get('time', 0)
-                end_time = next_time if next_time > time_val else time_val + 3
+
+            time_val = float(seg.get('t', 0) or seg.get('time', 0))
+            seg_end  = float(seg.get('end', time_val + 3))
+
+            # Use real Whisper word timestamps if present
+            raw_words = seg.get('words', [])
+            if raw_words:
+                words = [
+                    {
+                        "word":  w.get('word', '').strip(),
+                        "start": float(w.get('start', time_val)),
+                        "end":   float(w.get('end',   time_val)),
+                    }
+                    for w in raw_words if w.get('word', '').strip()
+                ]
             else:
-                end_time = time_val + 3
-            
-            marker = {
-                "time": time_val,
-                "text": clean_text,
-                "words": words,
-                "color": "white" if len(markers) % 2 == 0 else "black",
-                "end_time": end_time
-            }
-            
-            markers.append(marker)
-        
+                # Fallback: spread words evenly across segment duration
+                word_list = clean_text.split()
+                duration  = max(seg_end - time_val, 0.25)
+                per_word  = duration / max(len(word_list), 1)
+                words = [
+                    {
+                        "word":  w,
+                        "start": time_val + idx * per_word,
+                        "end":   time_val + (idx + 1) * per_word,
+                    }
+                    for idx, w in enumerate(word_list)
+                ]
+
+            # end_time = start of next segment (or +3s for the last one)
+            if i < len(lyrics_data) - 1:
+                next_t = float(lyrics_data[i + 1].get('t', 0) or lyrics_data[i + 1].get('time', 0))
+                end_time = next_t if next_t > time_val else seg_end
+            else:
+                end_time = seg_end
+
+            markers.append({
+                "time":     time_val,
+                "text":     clean_text,
+                "words":    words,
+                "color":    "white" if len(markers) % 2 == 0 else "black",
+                "end_time": end_time,
+            })
+
         return markers
     
     def _process_single_song(self, job_number, song_title, youtube_url, start_time, end_time, 

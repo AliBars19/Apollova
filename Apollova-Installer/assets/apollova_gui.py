@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Apollova - Lyric Video Job Generator
-GUI Application with Job Creation and JSX Injection tabs
+PyQt6 GUI Application - No tkinter, no Tcl/Tk dependency
 """
 
 import os
@@ -11,27 +11,29 @@ import shutil
 import threading
 import tempfile
 import subprocess
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 from datetime import datetime
 
-# Determine if we're running as a bundled exe or script
-if getattr(sys, 'frozen', False):
-    # Running as compiled exe (launcher)
-    BASE_DIR = Path(sys.executable).parent
-    ASSETS_DIR = BASE_DIR / "assets"
-    BUNDLED_JSX_DIR = ASSETS_DIR / "scripts" / "JSX"
-else:
-    # Running as script from assets folder
-    ASSETS_DIR = Path(__file__).parent
-    BASE_DIR = ASSETS_DIR.parent  # Go up from assets to main folder
-    BUNDLED_JSX_DIR = ASSETS_DIR / "scripts" / "JSX"
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton,
+    QTabWidget, QGroupBox, QTextEdit, QProgressBar, QListWidget,
+    QScrollArea, QFileDialog, QMessageBox, QButtonGroup, QFrame,
+)
+from PyQt6.QtCore import Qt, pyqtSignal, QObject
+from PyQt6.QtGui import QFont, QIcon
 
-# Add scripts directory to path for imports
+# ── Path resolution ───────────────────────────────────────────────────────────
+if getattr(sys, 'frozen', False):
+    BASE_DIR   = Path(sys.executable).parent
+    ASSETS_DIR = BASE_DIR / "assets"
+else:
+    ASSETS_DIR = Path(__file__).parent
+    BASE_DIR   = ASSETS_DIR.parent
+
+BUNDLED_JSX_DIR = ASSETS_DIR / "scripts" / "JSX"
 sys.path.insert(0, str(ASSETS_DIR))
 
-# Import processing modules
 from scripts.config import Config
 from scripts.audio_processing import download_audio, trim_audio, detect_beats
 from scripts.image_processing import download_image, extract_colors
@@ -40,1834 +42,1457 @@ from scripts.song_database import SongDatabase
 from scripts.genius_processing import fetch_genius_image
 from scripts.smart_picker import SmartSongPicker
 
-
-# Directory structure constants (relative to BASE_DIR, not assets)
-INSTALL_DIR = BASE_DIR  # For compatibility with rest of code
-TEMPLATES_DIR = BASE_DIR / "templates"
+# ── Directory constants ───────────────────────────────────────────────────────
+INSTALL_DIR     = BASE_DIR
+TEMPLATES_DIR   = BASE_DIR / "templates"
 AURORA_JOBS_DIR = BASE_DIR / "Apollova-Aurora" / "jobs"
-MONO_JOBS_DIR = BASE_DIR / "Apollova-Mono" / "jobs"
-ONYX_JOBS_DIR = BASE_DIR / "Apollova-Onyx" / "jobs"
-DATABASE_DIR = BASE_DIR / "database"
-WHISPER_DIR = BASE_DIR / "whisper_models"
-SETTINGS_FILE = BASE_DIR / "settings.json"
+MONO_JOBS_DIR   = BASE_DIR / "Apollova-Mono"   / "jobs"
+ONYX_JOBS_DIR   = BASE_DIR / "Apollova-Onyx"   / "jobs"
+DATABASE_DIR    = BASE_DIR / "database"
+WHISPER_DIR     = BASE_DIR / "whisper_models"
+SETTINGS_FILE   = BASE_DIR / "settings.json"
 
-# Template paths
 TEMPLATE_PATHS = {
     "aurora": TEMPLATES_DIR / "Apollova-Aurora.aep",
-    "mono": TEMPLATES_DIR / "Apollova-Mono.aep",
-    "onyx": TEMPLATES_DIR / "Apollova-Onyx.aep"
+    "mono":   TEMPLATES_DIR / "Apollova-Mono.aep",
+    "onyx":   TEMPLATES_DIR / "Apollova-Onyx.aep",
 }
-
-# Jobs directories
 JOBS_DIRS = {
     "aurora": AURORA_JOBS_DIR,
-    "mono": MONO_JOBS_DIR,
-    "onyx": ONYX_JOBS_DIR
+    "mono":   MONO_JOBS_DIR,
+    "onyx":   ONYX_JOBS_DIR,
 }
-
-# JSX script names
 JSX_SCRIPTS = {
     "aurora": "Apollova-Aurora-Injection.jsx",
-    "mono": "Apollova-Mono-Injection.jsx",
-    "onyx": "Apollova-Onyx-Injection.jsx"
+    "mono":   "Apollova-Mono-Injection.jsx",
+    "onyx":   "Apollova-Onyx-Injection.jsx",
 }
 
+# ── Stylesheet ────────────────────────────────────────────────────────────────
+APP_STYLE = """
+QMainWindow, QWidget {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+    font-family: 'Segoe UI';
+    font-size: 13px;
+}
+QTabWidget::pane {
+    border: 1px solid #313244;
+    border-radius: 6px;
+    background: #1e1e2e;
+}
+QTabBar::tab {
+    background: #313244;
+    color: #cdd6f4;
+    padding: 8px 18px;
+    border-radius: 4px;
+    margin-right: 3px;
+}
+QTabBar::tab:selected {
+    background: #89b4fa;
+    color: #1e1e2e;
+    font-weight: bold;
+}
+QGroupBox {
+    border: 1px solid #313244;
+    border-radius: 6px;
+    margin-top: 12px;
+    padding: 10px;
+    font-weight: bold;
+    color: #89b4fa;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 5px;
+}
+QLineEdit {
+    background: #313244;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    padding: 6px 8px;
+    color: #cdd6f4;
+}
+QLineEdit:focus { border: 1px solid #89b4fa; }
+QPushButton {
+    background: #313244;
+    border: 1px solid #45475a;
+    border-radius: 5px;
+    padding: 7px 16px;
+    color: #cdd6f4;
+}
+QPushButton:hover { background: #45475a; border-color: #89b4fa; }
+QPushButton:pressed { background: #89b4fa; color: #1e1e2e; }
+QPushButton:disabled { background: #1e1e2e; color: #585b70; border-color: #313244; }
+QPushButton#primary {
+    background: #89b4fa;
+    color: #1e1e2e;
+    font-weight: bold;
+    font-size: 14px;
+    padding: 10px 24px;
+}
+QPushButton#primary:hover { background: #b4befe; }
+QPushButton#primary:disabled { background: #313244; color: #585b70; }
+QPushButton#danger { background: #f38ba8; color: #1e1e2e; }
+QPushButton#danger:hover { background: #eba0ac; }
+QComboBox {
+    background: #313244;
+    border: 1px solid #45475a;
+    border-radius: 4px;
+    padding: 5px 8px;
+    color: #cdd6f4;
+}
+QComboBox::drop-down { border: none; }
+QComboBox QAbstractItemView {
+    background: #313244;
+    color: #cdd6f4;
+    selection-background-color: #89b4fa;
+    selection-color: #1e1e2e;
+}
+QRadioButton { spacing: 6px; color: #cdd6f4; }
+QRadioButton::indicator { width: 14px; height: 14px; }
+QTextEdit {
+    background: #11111b;
+    border: 1px solid #313244;
+    border-radius: 4px;
+    color: #a6e3a1;
+    font-family: 'Consolas';
+    font-size: 11px;
+}
+QListWidget {
+    background: #181825;
+    border: 1px solid #313244;
+    border-radius: 4px;
+    color: #cdd6f4;
+    font-family: 'Consolas';
+    font-size: 11px;
+}
+QListWidget::item:selected { background: #89b4fa; color: #1e1e2e; }
+QProgressBar {
+    background: #313244;
+    border: none;
+    border-radius: 4px;
+    height: 10px;
+    text-align: center;
+    color: #1e1e2e;
+}
+QProgressBar::chunk { background: #89b4fa; border-radius: 4px; }
+QScrollArea { border: none; }
+QScrollBar:vertical {
+    background: #1e1e2e;
+    width: 8px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical {
+    background: #45475a;
+    border-radius: 4px;
+    min-height: 20px;
+}
+QScrollBar::handle:vertical:hover { background: #89b4fa; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+"""
 
-class ScrollableFrame(ttk.Frame):
-    """A scrollable frame container"""
-    
-    def __init__(self, container, *args, **kwargs):
-        super().__init__(container, *args, **kwargs)
-        
-        self.canvas = tk.Canvas(self, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
-        self.scrollable_frame = ttk.Frame(self.canvas)
-        
-        self.scrollable_frame.bind(
-            "<Configure>",
-            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        )
-        
-        self.canvas_frame = self.canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
-        self.canvas.bind('<Configure>', self._on_canvas_configure)
-        
-        self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
-        
-        self.scrollable_frame.bind('<Enter>', self._bind_mousewheel)
-        self.scrollable_frame.bind('<Leave>', self._unbind_mousewheel)
-    
-    def _on_canvas_configure(self, event):
-        self.canvas.itemconfig(self.canvas_frame, width=event.width)
-    
-    def _bind_mousewheel(self, event):
-        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-    
-    def _unbind_mousewheel(self, event):
-        self.canvas.unbind_all("<MouseWheel>")
-    
-    def _on_mousewheel(self, event):
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+# ── Worker signals (thread → UI) ──────────────────────────────────────────────
+class WorkerSignals(QObject):
+    log                   = pyqtSignal(str)
+    progress              = pyqtSignal(float)
+    finished              = pyqtSignal()
+    error                 = pyqtSignal(str)
+    stats_refresh         = pyqtSignal()
+    batch_progress        = pyqtSignal(str, float, str)
+    batch_template_status = pyqtSignal(str, str)
+    batch_finished        = pyqtSignal(dict)
 
 
-class AppollovaApp:
-    """Main GUI Application"""
-    
-    def __init__(self, root):
-        self.root = root
-        self.root.title("Apollova - Lyric Video Generator")
-        self.root.geometry("900x750")
-        self.root.minsize(750, 550)
-        self.root.resizable(True, True)
-        
-        # Set app icon (if exists)
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def _label(text, style=""):
+    lbl = QLabel(text)
+    if style == "title":
+        f = QFont("Segoe UI")
+        f.setPointSize(16)
+        f.setWeight(QFont.Weight.Bold)
+        lbl.setFont(f)
+        lbl.setStyleSheet("color:#89b4fa;")
+    elif style == "subtitle":
+        lbl.setStyleSheet("color:#6c7086; font-size:12px;")
+    elif style == "muted":
+        lbl.setStyleSheet("color:#6c7086; font-size:11px;")
+    elif style == "success":
+        lbl.setStyleSheet("color:#a6e3a1;")
+    elif style == "warning":
+        lbl.setStyleSheet("color:#f9e2af;")
+    elif style == "error":
+        lbl.setStyleSheet("color:#f38ba8;")
+    return lbl
+
+def _set_label_style(lbl, style):
+    styles = {
+        "success": "color:#a6e3a1;",
+        "warning": "color:#f9e2af;",
+        "error":   "color:#f38ba8;",
+        "muted":   "color:#6c7086; font-size:11px;",
+        "normal":  "color:#cdd6f4;",
+    }
+    lbl.setStyleSheet(styles.get(style, "color:#cdd6f4;"))
+
+def _scrollable(widget):
+    scroll = QScrollArea()
+    scroll.setWidget(widget)
+    scroll.setWidgetResizable(True)
+    return scroll
+
+
+# ── Main Window ───────────────────────────────────────────────────────────────
+class AppolovaApp(QMainWindow):
+
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Apollova - Lyric Video Generator")
+        self.resize(960, 800)
+        self.setMinimumSize(800, 600)
+
         icon_path = INSTALL_DIR / "assets" / "icon.ico"
         if icon_path.exists():
-            self.root.iconbitmap(str(icon_path))
-        
-        # Initialize directories on first launch
+            self.setWindowIcon(QIcon(str(icon_path)))
+
         self._init_directories()
-        
-        # Initialize database
-        self.song_db = SongDatabase(db_path=str(DATABASE_DIR / "songs.db"))
-        
-        # Load settings
+        self.song_db  = SongDatabase(db_path=str(DATABASE_DIR / "songs.db"))
         self.settings = self._load_settings()
-        
-        # Processing state
-        self.is_processing = False
-        self.cancel_requested = False
-        
-        # Track input widgets for locking
-        self.input_widgets = []
-        
-        # Setup UI
-        self._setup_styles()
-        self._create_widgets()
-        
-        # Auto-detect After Effects
+
+        self.is_processing          = False
+        self.cancel_requested       = False
+        self.use_smart_picker       = False
+        self.batch_render_active    = False
+        self.batch_render_cancelled = False
+        self.batch_results          = {}
+
+        self.signals = WorkerSignals()
+        self.signals.log.connect(self._append_log)
+        self.signals.progress.connect(lambda v: self.progress_bar.setValue(int(v)))
+        self.signals.finished.connect(self._on_generation_finished)
+        self.signals.error.connect(self._on_generation_error)
+        self.signals.stats_refresh.connect(self._refresh_stats_label)
+        self.signals.batch_progress.connect(self._batch_update_progress)
+        self.signals.batch_template_status.connect(self._batch_update_template_status_slot)
+        self.signals.batch_finished.connect(self._batch_render_complete)
+
+        self._build_ui()
+
         if not self.settings.get('after_effects_path'):
             detected = self._auto_detect_after_effects()
             if detected:
                 self.settings['after_effects_path'] = detected
                 self._save_settings()
-    
+                self.ae_path_edit.setText(detected)
+                self._update_ae_status()
+
+    # ── Dirs / Settings ───────────────────────────────────────────────────────
+
     def _init_directories(self):
-        """Create required directories on first launch"""
-        dirs_to_create = [
-            AURORA_JOBS_DIR,
-            MONO_JOBS_DIR,
-            ONYX_JOBS_DIR,
-            DATABASE_DIR,
-            WHISPER_DIR,
-            TEMPLATES_DIR
-        ]
-        
-        for dir_path in dirs_to_create:
-            dir_path.mkdir(parents=True, exist_ok=True)
-    
+        for d in [AURORA_JOBS_DIR, MONO_JOBS_DIR, ONYX_JOBS_DIR,
+                  DATABASE_DIR, WHISPER_DIR, TEMPLATES_DIR]:
+            d.mkdir(parents=True, exist_ok=True)
+
     def _load_settings(self):
-        """Load settings from file"""
         if SETTINGS_FILE.exists():
             try:
                 with open(SETTINGS_FILE, 'r') as f:
                     return json.load(f)
-            except:
+            except Exception:
                 pass
         return {
             'after_effects_path': None,
-            'genius_api_token': Config.GENIUS_API_TOKEN,
-            'whisper_model': Config.WHISPER_MODEL
+            'genius_api_token':   Config.GENIUS_API_TOKEN,
+            'whisper_model':      Config.WHISPER_MODEL,
         }
-    
+
     def _save_settings(self):
-        """Save settings to file"""
         with open(SETTINGS_FILE, 'w') as f:
             json.dump(self.settings, f, indent=2)
-    
+
     def _auto_detect_after_effects(self):
-        """Auto-detect After Effects installation"""
-        possible_paths = []
-        
-        # Check Program Files for various AE versions
-        program_files = [
-            Path("C:/Program Files/Adobe"),
-            Path("C:/Program Files (x86)/Adobe")
+        versions = [
+            "Adobe After Effects 2025", "Adobe After Effects 2024",
+            "Adobe After Effects 2023", "Adobe After Effects CC 2024",
+            "Adobe After Effects CC 2023", "Adobe After Effects CC 2022",
+            "Adobe After Effects CC 2021", "Adobe After Effects CC 2020",
         ]
-        
-        ae_versions = [
-            "Adobe After Effects 2025",
-            "Adobe After Effects 2024",
-            "Adobe After Effects 2023",
-            "Adobe After Effects CC 2024",
-            "Adobe After Effects CC 2023",
-            "Adobe After Effects CC 2022",
-            "Adobe After Effects CC 2021",
-            "Adobe After Effects CC 2020",
-        ]
-        
-        for pf in program_files:
+        for pf in [Path("C:/Program Files/Adobe"),
+                   Path("C:/Program Files (x86)/Adobe")]:
             if pf.exists():
-                for version in ae_versions:
-                    ae_path = pf / version / "Support Files" / "AfterFX.exe"
-                    if ae_path.exists():
-                        return str(ae_path)
-        
+                for v in versions:
+                    p = pf / v / "Support Files" / "AfterFX.exe"
+                    if p.exists():
+                        return str(p)
         return None
-    
-    def _setup_styles(self):
-        """Configure ttk styles"""
-        style = ttk.Style()
-        style.theme_use('clam')
-        
-        style.configure('Title.TLabel', font=('Segoe UI', 16, 'bold'))
-        style.configure('Subtitle.TLabel', font=('Segoe UI', 10), foreground='#666666')
-        style.configure('Section.TLabelframe.Label', font=('Segoe UI', 10, 'bold'))
-        style.configure('Generate.TButton', font=('Segoe UI', 11, 'bold'), padding=10)
-        style.configure('Inject.TButton', font=('Segoe UI', 11, 'bold'), padding=10)
-        style.configure('Status.TLabel', font=('Segoe UI', 9))
-        style.configure('Warning.TLabel', font=('Segoe UI', 9), foreground='#f59e0b')
-        style.configure('Success.TLabel', font=('Segoe UI', 9), foreground='#22c55e')
-        style.configure('Error.TLabel', font=('Segoe UI', 9), foreground='#ef4444')
-        
-    def _create_widgets(self):
-        """Create all UI widgets"""
-        
-        # Main container
-        outer_frame = ttk.Frame(self.root)
-        outer_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # === HEADER ===
-        header_frame = ttk.Frame(outer_frame, padding="20 15 20 10")
-        header_frame.pack(fill=tk.X)
-        
-        ttk.Label(header_frame, text="🎬 Apollova", style='Title.TLabel').pack(side=tk.LEFT)
-        ttk.Label(header_frame, text="Lyric Video Generator", 
-                  style='Subtitle.TLabel').pack(side=tk.LEFT, padx=(10, 0), pady=(5, 0))
-        
-        # Database stats
+
+    # ── UI ────────────────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QVBoxLayout(central)
+        root.setContentsMargins(20, 15, 20, 15)
+        root.setSpacing(10)
+
+        # Header
+        hdr = QHBoxLayout()
+        hdr.addWidget(_label("🎬 Apollova", "title"))
+        hdr.addWidget(_label("  Lyric Video Generator", "subtitle"))
+        hdr.addStretch()
         stats = self.song_db.get_stats()
-        stats_text = f"📊 Database: {stats['total_songs']} songs | {stats['cached_lyrics']} with lyrics"
-        self.stats_label = ttk.Label(header_frame, text=stats_text, style='Subtitle.TLabel')
-        self.stats_label.pack(side=tk.RIGHT)
-        
-        ttk.Separator(outer_frame, orient='horizontal').pack(fill=tk.X, padx=20)
-        
-        # === NOTEBOOK (Tabs) ===
-        self.notebook = ttk.Notebook(outer_frame)
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
-        
-        # Tab 1: Job Creation
-        self.job_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.job_tab, text="  📁 Job Creation  ")
-        self._create_job_tab()
-        
-        # Tab 2: JSX Injection
-        self.inject_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.inject_tab, text="  🚀 JSX Injection  ")
-        self._create_inject_tab()
-        
-        # Tab 3: Settings
-        self.settings_tab = ttk.Frame(self.notebook)
-        self.notebook.add(self.settings_tab, text="  ⚙ Settings  ")
-        self._create_settings_tab()
-        
-        # Update injection tab when switching to it
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
-    
-    def _create_job_tab(self):
-        """Create the Job Creation tab with Manual/Smart Picker sub-tabs"""
-        
-        # Scrollable content
-        scroll_frame = ScrollableFrame(self.job_tab)
-        scroll_frame.pack(fill=tk.BOTH, expand=True)
-        
-        content = scroll_frame.scrollable_frame
-        content_padding = ttk.Frame(content, padding="10")
-        content_padding.pack(fill=tk.BOTH, expand=True)
-        
-        # === TEMPLATE SELECTION ===
-        template_frame = ttk.LabelFrame(content_padding, text="Template", style='Section.TLabelframe', padding="10")
-        template_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        self.job_template_var = tk.StringVar(value="aurora")
-        self.job_template_var.trace_add('write', self._on_template_change)
-        
-        templates = [
+        self.stats_label = _label(
+            f"📊 {stats['total_songs']} songs | {stats['cached_lyrics']} with lyrics",
+            "subtitle")
+        hdr.addWidget(self.stats_label)
+        root.addLayout(hdr)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color:#313244;")
+        root.addWidget(sep)
+
+        self.tabs = QTabWidget()
+        root.addWidget(self.tabs)
+
+        self._build_job_tab()
+        self._build_inject_tab()
+        self._build_settings_tab()
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+    # ── Job Creation Tab ──────────────────────────────────────────────────────
+
+    def _build_job_tab(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(12)
+
+        # Template
+        tpl_grp = QGroupBox("Template")
+        tpl_lay = QVBoxLayout(tpl_grp)
+        self.job_tpl_group = QButtonGroup(self)
+        for name, val, desc in [
             ("Aurora", "aurora", "Full visual with gradients, spectrum, beat-sync"),
-            ("Mono", "mono", "Minimal text-only, black/white alternating"),
-            ("Onyx", "onyx", "Hybrid - word-by-word lyrics + spinning vinyl disc")
-        ]
-        
-        for name, value, desc in templates:
-            frame = ttk.Frame(template_frame)
-            frame.pack(fill=tk.X, pady=2)
-            
-            rb = ttk.Radiobutton(frame, text=name, variable=self.job_template_var, value=value)
-            rb.pack(side=tk.LEFT)
-            self.input_widgets.append(rb)
-            ttk.Label(frame, text=f"  - {desc}", foreground='#666666').pack(side=tk.LEFT)
-        
-        # Output path display (read-only)
-        path_frame = ttk.Frame(template_frame)
-        path_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        ttk.Label(path_frame, text="Output:", foreground='#666666').pack(side=tk.LEFT)
-        self.output_path_label = ttk.Label(path_frame, text=str(AURORA_JOBS_DIR), foreground='#888888')
-        self.output_path_label.pack(side=tk.LEFT, padx=(5, 0))
-        
-        # === SONG INPUT with Sub-Tabs ===
-        song_frame = ttk.LabelFrame(content_padding, text="Song Selection", style='Section.TLabelframe', padding="10")
-        song_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        # Sub-notebook for Manual vs Smart Picker
-        self.song_notebook = ttk.Notebook(song_frame)
-        self.song_notebook.pack(fill=tk.X, expand=True)
-        
-        # --- Manual Entry Tab ---
-        manual_tab = ttk.Frame(self.song_notebook, padding="10")
-        self.song_notebook.add(manual_tab, text="  ✏️ Manual Entry  ")
-        
-        ttk.Label(manual_tab, text="Song Title (Artist - Song):").pack(anchor=tk.W)
-        self.title_entry = ttk.Entry(manual_tab, width=60, font=('Segoe UI', 10))
-        self.title_entry.pack(fill=tk.X, pady=(2, 10))
-        self.title_entry.bind('<KeyRelease>', self._check_database)
-        self.input_widgets.append(self.title_entry)
-        
-        self.db_match_label = ttk.Label(manual_tab, text="", foreground='#666666')
-        self.db_match_label.pack(anchor=tk.W)
-        
-        ttk.Label(manual_tab, text="YouTube URL:").pack(anchor=tk.W, pady=(10, 0))
-        self.url_entry = ttk.Entry(manual_tab, width=60, font=('Segoe UI', 10))
-        self.url_entry.pack(fill=tk.X, pady=(2, 10))
-        self.input_widgets.append(self.url_entry)
-        
-        time_frame = ttk.Frame(manual_tab)
-        time_frame.pack(fill=tk.X, pady=(0, 5))
-        
-        ttk.Label(time_frame, text="Start Time (MM:SS):").pack(side=tk.LEFT)
-        self.start_entry = ttk.Entry(time_frame, width=8, font=('Segoe UI', 10))
-        self.start_entry.pack(side=tk.LEFT, padx=(5, 20))
-        self.start_entry.insert(0, "00:00")
-        self.input_widgets.append(self.start_entry)
-        
-        ttk.Label(time_frame, text="End Time (MM:SS):").pack(side=tk.LEFT)
-        self.end_entry = ttk.Entry(time_frame, width=8, font=('Segoe UI', 10))
-        self.end_entry.pack(side=tk.LEFT, padx=(5, 0))
-        self.end_entry.insert(0, "01:01")
-        self.input_widgets.append(self.end_entry)
-        
-        # --- Smart Picker Tab ---
-        smart_tab = ttk.Frame(self.song_notebook, padding="10")
-        self.song_notebook.add(smart_tab, text="  🤖 Smart Picker  ")
-        
-        # Smart Picker description
-        desc_text = "Smart Picker automatically selects songs from your database.\n" \
-                    "It ensures fair rotation: no song is used twice until all songs have been used once."
-        ttk.Label(smart_tab, text=desc_text, foreground='#666666', wraplength=500, justify=tk.LEFT).pack(anchor=tk.W, pady=(0, 15))
-        
-        # Database stats frame
-        stats_frame = ttk.Frame(smart_tab)
-        stats_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        self.smart_stats_label = ttk.Label(stats_frame, text="Loading database stats...", style='Status.TLabel')
-        self.smart_stats_label.pack(anchor=tk.W)
-        
-        # Refresh stats button
-        ttk.Button(stats_frame, text="🔄 Refresh Stats", command=self._refresh_smart_picker_stats).pack(anchor=tk.W, pady=(5, 0))
-        
-        # Song preview listbox
-        ttk.Label(smart_tab, text="Next songs to be selected:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W, pady=(10, 5))
-        
-        list_frame = ttk.Frame(smart_tab)
-        list_frame.pack(fill=tk.X)
-        
-        self.smart_listbox = tk.Listbox(list_frame, height=8, font=('Consolas', 9),
-                                         bg='#f5f5f5', selectmode=tk.SINGLE)
-        self.smart_listbox.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        list_scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.smart_listbox.yview)
-        list_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.smart_listbox.configure(yscrollcommand=list_scrollbar.set)
-        
-        # Smart picker warning if no songs
-        self.smart_warning_label = ttk.Label(smart_tab, text="", style='Warning.TLabel')
-        self.smart_warning_label.pack(anchor=tk.W, pady=(10, 0))
-        
-        # Initialize smart picker display
+            ("Mono",   "mono",   "Minimal text-only, black/white alternating"),
+            ("Onyx",   "onyx",   "Hybrid — word-by-word lyrics + spinning vinyl disc"),
+        ]:
+            rb = QRadioButton(f"{name}  —  {desc}")
+            rb.setProperty("tval", val)
+            if val == "aurora":
+                rb.setChecked(True)
+            self.job_tpl_group.addButton(rb)
+            tpl_lay.addWidget(rb)
+
+        path_row = QHBoxLayout()
+        path_row.addWidget(_label("Output:", "muted"))
+        self.output_path_label = _label(str(AURORA_JOBS_DIR), "muted")
+        path_row.addWidget(self.output_path_label)
+        path_row.addStretch()
+        tpl_lay.addLayout(path_row)
+        layout.addWidget(tpl_grp)
+        self.job_tpl_group.buttonClicked.connect(self._on_template_change)
+
+        # Song selection
+        song_grp = QGroupBox("Song Selection")
+        song_lay = QVBoxLayout(song_grp)
+        self.song_tabs = QTabWidget()
+        song_lay.addWidget(self.song_tabs)
+        layout.addWidget(song_grp)
+
+        # Manual entry sub-tab
+        manual_w = QWidget()
+        ml = QVBoxLayout(manual_w)
+        ml.setSpacing(6)
+        ml.addWidget(QLabel("Song Title (Artist - Song):"))
+        self.title_edit = QLineEdit()
+        self.title_edit.setPlaceholderText("e.g. Drake - God's Plan")
+        self.title_edit.textChanged.connect(self._check_database)
+        ml.addWidget(self.title_edit)
+        self.db_match_label = _label("", "muted")
+        ml.addWidget(self.db_match_label)
+        ml.addWidget(QLabel("YouTube URL:"))
+        self.url_edit = QLineEdit()
+        self.url_edit.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        ml.addWidget(self.url_edit)
+        tr = QHBoxLayout()
+        tr.addWidget(QLabel("Start (MM:SS):"))
+        self.start_edit = QLineEdit("00:00")
+        self.start_edit.setFixedWidth(70)
+        tr.addWidget(self.start_edit)
+        tr.addSpacing(20)
+        tr.addWidget(QLabel("End (MM:SS):"))
+        self.end_edit = QLineEdit("01:01")
+        self.end_edit.setFixedWidth(70)
+        tr.addWidget(self.end_edit)
+        tr.addStretch()
+        ml.addLayout(tr)
+        ml.addStretch()
+        self.song_tabs.addTab(manual_w, "  ✏️ Manual Entry  ")
+
+        # Smart Picker sub-tab
+        smart_w = QWidget()
+        sl = QVBoxLayout(smart_w)
+        sl.setSpacing(6)
+        desc_lbl = _label(
+            "Smart Picker automatically selects songs from your database.\n"
+            "It ensures fair rotation — no song used twice until all used once.", "muted")
+        desc_lbl.setWordWrap(True)
+        sl.addWidget(desc_lbl)
+        self.smart_stats_label = QLabel("Loading stats...")
+        sl.addWidget(self.smart_stats_label)
+        ref_btn = QPushButton("🔄 Refresh Stats")
+        ref_btn.clicked.connect(self._refresh_smart_picker_stats)
+        sl.addWidget(ref_btn)
+        sl.addWidget(QLabel("Next songs to be selected:"))
+        self.smart_listbox = QListWidget()
+        self.smart_listbox.setMinimumHeight(150)
+        sl.addWidget(self.smart_listbox)
+        self.smart_warning_label = _label("", "warning")
+        sl.addWidget(self.smart_warning_label)
+        sl.addStretch()
+        self.song_tabs.addTab(smart_w, "  🤖 Smart Picker  ")
+        self.song_tabs.currentChanged.connect(self._on_song_mode_changed)
         self._refresh_smart_picker_stats()
-        
-        # Track which mode is selected
-        self.song_notebook.bind("<<NotebookTabChanged>>", self._on_song_mode_changed)
-        self.use_smart_picker = False
-        
-        # === SETTINGS ===
-        settings_frame = ttk.LabelFrame(content_padding, text="Job Settings", style='Section.TLabelframe', padding="10")
-        settings_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        settings_row = ttk.Frame(settings_frame)
-        settings_row.pack(fill=tk.X)
-        
-        ttk.Label(settings_row, text="Number of Jobs:").pack(side=tk.LEFT)
-        self.jobs_var = tk.StringVar(value="12")
-        self.jobs_combo = ttk.Combobox(settings_row, textvariable=self.jobs_var, 
-                                       values=["1", "3", "6", "12"], width=5, state='readonly')
-        self.jobs_combo.pack(side=tk.LEFT, padx=(5, 20))
-        self.input_widgets.append(self.jobs_combo)
-        
-        ttk.Label(settings_row, text="Whisper Model:").pack(side=tk.LEFT)
-        self.whisper_var = tk.StringVar(value=self.settings.get('whisper_model', 'small'))
-        self.whisper_combo = ttk.Combobox(settings_row, textvariable=self.whisper_var,
-                                          values=["tiny", "base", "small", "medium", "large-v3"],
-                                          width=10, state='readonly')
-        self.whisper_combo.pack(side=tk.LEFT, padx=(5, 0))
-        self.input_widgets.append(self.whisper_combo)
-        
-        # Job folder warning
-        self.job_warning_frame = ttk.Frame(settings_frame)
-        self.job_warning_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        self.job_warning_label = ttk.Label(self.job_warning_frame, text="", style='Warning.TLabel')
-        self.job_warning_label.pack(side=tk.LEFT)
-        
-        self.delete_jobs_btn = ttk.Button(self.job_warning_frame, text="Delete Existing Jobs", 
-                                          command=self._delete_existing_jobs)
-        self.delete_jobs_btn.pack_forget()
-        
+
+        # Job settings
+        js_grp = QGroupBox("Job Settings")
+        js_lay = QHBoxLayout(js_grp)
+        js_lay.addWidget(QLabel("Number of Jobs:"))
+        self.jobs_combo = QComboBox()
+        self.jobs_combo.addItems(["1", "3", "6", "12"])
+        self.jobs_combo.setCurrentText("12")
+        self.jobs_combo.setFixedWidth(70)
+        js_lay.addWidget(self.jobs_combo)
+        js_lay.addSpacing(20)
+        js_lay.addWidget(QLabel("Whisper Model:"))
+        self.whisper_combo = QComboBox()
+        self.whisper_combo.addItems(["tiny", "base", "small", "medium", "large-v3"])
+        self.whisper_combo.setCurrentText(self.settings.get('whisper_model', 'small'))
+        self.whisper_combo.setFixedWidth(110)
+        js_lay.addWidget(self.whisper_combo)
+        js_lay.addStretch()
+        self.job_warning_label = _label("", "warning")
+        js_lay.addWidget(self.job_warning_label)
+        self.delete_jobs_btn = QPushButton("Delete Existing Jobs")
+        self.delete_jobs_btn.setObjectName("danger")
+        self.delete_jobs_btn.setVisible(False)
+        self.delete_jobs_btn.clicked.connect(self._delete_existing_jobs)
+        js_lay.addWidget(self.delete_jobs_btn)
+        layout.addWidget(js_grp)
         self._check_existing_jobs()
-        
-        # === PROGRESS ===
-        progress_frame = ttk.LabelFrame(content_padding, text="Progress", style='Section.TLabelframe', padding="10")
-        progress_frame.pack(fill=tk.X, pady=(0, 15))
-        
-        self.progress_var = tk.DoubleVar(value=0)
-        self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, 
-                                            maximum=100, mode='determinate')
-        self.progress_bar.pack(fill=tk.X, pady=(0, 10))
-        
-        self.status_var = tk.StringVar(value="Ready")
-        ttk.Label(progress_frame, textvariable=self.status_var, style='Status.TLabel').pack(anchor=tk.W)
-        
-        log_frame = ttk.Frame(progress_frame)
-        log_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        self.log_text = tk.Text(log_frame, height=8, font=('Consolas', 9), 
-                                bg='#1e1e1e', fg='#d4d4d4', insertbackground='white')
-        self.log_text.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        
-        log_scrollbar = ttk.Scrollbar(log_frame, orient=tk.VERTICAL, command=self.log_text.yview)
-        log_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.log_text.configure(yscrollcommand=log_scrollbar.set)
-        
-        # === BUTTONS ===
-        button_frame = ttk.Frame(content_padding)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        self.generate_btn = ttk.Button(button_frame, text="🚀 Generate Jobs", 
-                                       style='Generate.TButton', command=self._start_generation)
-        self.generate_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        self.cancel_btn = ttk.Button(button_frame, text="Cancel", command=self._cancel_generation, state='disabled')
-        self.cancel_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(button_frame, text="Open Jobs Folder", command=self._open_jobs_folder).pack(side=tk.LEFT)
-    
-    def _on_song_mode_changed(self, event=None):
-        """Handle switching between Manual and Smart Picker modes"""
-        selected_tab = self.song_notebook.index(self.song_notebook.select())
-        self.use_smart_picker = (selected_tab == 1)  # 0 = Manual, 1 = Smart Picker
-        
-        if self.use_smart_picker:
-            self._refresh_smart_picker_stats()
-    
-    def _refresh_smart_picker_stats(self):
-        """Refresh the Smart Picker statistics and song list"""
-        try:
-            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
-            stats = picker.get_database_stats()
-            
-            # Update stats label
-            if stats['total_songs'] == 0:
-                self.smart_stats_label.config(
-                    text="📊 Database is empty. Add songs using Manual Entry first.",
-                    style='Warning.TLabel'
-                )
-                self.smart_warning_label.config(
-                    text="⚠️ No songs available. Use Manual Entry to add songs to the database."
-                )
-                self.smart_listbox.delete(0, tk.END)
-                return
-            
-            stats_text = f"📊 Total: {stats['total_songs']} songs | " \
-                        f"Unused: {stats['unused_songs']} | " \
-                        f"Uses: {stats['min_uses']}-{stats['max_uses']} (avg: {stats['avg_uses']})"
-            self.smart_stats_label.config(text=stats_text, style='Status.TLabel')
-            
-            # Get preview of next songs
-            num_jobs = int(self.jobs_var.get())
-            songs = picker.get_available_songs(num_songs=num_jobs)
-            
-            # Update listbox
-            self.smart_listbox.delete(0, tk.END)
-            for i, song in enumerate(songs, 1):
-                status = "🆕 new" if song['use_count'] == 1 else f"📊 {song['use_count']}x"
-                display = f"{i:2}. {song['song_title'][:45]:<45} ({status})"
-                self.smart_listbox.insert(tk.END, display)
-            
-            # Update warning
-            if len(songs) < num_jobs:
-                self.smart_warning_label.config(
-                    text=f"⚠️ Only {len(songs)} songs available, but {num_jobs} requested."
-                )
-            else:
-                self.smart_warning_label.config(text="")
-                
-        except Exception as e:
-            self.smart_stats_label.config(
-                text=f"❌ Error loading database: {e}",
-                style='Error.TLabel'
-            )
-    
-    def _create_inject_tab(self):
-        """Create the JSX Injection tab"""
-        
-        # Create outer frame to hold canvas and scrollbar
-        outer_frame = ttk.Frame(self.inject_tab)
-        outer_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Create canvas and scrollbar for scrolling
-        inject_canvas = tk.Canvas(outer_frame, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=inject_canvas.yview)
-        scrollable_frame = ttk.Frame(inject_canvas, padding="20")
-        
-        # Create window and store the ID
-        canvas_window = inject_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        
-        # Configure scroll region when frame size changes
-        def configure_scroll(event):
-            inject_canvas.configure(scrollregion=inject_canvas.bbox("all"))
-        scrollable_frame.bind("<Configure>", configure_scroll)
-        
-        # Resize the canvas window width when canvas is resized
-        def configure_canvas(event):
-            inject_canvas.itemconfig(canvas_window, width=event.width)
-        inject_canvas.bind("<Configure>", configure_canvas)
-        
-        inject_canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Enable mousewheel scrolling only when mouse is over this canvas
-        def _on_mousewheel_inject(event):
-            inject_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        
-        def _bind_mousewheel_inject(event):
-            inject_canvas.bind_all("<MouseWheel>", _on_mousewheel_inject)
-        
-        def _unbind_mousewheel_inject(event):
-            inject_canvas.unbind_all("<MouseWheel>")
-        
-        inject_canvas.bind("<Enter>", _bind_mousewheel_inject)
-        inject_canvas.bind("<Leave>", _unbind_mousewheel_inject)
-        
-        scrollbar.pack(side="right", fill="y")
-        inject_canvas.pack(side="left", fill="both", expand=True)
-        
-        content = scrollable_frame
-        
-        # === TEMPLATE SELECTION ===
-        template_frame = ttk.LabelFrame(content, text="Individual Template Injection", style='Section.TLabelframe', padding="15")
-        template_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        self.inject_template_var = tk.StringVar(value="aurora")
-        self.inject_template_var.trace_add('write', self._update_inject_status)
-        
-        templates = [
+
+        # Progress
+        prog_grp = QGroupBox("Progress")
+        prog_lay = QVBoxLayout(prog_grp)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        prog_lay.addWidget(self.progress_bar)
+        self.status_label = QLabel("Ready")
+        prog_lay.addWidget(self.status_label)
+        self.log_text = QTextEdit()
+        self.log_text.setReadOnly(True)
+        self.log_text.setMinimumHeight(130)
+        prog_lay.addWidget(self.log_text)
+        layout.addWidget(prog_grp)
+
+        # Buttons
+        btn_row = QHBoxLayout()
+        self.generate_btn = QPushButton("🚀 Generate Jobs")
+        self.generate_btn.setObjectName("primary")
+        self.generate_btn.clicked.connect(self._start_generation)
+        btn_row.addWidget(self.generate_btn)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.setEnabled(False)
+        self.cancel_btn.clicked.connect(self._cancel_generation)
+        btn_row.addWidget(self.cancel_btn)
+        open_btn = QPushButton("Open Jobs Folder")
+        open_btn.clicked.connect(self._open_jobs_folder)
+        btn_row.addWidget(open_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        self.tabs.addTab(_scrollable(page), "  📁 Job Creation  ")
+
+    # ── JSX Injection Tab ─────────────────────────────────────────────────────
+
+    def _build_inject_tab(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(12)
+
+        # Template selector
+        tpl_grp = QGroupBox("Individual Template Injection")
+        tpl_lay = QVBoxLayout(tpl_grp)
+        self.inject_tpl_group = QButtonGroup(self)
+        for name, val, desc in [
             ("Aurora", "aurora", "Full visual template"),
-            ("Mono", "mono", "Minimal text template"),
-            ("Onyx", "onyx", "Hybrid vinyl template")
-        ]
-        
-        for name, value, desc in templates:
-            frame = ttk.Frame(template_frame)
-            frame.pack(fill=tk.X, pady=3)
-            
-            rb = ttk.Radiobutton(frame, text=f"{name}", variable=self.inject_template_var, value=value)
-            rb.pack(side=tk.LEFT)
-            ttk.Label(frame, text=f"  - {desc}", foreground='#666666').pack(side=tk.LEFT)
-        
-        # === STATUS ===
-        status_frame = ttk.LabelFrame(content, text="Status", style='Section.TLabelframe', padding="15")
-        status_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        # Jobs status
-        jobs_row = ttk.Frame(status_frame)
-        jobs_row.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(jobs_row, text="Jobs:", width=15, anchor='w').pack(side=tk.LEFT)
-        self.inject_jobs_label = ttk.Label(jobs_row, text="Checking...", style='Status.TLabel')
-        self.inject_jobs_label.pack(side=tk.LEFT)
-        
-        # Template status
-        template_row = ttk.Frame(status_frame)
-        template_row.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(template_row, text="Template File:", width=15, anchor='w').pack(side=tk.LEFT)
-        self.inject_template_label = ttk.Label(template_row, text="Checking...", style='Status.TLabel')
-        self.inject_template_label.pack(side=tk.LEFT)
-        
-        # After Effects status
-        ae_row = ttk.Frame(status_frame)
-        ae_row.pack(fill=tk.X)
-        
-        ttk.Label(ae_row, text="After Effects:", width=15, anchor='w').pack(side=tk.LEFT)
-        self.inject_ae_label = ttk.Label(ae_row, text="Checking...", style='Status.TLabel')
-        self.inject_ae_label.pack(side=tk.LEFT)
-        
-        # Refresh button
-        refresh_row = ttk.Frame(status_frame)
-        refresh_row.pack(fill=tk.X, pady=(15, 0))
-        
-        ttk.Button(refresh_row, text="Refresh Status", command=self._update_inject_status).pack(side=tk.LEFT)
-        
-        # Install path info (for debugging)
-        path_row = ttk.Frame(status_frame)
-        path_row.pack(fill=tk.X, pady=(10, 0))
-        
-        ttk.Label(path_row, text=f"Install Dir: {INSTALL_DIR}", foreground='#888888', font=('Consolas', 8)).pack(anchor=tk.W)
-        
-        # === INJECT BUTTON ===
-        button_frame = ttk.Frame(content)
-        button_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        self.inject_btn = ttk.Button(button_frame, text="Launch After Effects & Inject", 
-                                     style='Inject.TButton', command=self._run_injection)
-        self.inject_btn.pack(side=tk.LEFT)
-        
-        # Info text
-        info_frame = ttk.Frame(content)
-        info_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        info_text = (
+            ("Mono",   "mono",   "Minimal text template"),
+            ("Onyx",   "onyx",   "Hybrid vinyl template"),
+        ]:
+            rb = QRadioButton(f"{name}  —  {desc}")
+            rb.setProperty("tval", val)
+            if val == "aurora":
+                rb.setChecked(True)
+            self.inject_tpl_group.addButton(rb)
+            tpl_lay.addWidget(rb)
+        self.inject_tpl_group.buttonClicked.connect(self._update_inject_status)
+        layout.addWidget(tpl_grp)
+
+        # Status
+        status_grp = QGroupBox("Status")
+        status_lay = QVBoxLayout(status_grp)
+
+        def status_row(label_text):
+            row = QHBoxLayout()
+            lbl_key = QLabel(label_text)
+            lbl_key.setFixedWidth(130)
+            lbl_val = QLabel("Checking...")
+            row.addWidget(lbl_key)
+            row.addWidget(lbl_val)
+            row.addStretch()
+            status_lay.addLayout(row)
+            return lbl_val
+
+        self.inject_jobs_label     = status_row("Jobs:")
+        self.inject_template_label = status_row("Template File:")
+        self.inject_ae_label       = status_row("After Effects:")
+
+        ref_row = QHBoxLayout()
+        ref_btn = QPushButton("Refresh Status")
+        ref_btn.clicked.connect(self._update_inject_status)
+        ref_row.addWidget(ref_btn)
+        ref_row.addStretch()
+        status_lay.addLayout(ref_row)
+
+        install_lbl = _label(f"Install Dir: {INSTALL_DIR}", "muted")
+        status_lay.addWidget(install_lbl)
+        layout.addWidget(status_grp)
+
+        self.inject_btn = QPushButton("Launch After Effects & Inject")
+        self.inject_btn.setObjectName("primary")
+        self.inject_btn.clicked.connect(self._run_injection)
+        layout.addWidget(self.inject_btn)
+
+        info = _label(
             "This will launch AE, open the template, and inject job data.\n"
-            "After injection, review the comps and manually add to render queue."
-        )
-        ttk.Label(info_frame, text=info_text, foreground='#666666', justify=tk.LEFT).pack(anchor=tk.W)
-        
-        # === BATCH RENDER ALL SECTION ===
-        batch_frame = ttk.LabelFrame(content, text="Batch Render All Templates", style='Section.TLabelframe', padding="15")
-        batch_frame.pack(fill=tk.X, pady=(20, 0))
-        
-        # Batch status header
-        ttk.Label(batch_frame, text="Templates Ready:", font=('Segoe UI', 9, 'bold')).pack(anchor=tk.W)
-        
-        # Status for each template
+            "After injection, review the comps and manually add to render queue.", "muted")
+        layout.addWidget(info)
+
+        # Batch render
+        batch_grp = QGroupBox("Batch Render All Templates")
+        batch_lay = QVBoxLayout(batch_grp)
+        batch_lay.addWidget(QLabel("Templates Ready:"))
         self.batch_status_labels = {}
-        for name, value, desc in templates:
-            row = ttk.Frame(batch_frame)
-            row.pack(fill=tk.X, pady=2)
-            
-            self.batch_status_labels[value] = ttk.Label(row, text=f"  {name}: Checking...", style='Status.TLabel')
-            self.batch_status_labels[value].pack(side=tk.LEFT)
-        
-        # Batch progress section
-        progress_frame = ttk.Frame(batch_frame)
-        progress_frame.pack(fill=tk.X, pady=(15, 10))
-        
-        self.batch_status_var = tk.StringVar(value="Status: Idle")
-        self.batch_status_label = ttk.Label(progress_frame, textvariable=self.batch_status_var, font=('Segoe UI', 9))
-        self.batch_status_label.pack(anchor=tk.W)
-        
-        self.batch_progress_var = tk.DoubleVar(value=0)
-        self.batch_progress = ttk.Progressbar(progress_frame, variable=self.batch_progress_var, maximum=100, length=400)
-        self.batch_progress.pack(fill=tk.X, pady=(5, 5))
-        
-        self.batch_current_var = tk.StringVar(value="")
-        self.batch_current_label = ttk.Label(progress_frame, textvariable=self.batch_current_var, foreground='#666666')
-        self.batch_current_label.pack(anchor=tk.W)
-        
-        # Render All button
-        batch_btn_frame = ttk.Frame(batch_frame)
-        batch_btn_frame.pack(fill=tk.X, pady=(10, 0))
-        
-        self.render_all_btn = ttk.Button(batch_btn_frame, text="Render All", 
-                                          style='Inject.TButton', command=self._start_batch_render)
-        self.render_all_btn.pack(side=tk.LEFT)
-        
-        self.batch_cancel_btn = ttk.Button(batch_btn_frame, text="Cancel", 
-                                            command=self._cancel_batch_render, state='disabled')
-        self.batch_cancel_btn.pack(side=tk.LEFT, padx=(10, 0))
-        
-        # Batch info
-        batch_info = (
-            "Renders all templates with jobs sequentially (Aurora → Mono → Onyx).\n"
-            "Each template will auto-inject, render, then close before the next starts.\n"
-            "Requires at least 2 templates with jobs to enable."
-        )
-        ttk.Label(batch_frame, text=batch_info, foreground='#666666', justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
-        
-        # Batch render state
-        self.batch_render_active = False
-        self.batch_render_cancelled = False
-        self.batch_results = {}
-        
-        # Update status
+        for name, val, _ in [("Aurora","aurora",""), ("Mono","mono",""), ("Onyx","onyx","")]:
+            lbl = QLabel(f"  {name}: Checking...")
+            self.batch_status_labels[val] = lbl
+            batch_lay.addWidget(lbl)
+
+        self.batch_status_label  = QLabel("Status: Idle")
+        self.batch_progress_bar  = QProgressBar()
+        self.batch_progress_bar.setRange(0, 100)
+        self.batch_current_label = _label("", "muted")
+        batch_lay.addWidget(self.batch_status_label)
+        batch_lay.addWidget(self.batch_progress_bar)
+        batch_lay.addWidget(self.batch_current_label)
+
+        bb_row = QHBoxLayout()
+        self.render_all_btn = QPushButton("Render All")
+        self.render_all_btn.setObjectName("primary")
+        self.render_all_btn.clicked.connect(self._start_batch_render)
+        bb_row.addWidget(self.render_all_btn)
+        self.batch_cancel_btn = QPushButton("Cancel")
+        self.batch_cancel_btn.setEnabled(False)
+        self.batch_cancel_btn.clicked.connect(self._cancel_batch_render)
+        bb_row.addWidget(self.batch_cancel_btn)
+        bb_row.addStretch()
+        batch_lay.addLayout(bb_row)
+
+        batch_info = _label(
+            "Renders all templates sequentially (Aurora → Mono → Onyx).\n"
+            "Each template auto-injects, renders, then closes. Requires 2+ templates.", "muted")
+        batch_lay.addWidget(batch_info)
+        layout.addWidget(batch_grp)
+        layout.addStretch()
+
+        self.tabs.addTab(_scrollable(page), "  🚀 JSX Injection  ")
         self._update_inject_status()
         self._update_batch_status()
-    
-    def _create_settings_tab(self):
-        """Create the Settings tab"""
-        
-        # Create outer frame to hold canvas and scrollbar
-        outer_frame = ttk.Frame(self.settings_tab)
-        outer_frame.pack(fill=tk.BOTH, expand=True)
-        
-        # Create canvas and scrollbar for scrolling
-        settings_canvas = tk.Canvas(outer_frame, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(outer_frame, orient="vertical", command=settings_canvas.yview)
-        scrollable_frame = ttk.Frame(settings_canvas, padding="20")
-        
-        # Create window and store the ID
-        canvas_window = settings_canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
-        
-        # Configure scroll region when frame size changes
-        def configure_scroll(event):
-            settings_canvas.configure(scrollregion=settings_canvas.bbox("all"))
-        scrollable_frame.bind("<Configure>", configure_scroll)
-        
-        # Resize the canvas window width when canvas is resized
-        def configure_canvas(event):
-            settings_canvas.itemconfig(canvas_window, width=event.width)
-        settings_canvas.bind("<Configure>", configure_canvas)
-        
-        settings_canvas.configure(yscrollcommand=scrollbar.set)
-        
-        # Enable mousewheel scrolling only when mouse is over this canvas
-        def _on_mousewheel_settings(event):
-            settings_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
-        
-        def _bind_mousewheel_settings(event):
-            settings_canvas.bind_all("<MouseWheel>", _on_mousewheel_settings)
-        
-        def _unbind_mousewheel_settings(event):
-            settings_canvas.unbind_all("<MouseWheel>")
-        
-        settings_canvas.bind("<Enter>", _bind_mousewheel_settings)
-        settings_canvas.bind("<Leave>", _unbind_mousewheel_settings)
-        
-        scrollbar.pack(side="right", fill="y")
-        settings_canvas.pack(side="left", fill="both", expand=True)
-        
-        content = scrollable_frame
-        
-        # === AFTER EFFECTS ===
-        ae_frame = ttk.LabelFrame(content, text="Adobe After Effects", style='Section.TLabelframe', padding="15")
-        ae_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        ae_path_row = ttk.Frame(ae_frame)
-        ae_path_row.pack(fill=tk.X, pady=(0, 10))
-        
-        ttk.Label(ae_path_row, text="Path:").pack(side=tk.LEFT)
-        
-        self.ae_path_var = tk.StringVar(value=self.settings.get('after_effects_path', ''))
-        self.ae_path_entry = ttk.Entry(ae_path_row, textvariable=self.ae_path_var, width=50)
-        self.ae_path_entry.pack(side=tk.LEFT, padx=(10, 10), fill=tk.X, expand=True)
-        
-        ttk.Button(ae_path_row, text="Browse...", command=self._browse_ae_path).pack(side=tk.LEFT)
-        ttk.Button(ae_path_row, text="Auto-Detect", command=self._auto_detect_ae_click).pack(side=tk.LEFT, padx=(5, 0))
-        
-        # AE status
-        self.ae_status_label = ttk.Label(ae_frame, text="", style='Status.TLabel')
-        self.ae_status_label.pack(anchor=tk.W)
+
+    # ── Settings Tab ──────────────────────────────────────────────────────────
+
+    def _build_settings_tab(self):
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(12)
+
+        # After Effects
+        ae_grp = QGroupBox("Adobe After Effects")
+        ae_lay = QVBoxLayout(ae_grp)
+        ae_row = QHBoxLayout()
+        ae_row.addWidget(QLabel("Path:"))
+        self.ae_path_edit = QLineEdit(self.settings.get('after_effects_path', '') or '')
+        self.ae_path_edit.setPlaceholderText(
+            "C:/Program Files/Adobe/.../AfterFX.exe")
+        ae_row.addWidget(self.ae_path_edit)
+        browse_btn = QPushButton("Browse...")
+        browse_btn.clicked.connect(self._browse_ae_path)
+        ae_row.addWidget(browse_btn)
+        detect_btn = QPushButton("Auto-Detect")
+        detect_btn.clicked.connect(self._auto_detect_ae_click)
+        ae_row.addWidget(detect_btn)
+        ae_lay.addLayout(ae_row)
+        self.ae_status_label = QLabel("")
+        ae_lay.addWidget(self.ae_status_label)
         self._update_ae_status()
-        
-        # === GENIUS API ===
-        genius_frame = ttk.LabelFrame(content, text="Genius API", style='Section.TLabelframe', padding="15")
-        genius_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        ttk.Label(genius_frame, text="API Token:").pack(anchor=tk.W)
-        
-        self.genius_var = tk.StringVar(value=self.settings.get('genius_api_token', ''))
-        genius_entry = ttk.Entry(genius_frame, textvariable=self.genius_var, width=60, show='*')
-        genius_entry.pack(fill=tk.X, pady=(5, 5))
-        
-        ttk.Label(genius_frame, text="Get your token at: https://genius.com/api-clients", 
-                  foreground='#666666').pack(anchor=tk.W)
-        
-        # === FFMPEG ===
-        ffmpeg_frame = ttk.LabelFrame(content, text="FFmpeg", style='Section.TLabelframe', padding="15")
-        ffmpeg_frame.pack(fill=tk.X, pady=(0, 20))
-        
-        self.ffmpeg_status_label = ttk.Label(ffmpeg_frame, text="Checking...", style='Status.TLabel')
-        self.ffmpeg_status_label.pack(anchor=tk.W)
+        layout.addWidget(ae_grp)
+
+        # Genius API
+        genius_grp = QGroupBox("Genius API")
+        genius_lay = QVBoxLayout(genius_grp)
+        genius_lay.addWidget(QLabel("API Token:"))
+        self.genius_edit = QLineEdit(self.settings.get('genius_api_token', '') or '')
+        self.genius_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        genius_lay.addWidget(self.genius_edit)
+        genius_lay.addWidget(_label("Get your token at: https://genius.com/api-clients", "muted"))
+        layout.addWidget(genius_grp)
+
+        # FFmpeg
+        ffmpeg_grp = QGroupBox("FFmpeg")
+        ffmpeg_lay = QVBoxLayout(ffmpeg_grp)
+        self.ffmpeg_status_label = QLabel("Checking...")
+        ffmpeg_lay.addWidget(self.ffmpeg_status_label)
         self._check_ffmpeg()
-        
-        # === SAVE BUTTON ===
-        button_frame = ttk.Frame(content)
-        button_frame.pack(fill=tk.X, pady=(20, 0))
-        
-        ttk.Button(button_frame, text="Save Settings", command=self._save_all_settings).pack(side=tk.LEFT)
-        
-        # === PATHS INFO ===
-        paths_frame = ttk.LabelFrame(content, text="Installation Paths (Read-Only)", style='Section.TLabelframe', padding="15")
-        paths_frame.pack(fill=tk.X, pady=(20, 0))
-        
-        paths_info = f"""Install Directory: {INSTALL_DIR}
-Templates: {TEMPLATES_DIR}
-Aurora Jobs: {AURORA_JOBS_DIR}
-Mono Jobs: {MONO_JOBS_DIR}
-Onyx Jobs: {ONYX_JOBS_DIR}
-Database: {DATABASE_DIR}"""
-        
-        ttk.Label(paths_frame, text=paths_info, foreground='#666666', font=('Consolas', 8)).pack(anchor=tk.W)
-    
-    def _on_tab_changed(self, event):
-        """Handle tab change events"""
-        selected_tab = self.notebook.index(self.notebook.select())
-        if selected_tab == 1:  # JSX Injection tab
+        layout.addWidget(ffmpeg_grp)
+
+        save_btn = QPushButton("Save Settings")
+        save_btn.setObjectName("primary")
+        save_btn.clicked.connect(self._save_all_settings)
+        layout.addWidget(save_btn)
+
+        # Paths info
+        paths_grp = QGroupBox("Installation Paths (Read-Only)")
+        paths_lay = QVBoxLayout(paths_grp)
+        paths_lbl = _label(
+            f"Install Dir:  {INSTALL_DIR}\n"
+            f"Templates:    {TEMPLATES_DIR}\n"
+            f"Aurora Jobs:  {AURORA_JOBS_DIR}\n"
+            f"Mono Jobs:    {MONO_JOBS_DIR}\n"
+            f"Onyx Jobs:    {ONYX_JOBS_DIR}\n"
+            f"Database:     {DATABASE_DIR}", "muted")
+        f2 = QFont("Consolas")
+        f2.setPointSize(9)
+        paths_lbl.setFont(f2)
+        paths_lay.addWidget(paths_lbl)
+        layout.addWidget(paths_grp)
+        layout.addStretch()
+
+        self.tabs.addTab(_scrollable(page), "  ⚙ Settings  ")
+
+    # ── Event handlers ────────────────────────────────────────────────────────
+
+    def _on_tab_changed(self, index):
+        if index == 1:
             self._update_inject_status()
             self._update_batch_status()
-    
-    def _on_template_change(self, *args):
-        """Update output path when template changes"""
-        template = self.job_template_var.get()
-        jobs_dir = JOBS_DIRS.get(template, AURORA_JOBS_DIR)
-        self.output_path_label.config(text=str(jobs_dir))
+
+    def _on_template_change(self):
+        t = self._job_template()
+        self.output_path_label.setText(str(JOBS_DIRS.get(t, AURORA_JOBS_DIR)))
         self._check_existing_jobs()
-    
-    def _update_inject_status(self, *args):
-        """Update the injection tab status"""
-        template = self.inject_template_var.get()
-        
-        # Check jobs
-        jobs_dir = JOBS_DIRS.get(template)
-        if jobs_dir and jobs_dir.exists():
-            job_folders = list(jobs_dir.glob("job_*"))
-            if job_folders:
-                self.inject_jobs_label.config(
-                    text=f"✓ {len(job_folders)} job(s) found in {jobs_dir.name}",
-                    style='Success.TLabel'
-                )
-                jobs_ok = True
-            else:
-                self.inject_jobs_label.config(
-                    text=f"✗ No jobs in {jobs_dir}",
-                    style='Error.TLabel'
-                )
-                jobs_ok = False
-        else:
-            self.inject_jobs_label.config(
-                text=f"✗ Folder not found: {jobs_dir}",
-                style='Error.TLabel'
-            )
-            jobs_ok = False
-        
-        # Check template file
-        template_path = TEMPLATE_PATHS.get(template)
-        if template_path and template_path.exists():
-            self.inject_template_label.config(
-                text=f"✓ {template_path.name}",
-                style='Success.TLabel'
-            )
-            template_ok = True
-        else:
-            self.inject_template_label.config(
-                text=f"✗ Template not found: {template_path.name if template_path else 'Unknown'}",
-                style='Error.TLabel'
-            )
-            template_ok = False
-        
-        # Check After Effects
-        ae_path = self.settings.get('after_effects_path')
-        if ae_path and Path(ae_path).exists():
-            self.inject_ae_label.config(
-                text=f"✓ Found",
-                style='Success.TLabel'
-            )
-            ae_ok = True
-        else:
-            self.inject_ae_label.config(
-                text="✗ Not configured - go to Settings tab",
-                style='Error.TLabel'
-            )
-            ae_ok = False
-        
-        # Enable/disable inject button
-        if jobs_ok and template_ok and ae_ok:
-            self.inject_btn.config(state='normal')
-        else:
-            self.inject_btn.config(state='disabled')
-    
-    def _update_ae_status(self):
-        """Update After Effects status in settings"""
-        ae_path = self.ae_path_var.get()
-        if ae_path and Path(ae_path).exists():
-            self.ae_status_label.config(text="✓ After Effects found", style='Success.TLabel')
-        elif ae_path:
-            self.ae_status_label.config(text="✗ Path not found", style='Error.TLabel')
-        else:
-            self.ae_status_label.config(text="⚠ Not configured - click Auto-Detect or Browse", style='Warning.TLabel')
-    
-    def _check_ffmpeg(self):
-        """Check FFmpeg availability"""
+
+    def _on_song_mode_changed(self, index):
+        self.use_smart_picker = (index == 1)
+        if self.use_smart_picker:
+            self._refresh_smart_picker_stats()
+
+    def _job_template(self):
+        btn = self.job_tpl_group.checkedButton()
+        return btn.property("tval") if btn else "aurora"
+
+    def _inject_template(self):
+        btn = self.inject_tpl_group.checkedButton()
+        return btn.property("tval") if btn else "aurora"
+
+    # ── Smart Picker ──────────────────────────────────────────────────────────
+
+    def _refresh_smart_picker_stats(self):
         try:
-            result = subprocess.run(['ffmpeg', '-version'], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                self.ffmpeg_status_label.config(text="✓ FFmpeg found in PATH", style='Success.TLabel')
-            else:
-                self.ffmpeg_status_label.config(text="✗ FFmpeg not working properly", style='Error.TLabel')
-        except FileNotFoundError:
-            self.ffmpeg_status_label.config(text="✗ FFmpeg not found - please install and add to PATH", style='Error.TLabel')
-        except Exception as e:
-            self.ffmpeg_status_label.config(text=f"✗ Error checking FFmpeg: {e}", style='Error.TLabel')
-    
-    def _browse_ae_path(self):
-        """Browse for After Effects executable"""
-        path = filedialog.askopenfilename(
-            title="Select AfterFX.exe",
-            filetypes=[("Executable", "*.exe"), ("All files", "*.*")],
-            initialdir="C:/Program Files/Adobe"
-        )
-        if path:
-            self.ae_path_var.set(path)
-            self._update_ae_status()
-    
-    def _auto_detect_ae_click(self):
-        """Handle auto-detect button click"""
-        detected = self._auto_detect_after_effects()
-        if detected:
-            self.ae_path_var.set(detected)
-            self._update_ae_status()
-            messagebox.showinfo("Found", f"After Effects found:\n{detected}")
-        else:
-            messagebox.showwarning("Not Found", "Could not auto-detect After Effects.\n\nPlease browse manually.")
-    
-    def _save_all_settings(self):
-        """Save all settings"""
-        self.settings['after_effects_path'] = self.ae_path_var.get()
-        self.settings['genius_api_token'] = self.genius_var.get()
-        self.settings['whisper_model'] = self.whisper_var.get()
-        
-        # Update config
-        Config.GENIUS_API_TOKEN = self.genius_var.get()
-        Config.WHISPER_MODEL = self.whisper_var.get()
-        
-        # Save to file
-        self._save_settings()
-        
-        # Also save to .env for compatibility
-        env_path = INSTALL_DIR / ".env"
-        with open(env_path, 'w') as f:
-            f.write(f"GENIUS_API_TOKEN={self.genius_var.get()}\n")
-            f.write(f"WHISPER_MODEL={self.whisper_var.get()}\n")
-        
-        messagebox.showinfo("Saved", "Settings saved successfully!")
-        
-        # Update inject status
-        self._update_inject_status()
-    
-    def _run_injection(self):
-        """Run the JSX injection"""
-        template = self.inject_template_var.get()
-        
-        # Get paths
-        ae_path = self.settings.get('after_effects_path')
-        template_path = TEMPLATE_PATHS.get(template)
-        jobs_dir = JOBS_DIRS.get(template)
-        jsx_name = JSX_SCRIPTS.get(template)
-        
-        # Extract JSX to temp file
-        try:
-            jsx_source = BUNDLED_JSX_DIR / jsx_name
-            if not jsx_source.exists():
-                # Fallback: check install dir
-                jsx_source = ASSETS_DIR / "scripts" / "JSX" / jsx_name
-            
-            if not jsx_source.exists():
-                messagebox.showerror("Error", f"JSX script not found: {jsx_name}\n\nPlease reinstall the application.")
+            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            stats  = picker.get_database_stats()
+            if stats['total_songs'] == 0:
+                _set_label_style(self.smart_stats_label, "warning")
+                self.smart_stats_label.setText(
+                    "📊 Database is empty. Add songs via Manual Entry first.")
+                self.smart_warning_label.setText(
+                    "⚠️ No songs available. Use Manual Entry to add songs.")
+                self.smart_listbox.clear()
                 return
-            
-            # Copy to temp
-            temp_dir = Path(tempfile.gettempdir()) / "Apollova"
-            temp_dir.mkdir(exist_ok=True)
-            temp_jsx = temp_dir / jsx_name
-            
-            shutil.copy(jsx_source, temp_jsx)
-            
-            # Inject the jobs path into the JSX
-            self._prepare_jsx_with_path(temp_jsx, jobs_dir, template_path)
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to prepare JSX script:\n{e}")
-            return
-        
-        # Launch After Effects with the script
-        # The script itself will open the template via app.open()
-        try:
-            # Only pass the script - it will open the .aep via app.open()
-            cmd = [ae_path, "-r", str(temp_jsx)]
-            subprocess.Popen(cmd)
-            
-            messagebox.showinfo(
-                "Launched",
-                f"After Effects is launching...\n\n"
-                f"Template: {template_path.name}\n"
-                f"Jobs: {jobs_dir}\n\n"
-                "The script will open the project and inject the jobs.\n"
-                "Please wait for the process to complete."
-            )
-            
-        except Exception as e:
-            messagebox.showerror("Error", f"Failed to launch After Effects:\n{e}")
-    
-    def _prepare_jsx_with_path(self, jsx_path, jobs_dir, template_path, auto_render=False):
-        """Inject the jobs path into the JSX file"""
-        with open(jsx_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        
-        # Replace placeholder paths
-        content = content.replace('{{JOBS_PATH}}', str(jobs_dir).replace('\\', '/'))
-        content = content.replace('{{TEMPLATE_PATH}}', str(template_path).replace('\\', '/'))
-        content = content.replace('{{AUTO_RENDER}}', 'true' if auto_render else 'false')
-        
-        with open(jsx_path, 'w', encoding='utf-8') as f:
-            f.write(content)
-    
-    def _update_batch_status(self):
-        """Update the batch render status for all templates"""
-        templates_ready = []
-        ae_path = self.settings.get('after_effects_path')
-        ae_ok = ae_path and Path(ae_path).exists()
-        
-        for template in ['aurora', 'mono', 'onyx']:
-            jobs_dir = JOBS_DIRS.get(template)
-            template_path = TEMPLATE_PATHS.get(template)
-            jsx_name = JSX_SCRIPTS.get(template)
-            
-            # Check all prerequisites (same as individual render)
-            jobs_ok = jobs_dir and jobs_dir.exists() and list(jobs_dir.glob("job_*"))
-            template_ok = template_path and template_path.exists()
-            
-            # Check JSX script exists
-            jsx_source = BUNDLED_JSX_DIR / jsx_name if jsx_name else None
-            if jsx_source and not jsx_source.exists():
-                jsx_source = ASSETS_DIR / "scripts" / "JSX" / jsx_name
-            jsx_ok = jsx_source and jsx_source.exists()
-            
-            if jobs_ok:
-                job_count = len(list(jobs_dir.glob("job_*")))
-                if template_ok and jsx_ok:
-                    self.batch_status_labels[template].config(
-                        text=f"  {template.capitalize()}: {job_count} jobs ready",
-                        style='Success.TLabel'
-                    )
-                    templates_ready.append(template)
-                elif not template_ok:
-                    self.batch_status_labels[template].config(
-                        text=f"  {template.capitalize()}: {job_count} jobs (no template file)",
-                        style='Warning.TLabel'
-                    )
-                elif not jsx_ok:
-                    self.batch_status_labels[template].config(
-                        text=f"  {template.capitalize()}: {job_count} jobs (JSX script missing)",
-                        style='Warning.TLabel'
-                    )
+
+            self.smart_stats_label.setText(
+                f"📊 Total: {stats['total_songs']} | Unused: {stats['unused_songs']} | "
+                f"Uses: {stats['min_uses']}–{stats['max_uses']} (avg {stats['avg_uses']})")
+
+            num_jobs = int(self.jobs_combo.currentText())
+            songs    = picker.get_available_songs(num_songs=num_jobs)
+            self.smart_listbox.clear()
+            for i, s in enumerate(songs, 1):
+                tag = "🆕 new" if s['use_count'] == 1 else f"📊 {s['use_count']}x"
+                self.smart_listbox.addItem(
+                    f"{i:2}. {s['song_title'][:45]:<45} ({tag})")
+            if len(songs) < num_jobs:
+                self.smart_warning_label.setText(
+                    f"⚠️ Only {len(songs)} songs available, {num_jobs} requested.")
             else:
-                self.batch_status_labels[template].config(
-                    text=f"  {template.capitalize()}: No jobs",
-                    style='Status.TLabel'
-                )
-        
-        # Enable/disable Render All button (need at least 2 templates ready + AE)
-        if len(templates_ready) >= 2 and ae_ok and not self.batch_render_active:
-            self.render_all_btn.config(state='normal')
-        else:
-            self.render_all_btn.config(state='disabled')
-        
-        return templates_ready
-    
-    def _start_batch_render(self):
-        """Start the batch render process"""
-        templates_ready = self._update_batch_status()
-        
-        if len(templates_ready) < 2:
-            messagebox.showerror("Error", "Need at least 2 templates with jobs to use Render All.")
-            return
-        
-        # Build summary
-        summary_lines = ["Ready to render:"]
-        for t in templates_ready:
-            jobs_dir = JOBS_DIRS.get(t)
-            job_count = len(list(jobs_dir.glob("job_*")))
-            summary_lines.append(f"  - {t.capitalize()}: {job_count} jobs")
-        summary_lines.append("")
-        summary_lines.append("This will take a while. AE will open, inject, render,")
-        summary_lines.append("and close for each template automatically.")
-        summary_lines.append("")
-        summary_lines.append("Continue?")
-        
-        if not messagebox.askyesno("Confirm Batch Render", "\n".join(summary_lines)):
-            return
-        
-        # Start batch render in thread
-        self.batch_render_active = True
-        self.batch_render_cancelled = False
-        self.batch_results = {}
-        
-        # Update UI
-        self.render_all_btn.config(state='disabled')
-        self.batch_cancel_btn.config(state='normal')
-        self.inject_btn.config(state='disabled')
-        
-        # Start thread
-        thread = threading.Thread(target=self._batch_render_thread, args=(templates_ready,), daemon=True)
-        thread.start()
-    
-    def _cancel_batch_render(self):
-        """Cancel the batch render process"""
-        if messagebox.askyesno("Cancel Batch Render", "Are you sure you want to cancel?\n\nThe current render will complete, but no more templates will be processed."):
-            self.batch_render_cancelled = True
-            self.batch_status_var.set("Status: Cancelling after current render...")
-    
-    def _batch_render_thread(self, templates):
-        """Thread function for batch rendering"""
-        total = len(templates)
-        
-        for idx, template in enumerate(templates):
-            if self.batch_render_cancelled:
-                self.root.after(0, lambda: self._batch_update_progress(
-                    f"Status: Cancelled",
-                    (idx / total) * 100,
-                    "Batch render was cancelled"
-                ))
-                break
-            
-            # Update progress
-            self.root.after(0, lambda t=template, i=idx: self._batch_update_progress(
-                f"Status: Rendering {t.capitalize()} ({i+1}/{total})",
-                (i / total) * 100,
-                f"Launching After Effects for {t.capitalize()}..."
-            ))
-            
-            # Run injection + render for this template
-            success, error_msg = self._run_batch_template(template)
-            
-            self.batch_results[template] = {
-                'success': success,
-                'error': error_msg
-            }
-            
-            if success:
-                self.root.after(0, lambda t=template: self._batch_update_template_status(
-                    t, f"  {t.capitalize()}: Complete", 'Success.TLabel'
-                ))
-            else:
-                self.root.after(0, lambda t=template, e=error_msg: self._batch_update_template_status(
-                    t, f"  {t.capitalize()}: Failed - {e}", 'Error.TLabel'
-                ))
-        
-        # Complete
-        self.root.after(0, self._batch_render_complete)
-    
-    def _batch_update_progress(self, status, progress, current):
-        """Update batch progress UI (called from main thread)"""
-        self.batch_status_var.set(status)
-        self.batch_progress_var.set(progress)
-        self.batch_current_var.set(current)
-    
-    def _batch_update_template_status(self, template, text, style):
-        """Update individual template status (called from main thread)"""
-        self.batch_status_labels[template].config(text=text, style=style)
-    
-    def _run_batch_template(self, template):
-        """Run injection + render for a single template. Returns (success, error_msg)"""
-        ae_path = self.settings.get('after_effects_path')
-        template_path = TEMPLATE_PATHS.get(template)
-        jobs_dir = JOBS_DIRS.get(template)
-        jsx_name = JSX_SCRIPTS.get(template)
-        
-        try:
-            # Find JSX source
-            jsx_source = BUNDLED_JSX_DIR / jsx_name
-            if not jsx_source.exists():
-                jsx_source = ASSETS_DIR / "scripts" / "JSX" / jsx_name
-            
-            if not jsx_source.exists():
-                return False, f"JSX not found: {jsx_name}"
-            
-            # Copy to temp and inject paths with AUTO_RENDER=true
-            temp_dir = Path(tempfile.gettempdir()) / "Apollova"
-            temp_dir.mkdir(exist_ok=True)
-            temp_jsx = temp_dir / f"batch_{jsx_name}"
-            
-            shutil.copy(jsx_source, temp_jsx)
-            self._prepare_jsx_with_path(temp_jsx, jobs_dir, template_path, auto_render=True)
-            
-            # Create error log path (JSX will write here if error occurs)
-            error_log = jobs_dir / "batch_error.txt"
-            if error_log.exists():
-                error_log.unlink()
-            
-            # Launch AE and wait for it to complete
-            cmd = [ae_path, "-r", str(temp_jsx)]
-            
-            self.root.after(0, lambda: self._batch_update_progress(
-                self.batch_status_var.get(),
-                self.batch_progress_var.get(),
-                f"Rendering {template.capitalize()}... (this may take a while)"
-            ))
-            
-            process = subprocess.Popen(cmd)
-            
-            # Wait for process to complete
-            process.wait()
-            
-            # Check for error log
-            if error_log.exists():
-                with open(error_log, 'r') as f:
-                    error_msg = f.read().strip()
-                return False, error_msg
-            
-            return True, None
-            
+                self.smart_warning_label.setText("")
         except Exception as e:
-            return False, str(e)
-    
-    def _batch_render_complete(self):
-        """Called when batch render is complete"""
-        self.batch_render_active = False
-        
-        # Update UI
-        self.render_all_btn.config(state='normal')
-        self.batch_cancel_btn.config(state='disabled')
-        self.inject_btn.config(state='normal')
-        self.batch_progress_var.set(100)
-        
-        # Build results summary
-        success_count = sum(1 for r in self.batch_results.values() if r['success'])
-        fail_count = sum(1 for r in self.batch_results.values() if not r['success'])
-        
-        if self.batch_render_cancelled:
-            self.batch_status_var.set("Status: Cancelled")
-            self.batch_current_var.set(f"Completed {success_count} template(s) before cancellation")
-        else:
-            self.batch_status_var.set("Status: Complete")
-            self.batch_current_var.set(f"Success: {success_count}, Failed: {fail_count}")
-        
-        # Show summary dialog
-        summary_lines = ["Batch Render Complete\n"]
-        for template, result in self.batch_results.items():
-            if result['success']:
-                summary_lines.append(f"{template.capitalize()}: Success")
-            else:
-                summary_lines.append(f"{template.capitalize()}: Failed - {result['error']}")
-        
-        if self.batch_render_cancelled:
-            summary_lines.append("\nBatch was cancelled by user.")
-        
-        messagebox.showinfo("Batch Render Complete", "\n".join(summary_lines))
-        
-        # Refresh status
-        self._update_batch_status()
-    
-    def _check_existing_jobs(self):
-        """Check if job folders already exist"""
-        template = self.job_template_var.get()
-        jobs_dir = JOBS_DIRS.get(template)
-        
-        if not jobs_dir or not jobs_dir.exists():
-            self.job_warning_label.config(text="")
-            self.delete_jobs_btn.pack_forget()
-            return
-        
-        existing_jobs = list(jobs_dir.glob("job_*"))
-        
-        if existing_jobs:
-            self.job_warning_label.config(
-                text=f"⚠️ {len(existing_jobs)} existing job folder(s) detected"
-            )
-            self.delete_jobs_btn.pack(side=tk.LEFT, padx=(10, 0))
-        else:
-            self.job_warning_label.config(text="")
-            self.delete_jobs_btn.pack_forget()
-    
-    def _delete_existing_jobs(self):
-        """Delete existing job folders"""
-        if self.is_processing:
-            messagebox.showwarning("Processing", "Cannot delete jobs while processing.")
-            return
-        
-        template = self.job_template_var.get()
-        jobs_dir = JOBS_DIRS.get(template)
-        existing_jobs = list(jobs_dir.glob("job_*"))
-        
-        if not existing_jobs:
-            return
-        
-        result = messagebox.askyesno(
-            "Confirm Deletion",
-            f"Delete {len(existing_jobs)} job folder(s) from {template.upper()}?\n\nThis cannot be undone.",
-            icon='warning'
-        )
-        
-        if not result:
-            return
-        
-        for job_folder in existing_jobs:
-            try:
-                shutil.rmtree(job_folder)
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to delete {job_folder.name}: {e}")
-                return
-        
-        messagebox.showinfo("Deleted", f"Deleted {len(existing_jobs)} job folder(s).")
-        self._check_existing_jobs()
-    
-    def _check_database(self, event=None):
-        """Check if song exists in database"""
-        title = self.title_entry.get().strip()
+            _set_label_style(self.smart_stats_label, "error")
+            self.smart_stats_label.setText(f"❌ Error: {e}")
+
+    # ── Database check ────────────────────────────────────────────────────────
+
+    def _check_database(self):
+        title = self.title_edit.text().strip()
         if len(title) < 3:
-            self.db_match_label.config(text="")
+            self.db_match_label.setText("")
             return
-        
         cached = self.song_db.get_song(title)
         if cached:
-            self.db_match_label.config(
-                text="✓ Found in database! URL and timestamps loaded.",
-                foreground='#22c55e'
-            )
-            self.url_entry.delete(0, tk.END)
-            self.url_entry.insert(0, cached['youtube_url'])
-            self.start_entry.delete(0, tk.END)
-            self.start_entry.insert(0, cached['start_time'])
-            self.end_entry.delete(0, tk.END)
-            self.end_entry.insert(0, cached['end_time'])
+            _set_label_style(self.db_match_label, "success")
+            self.db_match_label.setText("✓ Found in database! URL and timestamps loaded.")
+            self.url_edit.setText(cached['youtube_url'])
+            self.start_edit.setText(cached['start_time'])
+            self.end_edit.setText(cached['end_time'])
         else:
             matches = self.song_db.search_songs(title)
             if matches:
-                self.db_match_label.config(
-                    text=f"Similar: {', '.join([m[0][:25] for m in matches[:3]])}",
-                    foreground='#f59e0b'
-                )
+                _set_label_style(self.db_match_label, "warning")
+                self.db_match_label.setText(
+                    f"Similar: {', '.join([m[0][:25] for m in matches[:3]])}")
             else:
-                self.db_match_label.config(
-                    text="New song - will be saved to database.",
-                    foreground='#666666'
-                )
-    
+                _set_label_style(self.db_match_label, "muted")
+                self.db_match_label.setText("New song — will be saved to database.")
+
+    # ── Jobs helpers ──────────────────────────────────────────────────────────
+
+    def _check_existing_jobs(self):
+        t = self._job_template()
+        d = JOBS_DIRS.get(t)
+        if not d or not d.exists():
+            self.job_warning_label.setText("")
+            self.delete_jobs_btn.setVisible(False)
+            return
+        existing = list(d.glob("job_*"))
+        if existing:
+            self.job_warning_label.setText(
+                f"⚠️ {len(existing)} existing job(s) detected")
+            self.delete_jobs_btn.setVisible(True)
+        else:
+            self.job_warning_label.setText("")
+            self.delete_jobs_btn.setVisible(False)
+
+    def _delete_existing_jobs(self):
+        if self.is_processing:
+            QMessageBox.warning(self, "Processing",
+                                "Cannot delete jobs while processing.")
+            return
+        t = self._job_template()
+        d = JOBS_DIRS.get(t)
+        existing = list(d.glob("job_*"))
+        if not existing:
+            return
+        reply = QMessageBox.question(
+            self, "Confirm Deletion",
+            f"Delete {len(existing)} job folder(s) from {t.upper()}?\n\nCannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for j in existing:
+            shutil.rmtree(j)
+        QMessageBox.information(self, "Deleted",
+                                f"Deleted {len(existing)} job folder(s).")
+        self._check_existing_jobs()
+
     def _open_jobs_folder(self):
-        """Open the jobs folder"""
-        template = self.job_template_var.get()
-        jobs_dir = JOBS_DIRS.get(template)
-        jobs_dir.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(jobs_dir))
-    
-    def _log(self, message):
-        """Add message to log"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.configure(state='normal')
-        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
-        self.log_text.see(tk.END)
-        self.log_text.configure(state='disabled')
-        self.status_var.set(message[:80])
-    
-    def _validate_inputs(self):
-        """Validate inputs based on current mode (Manual or Smart Picker)"""
-        errors = []
-        
-        if self.use_smart_picker:
-            # Smart Picker mode - check database has songs
-            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
-            stats = picker.get_database_stats()
-            
-            if stats['total_songs'] == 0:
-                errors.append("Database is empty. Add songs using Manual Entry first.")
+        t = self._job_template()
+        d = JOBS_DIRS.get(t)
+        d.mkdir(parents=True, exist_ok=True)
+        os.startfile(str(d))
+
+    # ── Inject helpers ────────────────────────────────────────────────────────
+
+    def _update_inject_status(self):
+        t    = self._inject_template()
+        d    = JOBS_DIRS.get(t)
+        jobs_ok = template_ok = ae_ok = False
+
+        if d and d.exists():
+            jf = list(d.glob("job_*"))
+            if jf:
+                self.inject_jobs_label.setText(
+                    f"✓ {len(jf)} job(s) found in {d.name}")
+                _set_label_style(self.inject_jobs_label, "success")
+                jobs_ok = True
             else:
-                num_jobs = int(self.jobs_var.get())
-                songs = picker.get_available_songs(num_songs=num_jobs)
-                if len(songs) == 0:
+                self.inject_jobs_label.setText(f"✗ No jobs in {d}")
+                _set_label_style(self.inject_jobs_label, "error")
+        else:
+            self.inject_jobs_label.setText("✗ Folder not found")
+            _set_label_style(self.inject_jobs_label, "error")
+
+        tp = TEMPLATE_PATHS.get(t)
+        if tp and tp.exists():
+            self.inject_template_label.setText(f"✓ {tp.name}")
+            _set_label_style(self.inject_template_label, "success")
+            template_ok = True
+        else:
+            self.inject_template_label.setText(
+                f"✗ Not found: {tp.name if tp else 'Unknown'}")
+            _set_label_style(self.inject_template_label, "error")
+
+        ae = self.settings.get('after_effects_path')
+        if ae and Path(ae).exists():
+            self.inject_ae_label.setText("✓ Found")
+            _set_label_style(self.inject_ae_label, "success")
+            ae_ok = True
+        else:
+            self.inject_ae_label.setText("✗ Not configured — go to Settings")
+            _set_label_style(self.inject_ae_label, "error")
+
+        self.inject_btn.setEnabled(jobs_ok and template_ok and ae_ok)
+
+    def _update_ae_status(self):
+        ae = getattr(self, 'ae_path_edit', None)
+        path = ae.text() if ae else (self.settings.get('after_effects_path') or '')
+        if path and Path(path).exists():
+            self.ae_status_label.setText("✓ After Effects found")
+            _set_label_style(self.ae_status_label, "success")
+        elif path:
+            self.ae_status_label.setText("✗ Path not found")
+            _set_label_style(self.ae_status_label, "error")
+        else:
+            self.ae_status_label.setText("⚠ Not configured")
+            _set_label_style(self.ae_status_label, "warning")
+
+    def _check_ffmpeg(self):
+        try:
+            r = subprocess.run(['ffmpeg', '-version'],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                self.ffmpeg_status_label.setText("✓ FFmpeg found in PATH")
+                _set_label_style(self.ffmpeg_status_label, "success")
+            else:
+                self.ffmpeg_status_label.setText("✗ FFmpeg not working properly")
+                _set_label_style(self.ffmpeg_status_label, "error")
+        except FileNotFoundError:
+            self.ffmpeg_status_label.setText(
+                "✗ FFmpeg not found — install and add to PATH")
+            _set_label_style(self.ffmpeg_status_label, "error")
+        except Exception as e:
+            self.ffmpeg_status_label.setText(f"✗ Error: {e}")
+            _set_label_style(self.ffmpeg_status_label, "error")
+
+    def _browse_ae_path(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select AfterFX.exe",
+            "C:/Program Files/Adobe",
+            "Executable (*.exe);;All files (*.*)")
+        if path:
+            self.ae_path_edit.setText(path)
+            self._update_ae_status()
+
+    def _auto_detect_ae_click(self):
+        detected = self._auto_detect_after_effects()
+        if detected:
+            self.ae_path_edit.setText(detected)
+            self._update_ae_status()
+            QMessageBox.information(self, "Found",
+                                    f"After Effects found:\n{detected}")
+        else:
+            QMessageBox.warning(self, "Not Found",
+                                "Could not auto-detect After Effects.\n\nPlease browse manually.")
+
+    def _save_all_settings(self):
+        self.settings['after_effects_path'] = self.ae_path_edit.text()
+        self.settings['genius_api_token']   = self.genius_edit.text()
+        self.settings['whisper_model']      = self.whisper_combo.currentText()
+        Config.GENIUS_API_TOKEN = self.genius_edit.text()
+        Config.WHISPER_MODEL    = self.whisper_combo.currentText()
+        self._save_settings()
+        env = INSTALL_DIR / ".env"
+        with open(env, 'w') as f:
+            f.write(f"GENIUS_API_TOKEN={self.genius_edit.text()}\n")
+            f.write(f"WHISPER_MODEL={self.whisper_combo.currentText()}\n")
+        QMessageBox.information(self, "Saved", "Settings saved successfully!")
+        self._update_inject_status()
+
+    # ── JSX Injection ─────────────────────────────────────────────────────────
+
+    def _run_injection(self):
+        t   = self._inject_template()
+        ae  = self.settings.get('after_effects_path')
+        tp  = TEMPLATE_PATHS.get(t)
+        d   = JOBS_DIRS.get(t)
+        jsx = JSX_SCRIPTS.get(t)
+        try:
+            src = BUNDLED_JSX_DIR / jsx
+            if not src.exists():
+                src = ASSETS_DIR / "scripts" / "JSX" / jsx
+            if not src.exists():
+                QMessageBox.critical(self, "Error",
+                    f"JSX script not found: {jsx}\n\nPlease reinstall.")
+                return
+            tmp = Path(tempfile.gettempdir()) / "Apollova"
+            tmp.mkdir(exist_ok=True)
+            dst = tmp / jsx
+            shutil.copy(src, dst)
+            self._prepare_jsx_with_path(dst, d, tp)
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to prepare JSX:\n{e}")
+            return
+        try:
+            subprocess.Popen([ae, "-r", str(dst)])
+            QMessageBox.information(self, "Launched",
+                f"After Effects is launching…\n\nTemplate: {tp.name}\nJobs: {d}\n\n"
+                "The script will open the project and inject the jobs.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error",
+                                 f"Failed to launch After Effects:\n{e}")
+
+    def _prepare_jsx_with_path(self, jsx_path, jobs_dir,
+                               template_path, auto_render=False):
+        with open(jsx_path, 'r', encoding='utf-8') as f:
+            c = f.read()
+        c = c.replace('{{JOBS_PATH}}',     str(jobs_dir).replace('\\', '/'))
+        c = c.replace('{{TEMPLATE_PATH}}', str(template_path).replace('\\', '/'))
+        c = c.replace('{{AUTO_RENDER}}',   'true' if auto_render else 'false')
+        with open(jsx_path, 'w', encoding='utf-8') as f:
+            f.write(c)
+
+    # ── Batch Render ──────────────────────────────────────────────────────────
+
+    def _update_batch_status(self):
+        ready = []
+        ae    = self.settings.get('after_effects_path')
+        ae_ok = ae and Path(ae).exists()
+        for t in ['aurora', 'mono', 'onyx']:
+            d   = JOBS_DIRS.get(t)
+            tp  = TEMPLATE_PATHS.get(t)
+            jsx = JSX_SCRIPTS.get(t)
+            jobs_ok = d and d.exists() and list(d.glob("job_*"))
+            tpl_ok  = tp and tp.exists()
+            src     = BUNDLED_JSX_DIR / jsx if jsx else None
+            if src and not src.exists():
+                src = ASSETS_DIR / "scripts" / "JSX" / jsx
+            jsx_ok = src and src.exists()
+            lbl = self.batch_status_labels[t]
+            if jobs_ok:
+                cnt = len(list(d.glob("job_*")))
+                if tpl_ok and jsx_ok:
+                    lbl.setText(f"  {t.capitalize()}: {cnt} jobs ready")
+                    _set_label_style(lbl, "success")
+                    ready.append(t)
+                elif not tpl_ok:
+                    lbl.setText(f"  {t.capitalize()}: {cnt} jobs (no template)")
+                    _set_label_style(lbl, "warning")
+                else:
+                    lbl.setText(f"  {t.capitalize()}: {cnt} jobs (JSX missing)")
+                    _set_label_style(lbl, "warning")
+            else:
+                lbl.setText(f"  {t.capitalize()}: No jobs")
+                _set_label_style(lbl, "normal")
+        self.render_all_btn.setEnabled(
+            len(ready) >= 2 and ae_ok and not self.batch_render_active)
+        return ready
+
+    def _start_batch_render(self):
+        ready = self._update_batch_status()
+        if len(ready) < 2:
+            QMessageBox.critical(self, "Error",
+                "Need at least 2 templates with jobs.")
+            return
+        lines = ["Ready to render:"]
+        for t in ready:
+            lines.append(f"  - {t.capitalize()}: {len(list(JOBS_DIRS[t].glob('job_*')))} jobs")
+        lines += ["", "This will take a while. Continue?"]
+        reply = QMessageBox.question(self, "Confirm Batch Render", "\n".join(lines),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self.batch_render_active    = True
+        self.batch_render_cancelled = False
+        self.batch_results          = {}
+        self.render_all_btn.setEnabled(False)
+        self.batch_cancel_btn.setEnabled(True)
+        self.inject_btn.setEnabled(False)
+        threading.Thread(target=self._batch_render_thread,
+                         args=(ready,), daemon=True).start()
+
+    def _cancel_batch_render(self):
+        reply = QMessageBox.question(self, "Cancel",
+            "Cancel batch? Current template will finish first.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.batch_render_cancelled = True
+            self.batch_status_label.setText("Status: Cancelling…")
+
+    def _batch_render_thread(self, templates):
+        total = len(templates)
+        for idx, t in enumerate(templates):
+            if self.batch_render_cancelled:
+                self.signals.batch_progress.emit(
+                    "Status: Cancelled", idx / total * 100, "Cancelled")
+                break
+            self.signals.batch_progress.emit(
+                f"Status: Rendering {t.capitalize()} ({idx+1}/{total})",
+                idx / total * 100,
+                f"Launching After Effects for {t.capitalize()}…")
+            ok, err = self._run_batch_template(t)
+            self.batch_results[t] = {'success': ok, 'error': err}
+            if ok:
+                self.signals.batch_template_status.emit(
+                    t, f"  {t.capitalize()}: Complete ✓")
+            else:
+                self.signals.batch_template_status.emit(
+                    t, f"  {t.capitalize()}: Failed — {err}")
+        self.signals.batch_finished.emit(dict(self.batch_results))
+
+    def _run_batch_template(self, t):
+        ae  = self.settings.get('after_effects_path')
+        tp  = TEMPLATE_PATHS.get(t)
+        d   = JOBS_DIRS.get(t)
+        jsx = JSX_SCRIPTS.get(t)
+        try:
+            src = BUNDLED_JSX_DIR / jsx
+            if not src.exists():
+                src = ASSETS_DIR / "scripts" / "JSX" / jsx
+            if not src.exists():
+                return False, f"JSX not found: {jsx}"
+            tmp = Path(tempfile.gettempdir()) / "Apollova"
+            tmp.mkdir(exist_ok=True)
+            dst = tmp / f"batch_{jsx}"
+            shutil.copy(src, dst)
+            self._prepare_jsx_with_path(dst, d, tp, auto_render=True)
+            err_log = d / "batch_error.txt"
+            if err_log.exists():
+                err_log.unlink()
+            p = subprocess.Popen([ae, "-r", str(dst)])
+            p.wait()
+            if err_log.exists():
+                return False, err_log.read_text().strip()
+            return True, None
+        except Exception as e:
+            return False, str(e)
+
+    def _batch_update_progress(self, status, progress, current):
+        self.batch_status_label.setText(status)
+        self.batch_progress_bar.setValue(int(progress))
+        self.batch_current_label.setText(current)
+
+    def _batch_update_template_status_slot(self, template, text):
+        lbl = self.batch_status_labels.get(template)
+        if lbl:
+            lbl.setText(text)
+            style = "success" if "Complete" in text else "error"
+            _set_label_style(lbl, style)
+
+    def _batch_render_complete(self, results):
+        self.batch_render_active = False
+        self.render_all_btn.setEnabled(True)
+        self.batch_cancel_btn.setEnabled(False)
+        self.inject_btn.setEnabled(True)
+        self.batch_progress_bar.setValue(100)
+        sc = sum(1 for r in results.values() if r['success'])
+        fc = sum(1 for r in results.values() if not r['success'])
+        if self.batch_render_cancelled:
+            self.batch_status_label.setText("Status: Cancelled")
+            self.batch_current_label.setText(f"Completed {sc} before cancellation")
+        else:
+            self.batch_status_label.setText("Status: Complete")
+            self.batch_current_label.setText(f"Success: {sc}, Failed: {fc}")
+        lines = ["Batch Render Complete\n"]
+        for t, r in results.items():
+            lines.append(
+                f"{t.capitalize()}: {'Success' if r['success'] else 'Failed — ' + str(r['error'])}")
+        if self.batch_render_cancelled:
+            lines.append("\nCancelled by user.")
+        QMessageBox.information(self, "Batch Render Complete", "\n".join(lines))
+        self._update_batch_status()
+
+    # ── Generation ────────────────────────────────────────────────────────────
+
+    def _validate_inputs(self):
+        errors = []
+        if self.use_smart_picker:
+            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            stats  = picker.get_database_stats()
+            if stats['total_songs'] == 0:
+                errors.append("Database empty. Add songs via Manual Entry first.")
+            else:
+                songs = picker.get_available_songs(
+                    num_songs=int(self.jobs_combo.currentText()))
+                if not songs:
                     errors.append("No songs available in database.")
         else:
-            # Manual mode - validate form fields
-            if not self.title_entry.get().strip():
+            if not self.title_edit.text().strip():
                 errors.append("Song title is required")
-            
-            if not self.url_entry.get().strip():
-                cached = self.song_db.get_song(self.title_entry.get().strip())
-                if not cached:
+            if not self.url_edit.text().strip():
+                if not self.song_db.get_song(self.title_edit.text().strip()):
                     errors.append("YouTube URL is required")
-            
-            start = self.start_entry.get().strip()
-            end = self.end_entry.get().strip()
-            
+            s, e = self.start_edit.text().strip(), self.end_edit.text().strip()
             try:
-                s_parts = start.split(':')
-                e_parts = end.split(':')
-                if len(s_parts) != 2 or len(e_parts) != 2:
-                    raise ValueError()
-                s_ms = int(s_parts[0]) * 60 + int(s_parts[1])
-                e_ms = int(e_parts[0]) * 60 + int(e_parts[1])
-                if s_ms >= e_ms:
+                sp = s.split(':'); ep = e.split(':')
+                if len(sp) != 2 or len(ep) != 2:
+                    raise ValueError
+                if int(sp[0]) * 60 + int(sp[1]) >= int(ep[0]) * 60 + int(ep[1]):
                     errors.append("End time must be after start time")
-            except:
+            except Exception:
                 errors.append("Invalid time format (use MM:SS)")
-        
         if errors:
-            messagebox.showerror("Validation Error", "\n".join(errors))
+            QMessageBox.critical(self, "Validation Error", "\n".join(errors))
             return False
         return True
-    
-    def _lock_inputs(self, lock=True):
-        """Lock/unlock inputs"""
-        state = 'disabled' if lock else 'normal'
-        for widget in self.input_widgets:
-            try:
-                if isinstance(widget, ttk.Combobox):
-                    widget.configure(state='disabled' if lock else 'readonly')
-                else:
-                    widget.configure(state=state)
-            except:
-                pass
-    
+
+    def _lock_inputs(self, lock):
+        for w in [self.title_edit, self.url_edit, self.start_edit,
+                  self.end_edit, self.jobs_combo, self.whisper_combo]:
+            w.setEnabled(not lock)
+        for btn in self.job_tpl_group.buttons():
+            btn.setEnabled(not lock)
+
     def _start_generation(self):
-        """Start job generation"""
         if not self._validate_inputs():
             return
-        
-        template = self.job_template_var.get()
-        jobs_dir = JOBS_DIRS.get(template)
-        existing = list(jobs_dir.glob("job_*")) if jobs_dir.exists() else []
-        
-        # Smart Picker confirmation
+        t    = self._job_template()
+        d    = JOBS_DIRS.get(t)
+        existing = list(d.glob("job_*")) if d.exists() else []
+
         if self.use_smart_picker:
-            num_jobs = int(self.jobs_var.get())
+            num  = int(self.jobs_combo.currentText())
             picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
-            songs = picker.get_available_songs(num_songs=num_jobs)
-            
-            # Build confirmation message
-            song_list = "\n".join([f"  {i+1}. {s['song_title'][:40]}" for i, s in enumerate(songs[:12])])
+            songs  = picker.get_available_songs(num_songs=num)
+            sl = "\n".join(
+                [f"  {i+1}. {s['song_title'][:40]}" for i, s in enumerate(songs[:12])])
             if len(songs) > 12:
-                song_list += f"\n  ... and {len(songs) - 12} more"
-            
-            result = messagebox.askyesno(
-                "Smart Picker Confirmation",
-                f"Generate {len(songs)} jobs for {template.upper()} template?\n\n"
-                f"Songs selected:\n{song_list}\n\n"
-                "Continue?",
-                icon='question'
-            )
-            if not result:
+                sl += f"\n  … and {len(songs)-12} more"
+            reply = QMessageBox.question(self, "Smart Picker Confirmation",
+                f"Generate {len(songs)} jobs for {t.upper()}?\n\nSongs:\n{sl}\n\nContinue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
                 return
-        
+
         if existing:
-            result = messagebox.askyesnocancel(
-                "Existing Jobs",
+            reply = QMessageBox.question(self, "Existing Jobs",
                 f"Found {len(existing)} existing jobs.\n\n"
-                "Yes = Delete and continue\n"
-                "No = Keep and continue\n"
-                "Cancel = Abort"
-            )
-            if result is None:
+                "Yes = Delete and continue\nNo = Keep and continue",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No |
+                QMessageBox.StandardButton.Cancel)
+            if reply == QMessageBox.StandardButton.Cancel:
                 return
-            elif result:
+            if reply == QMessageBox.StandardButton.Yes:
                 for j in existing:
                     shutil.rmtree(j)
                 self._check_existing_jobs()
-        
-        self.is_processing = True
+
+        self.is_processing    = True
         self.cancel_requested = False
         self._lock_inputs(True)
-        self.generate_btn.configure(state='disabled')
-        self.cancel_btn.configure(state='normal')
-        self.log_text.configure(state='normal')
-        self.log_text.delete(1.0, tk.END)
-        self.log_text.configure(state='disabled')
-        self.progress_var.set(0)
-        
-        thread = threading.Thread(target=self._process_jobs, daemon=True)
-        thread.start()
-    
+        self.generate_btn.setEnabled(False)
+        self.cancel_btn.setEnabled(True)
+        self.log_text.clear()
+        self.progress_bar.setValue(0)
+        threading.Thread(target=self._process_jobs, daemon=True).start()
+
     def _cancel_generation(self):
-        """Cancel generation"""
         self.cancel_requested = True
-        self._log("Cancellation requested...")
-    
+        self.signals.log.emit("Cancellation requested…")
+
     def _process_jobs(self):
-        """Process jobs (runs in thread) - handles both Manual and Smart Picker modes"""
         try:
-            num_jobs = int(self.jobs_var.get())
-            template = self.job_template_var.get()
-            output_dir = JOBS_DIRS.get(template)
-            
-            Config.WHISPER_MODEL = self.whisper_var.get()
-            
+            num   = int(self.jobs_combo.currentText())
+            t     = self._job_template()
+            outd  = JOBS_DIRS.get(t)
+            Config.WHISPER_MODEL = self.whisper_combo.currentText()
+
             if self.use_smart_picker:
-                # SMART PICKER MODE - process multiple different songs
-                self._log(f"🤖 Smart Picker Mode: {num_jobs} songs")
-                self._log(f"Template: {template.upper()}")
-                
+                self.signals.log.emit(f"🤖 Smart Picker: {num} songs | {t.upper()}")
                 picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
-                songs = picker.get_available_songs(num_songs=num_jobs)
-                
-                output_dir.mkdir(parents=True, exist_ok=True)
-                
-                total_songs = len(songs)
-                for idx, song in enumerate(songs, 1):
+                songs  = picker.get_available_songs(num_songs=num)
+                outd.mkdir(parents=True, exist_ok=True)
+                for idx, s in enumerate(songs, 1):
                     if self.cancel_requested:
                         raise Exception("Cancelled by user")
-                    
-                    self._log(f"\n{'='*40}")
-                    self._log(f"📀 Job {idx}/{total_songs}: {song['song_title'][:40]}")
-                    
-                    # Process this song
+                    self.signals.log.emit(
+                        f"\n{'='*40}\n📀 Job {idx}/{len(songs)}: {s['song_title'][:40]}")
                     self._process_single_song(
-                        job_number=idx,
-                        song_title=song['song_title'],
-                        youtube_url=song['youtube_url'],
-                        start_time=song['start_time'],
-                        end_time=song['end_time'],
-                        template=template,
-                        output_dir=output_dir
-                    )
-                    
-                    # Mark as used
-                    picker.mark_song_used(song['song_title'])
-                    
-                    # Update progress
-                    progress = (idx / total_songs) * 100
-                    self.root.after(0, lambda p=progress: self.progress_var.set(p))
-                
-                # Done
-                self._log(f"\n{'='*40}")
-                self._log(f"🎉 SUCCESS! {total_songs} job(s) created!")
-                self._log(f"📂 {output_dir}")
-                self._log("")
-                self._log("Next: Go to JSX Injection tab")
-                
+                        idx, s['song_title'], s['youtube_url'],
+                        s['start_time'], s['end_time'], t, outd)
+                    picker.mark_song_used(s['song_title'])
+                    self.signals.progress.emit(idx / len(songs) * 100)
+                self.signals.log.emit(
+                    f"\n{'='*40}\n🎉 SUCCESS! {len(songs)} job(s) created!\n📂 {outd}\n"
+                    "Next: Go to JSX Injection tab")
             else:
-                # MANUAL MODE - single song, possibly duplicated
-                song_title = self.title_entry.get().strip()
-                youtube_url = self.url_entry.get().strip()
-                start_time = self.start_entry.get().strip()
-                end_time = self.end_entry.get().strip()
-                
-                self._log(f"Starting {num_jobs} job(s): {song_title}")
-                self._log(f"Template: {template.upper()}")
-                
-                cached = self.song_db.get_song(song_title)
+                title = self.title_edit.text().strip()
+                url   = self.url_edit.text().strip()
+                st    = self.start_edit.text().strip()
+                et    = self.end_edit.text().strip()
+                self.signals.log.emit(f"Starting {num} job(s): {title} | {t.upper()}")
+                cached = self.song_db.get_song(title)
                 if cached:
-                    self._log("✓ Using cached data")
-                    youtube_url = cached['youtube_url']
-                    start_time = cached['start_time']
-                    end_time = cached['end_time']
-                
-                output_dir.mkdir(parents=True, exist_ok=True)
-                
-                # Process first job
+                    self.signals.log.emit("✓ Using cached data")
+                    url = cached['youtube_url']
+                    st  = cached['start_time']
+                    et  = cached['end_time']
+                outd.mkdir(parents=True, exist_ok=True)
                 job_data, job_folder = self._process_single_song(
-                    job_number=1,
-                    song_title=song_title,
-                    youtube_url=youtube_url,
-                    start_time=start_time,
-                    end_time=end_time,
-                    template=template,
-                    output_dir=output_dir,
-                    return_data=True
-                )
-                
-                # Duplicate for remaining jobs (same song)
-                if num_jobs > 1:
-                    self._log(f"Creating {num_jobs - 1} duplicate job folders...")
-                    image_path = job_folder / "cover.png"
-                    
-                    for i in range(2, num_jobs + 1):
-                        dest = output_dir / f"job_{i:03}"
-                        dest.mkdir(parents=True, exist_ok=True)
-                        
-                        # Copy common files
-                        for file in ['audio_trimmed.wav', 'lyrics.txt', 'beats.json']:
-                            src = job_folder / file
+                    1, title, url, st, et, t, outd, return_data=True)
+                if num > 1:
+                    self.signals.log.emit(f"Creating {num-1} duplicate folders…")
+                    img = job_folder / "cover.png"
+                    for i in range(2, num + 1):
+                        dst = outd / f"job_{i:03}"
+                        dst.mkdir(parents=True, exist_ok=True)
+                        for fn in ['audio_trimmed.wav', 'lyrics.txt', 'beats.json']:
+                            src = job_folder / fn
                             if src.exists():
-                                shutil.copy(src, dest / file)
-                        
-                        # Copy template-specific data file
-                        for data_file in ['mono_data.json', 'onyx_data.json']:
-                            src = job_folder / data_file
+                                shutil.copy(src, dst / fn)
+                        for fn in ['mono_data.json', 'onyx_data.json']:
+                            src = job_folder / fn
                             if src.exists():
-                                shutil.copy(src, dest / data_file)
-                        
-                        if image_path.exists():
-                            shutil.copy(image_path, dest / "cover.png")
-                        
+                                shutil.copy(src, dst / fn)
+                        if img.exists():
+                            shutil.copy(img, dst / "cover.png")
                         jd = job_data.copy()
-                        jd['job_id'] = i
-                        jd['audio_trimmed'] = str(dest / "audio_trimmed.wav")
-                        jd['cover_image'] = str(dest / "cover.png") if image_path.exists() else None
-                        jd['lyrics_file'] = str(dest / "lyrics.txt")
-                        
-                        with open(dest / "job_data.json", 'w') as f:
+                        jd.update({'job_id': i,
+                                   'audio_trimmed': str(dst / "audio_trimmed.wav"),
+                                   'cover_image': str(dst/"cover.png") if img.exists() else None,
+                                   'lyrics_file': str(dst / "lyrics.txt")})
+                        with open(dst / "job_data.json", 'w') as f:
                             json.dump(jd, f, indent=4)
-                
-                # Done
-                self.progress_var.set(100)
-                self._log("=" * 40)
-                self._log(f"🎉 SUCCESS! {num_jobs} job(s) created!")
-                self._log(f"📂 {output_dir}")
-                self._log("")
-                self._log("Next: Go to JSX Injection tab")
-            
-            # Update stats
-            stats = self.song_db.get_stats()
-            self.root.after(0, lambda: self.stats_label.config(
-                text=f"📊 Database: {stats['total_songs']} songs | {stats['cached_lyrics']} with lyrics"
-            ))
-            
-            # Refresh smart picker if it was used
-            if self.use_smart_picker:
-                self.root.after(0, self._refresh_smart_picker_stats)
-            
-            self.root.after(0, lambda: messagebox.showinfo(
-                "Complete!",
-                f"Created {num_jobs} job(s) for {template.upper()}!\n\n"
-                "Go to the JSX Injection tab to inject into After Effects."
-            ))
-            
+                self.signals.progress.emit(100)
+                self.signals.log.emit(
+                    f"{'='*40}\n🎉 SUCCESS! {num} job(s) created!\n📂 {outd}\n"
+                    "Next: Go to JSX Injection tab")
+
+            self.signals.stats_refresh.emit()
+            self.signals.finished.emit()
         except Exception as e:
-            self._log(f"❌ Error: {e}")
-            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
-        
-        finally:
-            self.is_processing = False
-            self.root.after(0, lambda: self._lock_inputs(False))
-            self.root.after(0, lambda: self.generate_btn.configure(state='normal'))
-            self.root.after(0, lambda: self.cancel_btn.configure(state='disabled'))
-            self.root.after(0, self._check_existing_jobs)
-    
-    def _build_markers_from_lyrics(self, lyrics_data):
-        """Convert lyrics.txt format to markers format for Mono/Onyx.
-        Uses real word-level timestamps from Whisper when available,
-        otherwise falls back to estimated timing."""
-        markers = []
+            self.signals.log.emit(f"❌ Error: {e}")
+            self.signals.error.emit(str(e))
 
-        for i, seg in enumerate(lyrics_data):
-            text = seg.get('lyric_current', '') or seg.get('text', '')
-            if not text or not text.strip():
-                continue
+    def _on_generation_finished(self):
+        self.is_processing = False
+        self._lock_inputs(False)
+        self.generate_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self._check_existing_jobs()
+        QMessageBox.information(self, "Complete!",
+            f"Jobs created for {self._job_template().upper()}!\n\n"
+            "Go to JSX Injection tab to inject into After Effects.")
 
-            clean_text = text.replace('\\r', ' ').replace('\r', ' ')
-            clean_text = ' '.join(clean_text.split()).strip()
+    def _on_generation_error(self, msg):
+        self.is_processing = False
+        self._lock_inputs(False)
+        self.generate_btn.setEnabled(True)
+        self.cancel_btn.setEnabled(False)
+        self._check_existing_jobs()
+        QMessageBox.critical(self, "Error", msg)
 
-            time_val = float(seg.get('t', 0) or seg.get('time', 0))
-            seg_end  = float(seg.get('end', time_val + 3))
+    def _append_log(self, msg):
+        ts = datetime.now().strftime("%H:%M:%S")
+        self.log_text.append(f"[{ts}] {msg}")
+        self.status_label.setText(msg[:80])
 
-            # Use real Whisper word timestamps if present
-            raw_words = seg.get('words', [])
-            if raw_words:
-                words = [
-                    {
-                        "word":  w.get('word', '').strip(),
-                        "start": float(w.get('start', time_val)),
-                        "end":   float(w.get('end',   time_val)),
-                    }
-                    for w in raw_words if w.get('word', '').strip()
-                ]
-            else:
-                # Fallback: spread words evenly across segment duration
-                word_list = clean_text.split()
-                duration  = max(seg_end - time_val, 0.25)
-                per_word  = duration / max(len(word_list), 1)
-                words = [
-                    {
-                        "word":  w,
-                        "start": time_val + idx * per_word,
-                        "end":   time_val + (idx + 1) * per_word,
-                    }
-                    for idx, w in enumerate(word_list)
-                ]
+    def _refresh_stats_label(self):
+        s = self.song_db.get_stats()
+        self.stats_label.setText(
+            f"📊 {s['total_songs']} songs | {s['cached_lyrics']} with lyrics")
 
-            # end_time = start of next segment (or +3s for the last one)
-            if i < len(lyrics_data) - 1:
-                next_t = float(lyrics_data[i + 1].get('t', 0) or lyrics_data[i + 1].get('time', 0))
-                end_time = next_t if next_t > time_val else seg_end
-            else:
-                end_time = seg_end
+    # ── Single song processing (logic unchanged from original) ────────────────
 
-            markers.append({
-                "time":     time_val,
-                "text":     clean_text,
-                "words":    words,
-                "color":    "white" if len(markers) % 2 == 0 else "black",
-                "end_time": end_time,
-            })
-
-        return markers
-    
-    def _process_single_song(self, job_number, song_title, youtube_url, start_time, end_time, 
-                              template, output_dir, return_data=False):
-        """Process a single song into a job folder"""
-        job_folder = output_dir / f"job_{job_number:03}"
+    def _process_single_song(self, job_number, song_title, youtube_url,
+                              start_time, end_time, template, output_dir,
+                              return_data=False):
+        job_folder  = output_dir / f"job_{job_number:03}"
         job_folder.mkdir(parents=True, exist_ok=True)
-        
         needs_image = template in ['aurora', 'onyx']
-        
-        # Check cache
-        cached = self.song_db.get_song(song_title)
+        cached      = self.song_db.get_song(song_title)
+
         if cached:
-            self._log("  ✓ Using cached data")
+            self.signals.log.emit("  ✓ Using cached data")
             youtube_url = cached['youtube_url']
-            start_time = cached['start_time']
-            end_time = cached['end_time']
-        
-        # Download
-        if self.cancel_requested: raise Exception("Cancelled")
+            start_time  = cached['start_time']
+            end_time    = cached['end_time']
+
+        def chk():
+            if self.cancel_requested:
+                raise Exception("Cancelled")
+
+        # Audio download
+        chk()
         audio_path = job_folder / "audio_source.mp3"
         if not audio_path.exists():
-            self._log("  Downloading audio...")
+            self.signals.log.emit("  Downloading audio…")
             download_audio(youtube_url, str(job_folder))
-            self._log("  ✓ Audio downloaded")
+            self.signals.log.emit("  ✓ Audio downloaded")
         else:
-            self._log("  ✓ Audio exists")
-        
+            self.signals.log.emit("  ✓ Audio exists")
+
         # Trim
-        if self.cancel_requested: raise Exception("Cancelled")
-        trimmed_path = job_folder / "audio_trimmed.wav"
-        if not trimmed_path.exists():
-            self._log(f"  Trimming ({start_time} → {end_time})...")
+        chk()
+        trimmed = job_folder / "audio_trimmed.wav"
+        if not trimmed.exists():
+            self.signals.log.emit(f"  Trimming ({start_time} → {end_time})…")
             trim_audio(str(job_folder), start_time, end_time)
-            self._log("  ✓ Audio trimmed")
+            self.signals.log.emit("  ✓ Trimmed")
         else:
-            self._log("  ✓ Trimmed audio exists")
-        
+            self.signals.log.emit("  ✓ Trimmed audio exists")
+
         # Beats
-        if self.cancel_requested: raise Exception("Cancelled")
+        chk()
         beats_path = job_folder / "beats.json"
         if cached and cached.get('beats'):
             beats = cached['beats']
             with open(beats_path, 'w') as f:
                 json.dump(beats, f, indent=4)
-            self._log("  ✓ Using cached beats")
+            self.signals.log.emit("  ✓ Cached beats")
         elif not beats_path.exists():
-            self._log("  Detecting beats...")
+            self.signals.log.emit("  Detecting beats…")
             beats = detect_beats(str(job_folder))
             with open(beats_path, 'w') as f:
                 json.dump(beats, f, indent=4)
-            self._log(f"  ✓ {len(beats)} beats detected")
+            self.signals.log.emit(f"  ✓ {len(beats)} beats")
         else:
-            with open(beats_path, 'r') as f:
+            with open(beats_path) as f:
                 beats = json.load(f)
-            self._log("  ✓ Beats exist")
-        
+            self.signals.log.emit("  ✓ Beats exist")
+
         # Transcribe
-        if self.cancel_requested: raise Exception("Cancelled")
+        chk()
         lyrics_path = job_folder / "lyrics.txt"
         if cached and cached.get('transcribed_lyrics'):
             with open(lyrics_path, 'w', encoding='utf-8') as f:
                 json.dump(cached['transcribed_lyrics'], f, indent=4, ensure_ascii=False)
-            self._log(f"  ✓ Using cached lyrics ({len(cached['transcribed_lyrics'])} segments)")
+            self.signals.log.emit(
+                f"  ✓ Cached lyrics ({len(cached['transcribed_lyrics'])} segs)")
         elif not lyrics_path.exists():
-            self._log(f"  Transcribing ({Config.WHISPER_MODEL})...")
+            self.signals.log.emit(f"  Transcribing ({Config.WHISPER_MODEL})…")
             transcribe_audio(str(job_folder), song_title)
-            self._log("  ✓ Transcription complete")
+            self.signals.log.emit("  ✓ Transcribed")
         else:
-            self._log("  ✓ Lyrics exist")
-        
-        # Image & Colors
+            self.signals.log.emit("  ✓ Lyrics exist")
+
+        # Image / colors
         image_path = job_folder / "cover.png"
-        colors = ['#ffffff', '#000000']
-        
+        colors     = ['#ffffff', '#000000']
         if needs_image:
-            if self.cancel_requested: raise Exception("Cancelled")
+            chk()
             if cached and cached.get('genius_image_url'):
                 if not image_path.exists():
-                    self._log("  Downloading cached image...")
+                    self.signals.log.emit("  Downloading cached image…")
                     download_image(str(job_folder), cached['genius_image_url'])
-                self._log("  ✓ Using cached image")
+                self.signals.log.emit("  ✓ Cached image")
             elif not image_path.exists():
-                self._log("  Fetching cover image...")
-                result = fetch_genius_image(song_title, str(job_folder))
-                if result:
-                    self._log("  ✓ Cover downloaded")
-                else:
-                    self._log("  ⚠ No cover found")
+                self.signals.log.emit("  Fetching cover…")
+                ok = fetch_genius_image(song_title, str(job_folder))
+                self.signals.log.emit("  ✓ Cover" if ok else "  ⚠ No cover")
             else:
-                self._log("  ✓ Cover exists")
-            
-            if self.cancel_requested: raise Exception("Cancelled")
+                self.signals.log.emit("  ✓ Cover exists")
+            chk()
             if image_path.exists():
                 if cached and cached.get('colors'):
                     colors = cached['colors']
-                    self._log(f"  ✓ Using cached colors")
+                    self.signals.log.emit("  ✓ Cached colors")
                 else:
-                    self._log("  Extracting colors...")
+                    self.signals.log.emit("  Extracting colors…")
                     colors = extract_colors(str(job_folder))
-                    self._log(f"  ✓ Colors: {', '.join(colors)}")
-        
-        # Read lyrics data
+                    self.signals.log.emit(f"  ✓ Colors: {', '.join(colors)}")
+
         with open(lyrics_path, 'r', encoding='utf-8') as f:
             lyrics_data = json.load(f)
-        
-        # Save job data
+
         job_data = {
-            "job_id": job_number,
-            "song_title": song_title,
-            "youtube_url": youtube_url,
-            "start_time": start_time,
-            "end_time": end_time,
-            "template": template,
+            "job_id": job_number, "song_title": song_title,
+            "youtube_url": youtube_url, "start_time": start_time,
+            "end_time": end_time, "template": template,
             "audio_trimmed": str(job_folder / "audio_trimmed.wav"),
             "cover_image": str(image_path) if image_path.exists() else None,
-            "colors": colors,
-            "lyrics_file": str(lyrics_path),
-            "beats": beats,
-            "created_at": datetime.now().isoformat()
+            "colors": colors, "lyrics_file": str(lyrics_path),
+            "beats": beats, "created_at": datetime.now().isoformat(),
         }
-        
         with open(job_folder / "job_data.json", 'w') as f:
             json.dump(job_data, f, indent=4)
-        
-        # Create template-specific data files (mono_data.json / onyx_data.json)
+
         if template in ['mono', 'onyx']:
             markers = self._build_markers_from_lyrics(lyrics_data)
-            template_data = {
-                "markers": markers,
-                "total_markers": len(markers)
-            }
+            td = {"markers": markers, "total_markers": len(markers)}
             if template == 'onyx':
-                template_data["colors"] = colors
-                template_data["cover_image"] = "cover.png" if image_path.exists() else None
-            
-            data_filename = f"{template}_data.json"
-            with open(job_folder / data_filename, 'w', encoding='utf-8') as f:
-                json.dump(template_data, f, indent=4, ensure_ascii=False)
-            self._log(f"  ✓ Created {data_filename} ({len(markers)} markers)")
-        
-        # Save to database if not cached (only in manual mode to avoid duplicates)
+                td["colors"]      = colors
+                td["cover_image"] = "cover.png" if image_path.exists() else None
+            fn = f"{template}_data.json"
+            with open(job_folder / fn, 'w', encoding='utf-8') as f:
+                json.dump(td, f, indent=4, ensure_ascii=False)
+            self.signals.log.emit(f"  ✓ {fn} ({len(markers)} markers)")
+
         if not cached and not self.use_smart_picker:
-            self._log("  Saving to database...")
+            self.signals.log.emit("  Saving to database…")
             self.song_db.add_song(
-                song_title=song_title,
-                youtube_url=youtube_url,
-                start_time=start_time,
-                end_time=end_time,
-                genius_image_url=None,
-                transcribed_lyrics=lyrics_data,
-                colors=colors,
-                beats=beats
-            )
+                song_title=song_title, youtube_url=youtube_url,
+                start_time=start_time, end_time=end_time,
+                genius_image_url=None, transcribed_lyrics=lyrics_data,
+                colors=colors, beats=beats)
         elif cached and not self.use_smart_picker:
             self.song_db.mark_song_used(song_title)
-        
-        self._log(f"  ✓ Job {job_number} complete")
-        
-        if return_data:
-            return job_data, job_folder
-        return None
+
+        self.signals.log.emit(f"  ✓ Job {job_number} complete")
+        return (job_data, job_folder) if return_data else None
+
+    def _build_markers_from_lyrics(self, lyrics_data):
+        markers = []
+        for i, seg in enumerate(lyrics_data):
+            text = seg.get('lyric_current', '') or seg.get('text', '')
+            if not text or not text.strip():
+                continue
+            clean = ' '.join(text.replace('\\r',' ').replace('\r',' ').split()).strip()
+            t0    = float(seg.get('t', 0) or seg.get('time', 0))
+            tend  = float(seg.get('end', t0 + 3))
+            raw   = seg.get('words', [])
+            if raw:
+                words = [{"word": w.get('word','').strip(),
+                          "start": float(w.get('start', t0)),
+                          "end":   float(w.get('end',   t0))}
+                         for w in raw if w.get('word','').strip()]
+            else:
+                wl  = clean.split()
+                dur = max(tend - t0, 0.25)
+                pw  = dur / max(len(wl), 1)
+                words = [{"word": w, "start": t0+i*pw, "end": t0+(i+1)*pw}
+                         for i, w in enumerate(wl)]
+            if i < len(lyrics_data) - 1:
+                nt   = float(lyrics_data[i+1].get('t',0) or lyrics_data[i+1].get('time',0))
+                endt = nt if nt > t0 else tend
+            else:
+                endt = tend
+            markers.append({"time": t0, "text": clean, "words": words,
+                             "color": "white" if len(markers)%2==0 else "black",
+                             "end_time": endt})
+        return markers
 
 
+# ── Entry point ───────────────────────────────────────────────────────────────
 def main():
-    root = tk.Tk()
-    app = AppollovaApp(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    app.setApplicationName("Apollova")
+    app.setStyleSheet(APP_STYLE)
+    win = AppolovaApp()
+    win.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

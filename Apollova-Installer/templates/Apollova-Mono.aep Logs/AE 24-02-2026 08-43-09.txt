@@ -1,0 +1,67 @@
+Adobe After Effects v25.2 Windows 64 render log for project “Apollova-Mono.aep”
+
+Rendering started on 24/02/2026 at 08:43:09
+
+  24/02/2026 08:43:09: Starting composition “OUTPUT 1”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\XXXTentacion - Moonlight.mp4    24/02/2026 08:45:00: Finished composition “OUTPUT 1”.
+
+
+  24/02/2026 08:45:00: Starting composition “OUTPUT 2”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Nic Dean - Desire.mp4    24/02/2026 08:47:37: Finished composition “OUTPUT 2”.
+
+
+  24/02/2026 08:47:37: Starting composition “OUTPUT 3”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Bruno Mars - Die With A Smile.mp4    24/02/2026 08:50:01: Finished composition “OUTPUT 3”.
+
+
+  24/02/2026 08:50:01: Starting composition “OUTPUT 4”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Justin Bieber - Where Are U Now.mp4    24/02/2026 08:55:41: Finished composition “OUTPUT 4”.
+
+
+  24/02/2026 08:55:41: Starting composition “OUTPUT 5”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Tyler The Creator - See You Again.mp4    24/02/2026 09:02:00: Finished composition “OUTPUT 5”.
+
+
+  24/02/2026 09:02:00: Starting composition “OUTPUT 6”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Usher - U Remind Me.mp4    24/02/2026 09:05:07: Finished composition “OUTPUT 6”.
+
+
+  24/02/2026 09:05:07: Starting composition “OUTPUT 7”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\The Weeknd - Reminder.mp4    24/02/2026 09:08:25: Finished composition “OUTPUT 7”.
+
+
+  24/02/2026 09:08:25: Starting composition “OUTPUT 8”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Camilla Cabello - Havana.mp4    24/02/2026 09:11:19: Finished composition “OUTPUT 8”.
+
+
+  24/02/2026 09:11:20: Starting composition “OUTPUT 9”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Brent Faiyaz - Paper Soldier.mp4    24/02/2026 09:13:23: Finished composition “OUTPUT 9”.
+
+
+  24/02/2026 09:13:23: Starting composition “OUTPUT 10”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Vybez Kartel - Fever.mp4    24/02/2026 09:23:07: Finished composition “OUTPUT 10”.
+
+
+  24/02/2026 09:23:07: Starting composition “OUTPUT 11”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Chris Brown - Under The Influence.mp4    24/02/2026 09:27:01: Finished composition “OUTPUT 11”.
+
+
+  24/02/2026 09:27:01: Starting composition “OUTPUT 12”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Mono\jobs\renders\Kendrick Lamar - The Heart Part 5.mp4    24/02/2026 09:30:14: Finished composition “OUTPUT 12”.
+
+
+  Total Time Elapsed: 47 Min, 5 Sec
+Log closed on 24/02/2026 at 09:30:14
+

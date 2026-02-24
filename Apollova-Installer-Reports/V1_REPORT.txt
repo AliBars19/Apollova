@@ -1,0 +1,17 @@
+Alright so we encountered a fatal error
+while testing on yaq's system where an FFMPEG
+error was not caught. This meant setup.exe
+worked properly but apollova.exe would launch
+with an error code and close instantly, looking
+like a virus.
+
+The two errors was FFMPEG PATH not being
+detected and that error not being caught
+so ive added multiple try, catch to fix that
+
+the second error was a broken of pytorch being
+installed on the yaq's computer with
+python 3.14.0. what we are doing to fix that
+is uninstalling all versions of pytorch on
+the users computer and reinstalling the version
+of pytorch that works for us specifically.

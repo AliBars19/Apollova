@@ -1,0 +1,67 @@
+Adobe After Effects v25.2 Windows 64 render log for project “Apollova-Aurora.aep”
+
+Rendering started on 24/02/2026 at 00:25:06
+
+  24/02/2026 00:25:06: Starting composition “OUTPUT 1”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Luis Fonsi - Despacito.mp4    24/02/2026 00:45:47: Finished composition “OUTPUT 1”.
+
+
+  24/02/2026 00:45:47: Starting composition “OUTPUT 2”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Bruno Mars - I Just Might.mp4    24/02/2026 00:59:51: Finished composition “OUTPUT 2”.
+
+
+  24/02/2026 00:59:51: Starting composition “OUTPUT 3”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Drake - Jimmy Cooks.mp4    24/02/2026 01:09:32: Finished composition “OUTPUT 3”.
+
+
+  24/02/2026 01:09:32: Starting composition “OUTPUT 4”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Travis Scott - Highest In The Room.mp4    24/02/2026 01:19:04: Finished composition “OUTPUT 4”.
+
+
+  24/02/2026 01:19:04: Starting composition “OUTPUT 5”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\The Weeknd - Die For You.mp4    24/02/2026 01:35:20: Finished composition “OUTPUT 5”.
+
+
+  24/02/2026 01:35:20: Starting composition “OUTPUT 6”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Drake - Fair Trade.mp4    24/02/2026 01:44:57: Finished composition “OUTPUT 6”.
+
+
+  24/02/2026 01:44:57: Starting composition “OUTPUT 7”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Future - Low Life.mp4    24/02/2026 01:54:33: Finished composition “OUTPUT 7”.
+
+
+  24/02/2026 01:54:33: Starting composition “OUTPUT 8”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Pitbull - Hotel Room Service.mp4    24/02/2026 02:05:45: Finished composition “OUTPUT 8”.
+
+
+  24/02/2026 02:05:45: Starting composition “OUTPUT 9”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\SZA - Snooze.mp4    24/02/2026 02:17:43: Finished composition “OUTPUT 9”.
+
+
+  24/02/2026 02:17:43: Starting composition “OUTPUT 10”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Travis Scott - Sicko Mode.mp4    24/02/2026 02:44:48: Finished composition “OUTPUT 10”.
+
+
+  24/02/2026 02:44:48: Starting composition “OUTPUT 11”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Kanye West - Field Trip.mp4    24/02/2026 02:59:20: Finished composition “OUTPUT 11”.
+
+
+  24/02/2026 02:59:20: Starting composition “OUTPUT 12”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Aurora\jobs\renders\Calvin Harris - How Deep Is Your Love.mp4    24/02/2026 03:31:12: Finished composition “OUTPUT 12”.
+
+
+  Total Time Elapsed: 3 Hr, 6 Min
+Log closed on 24/02/2026 at 03:31:12
+

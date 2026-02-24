@@ -1,0 +1,7 @@
+Adobe After Effects v25.2 Windows 64 render log for project “Apollova-Onyx.aep”
+
+Rendering started on 24/02/2026 at 00:23:38
+
+  24/02/2026 00:23:38: Starting composition “OUTPUT 1”.
+
+  Output To: C:\Users\aliba\Downloads\Apollova\Apollova\Apollova-Installer\Apollova-Onyx\jobs\renders\Coldplay - Adventure Of A Lifetime_ONYX.mp4  

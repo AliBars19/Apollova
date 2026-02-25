@@ -10,6 +10,7 @@ import json
 import subprocess
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from PyQt6.QtWidgets import (
@@ -261,7 +262,40 @@ class LoadingScreen(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
     #  Integrity checks (background thread)
     # ─────────────────────────────────────────────────────────────────────────
+    def _checks_cache_valid(self):
+        """Return True if checks passed < 24h ago (skip full re-check)."""
+        try:
+            cache = self.root / "assets" / "logs" / "last_check.json"
+            if cache.exists():
+                data = json.loads(cache.read_text())
+                last = datetime.fromisoformat(data.get("timestamp", ""))
+                age_h = (datetime.now() - last).total_seconds() / 3600
+                if age_h < 24 and data.get("passed"):
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _save_checks_cache(self, passed: bool):
+        try:
+            cache = self.root / "assets" / "logs" / "last_check.json"
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps({
+                "timestamp": datetime.now().isoformat(),
+                "passed": passed,
+            }))
+        except Exception:
+            pass
+
     def _run_checks(self):
+        # Fast path: skip full checks if they passed recently
+        if self._checks_cache_valid():
+            log.info("Integrity checks passed <24h ago — skipping")
+            self.sig.item.emit("Checks cached (passed recently)", True)
+            self.sig.progress.emit(100)
+            self.sig.done.emit()
+            return
+
         checks = [
             ("Python version",      self._check_python),
             ("Required files",      self._check_files),
@@ -294,7 +328,9 @@ class LoadingScreen(QMainWindow):
 
         self.sig.progress.emit(100)
         if self._abort:
+            self._save_checks_cache(False)
             return
+        self._save_checks_cache(True)
         self.sig.done.emit()
 
     def _check_python(self):

@@ -15,8 +15,12 @@ if /i not "%confirm%"=="Y" (
     exit /b
 )
 echo.
+set PY=py -3.11
+%PY% --version >nul 2>&1
+if errorlevel 1 set PY=python
+
 echo Uninstalling...
-"python" -m pip uninstall -y pytubefix pydub librosa openai-whisper stable-ts lyricsgenius rapidfuzz colorthief Pillow requests python-dotenv torch torchaudio
+%PY% -m pip uninstall -y pytubefix pydub librosa openai-whisper stable-ts lyricsgenius rapidfuzz colorthief Pillow requests python-dotenv torch torchaudio
 echo.
 echo ================================================
 echo   Done. You can now delete the Apollova folder.

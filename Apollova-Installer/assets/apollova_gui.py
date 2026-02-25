@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import shutil
+import time
 import threading
 import tempfile
 import subprocess
@@ -80,8 +81,8 @@ def _import_scripts():
         from scripts.audio_processing import download_audio as _da, trim_audio as _ta, detect_beats as _db
         from scripts.image_processing import download_image as _di, extract_colors as _ec
         from scripts.lyric_processing import transcribe_audio as _tr
-        from scripts.lyric_processing_mono import transcribe_audio as _trm
-        from scripts.lyric_processing_onyx import transcribe_audio as _tro
+        from scripts.lyric_processing_mono import transcribe_audio_mono as _trm
+        from scripts.lyric_processing_onyx import transcribe_audio_onyx as _tro
         from scripts.song_database import SongDatabase as _SD
         from scripts.genius_processing import fetch_genius_image as _fg
         from scripts.smart_picker import SmartSongPicker as _SP
@@ -346,6 +347,11 @@ class AppolovaApp(QMainWindow):
         self.song_db  = SongDatabase(db_path=str(DATABASE_DIR / "songs.db"))
         self.settings = self._load_settings()
 
+        # Sync settings → Config and validate
+        Config.GENIUS_API_TOKEN = self.settings.get('genius_api_token', '')
+        Config.WHISPER_MODEL = self.settings.get('whisper_model', 'small')
+        self._config_warnings = Config.validate()
+
         self.is_processing          = False
         self.cancel_requested       = False
         self.use_smart_picker       = False
@@ -364,6 +370,10 @@ class AppolovaApp(QMainWindow):
         self.signals.batch_finished.connect(self._batch_render_complete)
 
         self._build_ui()
+
+        # Show config warnings in the log
+        for w in self._config_warnings:
+            self._append_log(f"Config: {w}")
 
         if not self.settings.get('after_effects_path'):
             detected = self._auto_detect_after_effects()
@@ -1478,8 +1488,11 @@ class AppolovaApp(QMainWindow):
                     f"  ✓ Cached lyrics ({len(cached['transcribed_lyrics'])} segs)")
             elif not lyrics_path.exists():
                 self.signals.log.emit(f"  Transcribing ({Config.WHISPER_MODEL})…")
+                t0 = time.time()
                 transcribe_audio(str(job_folder), song_title)
-                self.signals.log.emit("  ✓ Transcribed")
+                elapsed = time.time() - t0
+                self.signals.log.emit(
+                    f"  ✓ Transcribed ({elapsed:.0f}s)")
             else:
                 self.signals.log.emit("  ✓ Lyrics exist")
             lyrics_data = lyrics_path.read_text() if lyrics_path.exists() else ""
@@ -1493,8 +1506,11 @@ class AppolovaApp(QMainWindow):
                 self.signals.log.emit("  ✓ Cached mono lyrics")
             elif not mono_path.exists():
                 self.signals.log.emit(f"  Transcribing mono ({Config.WHISPER_MODEL})…")
+                t0 = time.time()
                 transcribe_audio_mono(str(job_folder), song_title)
-                self.signals.log.emit("  ✓ Transcribed (mono)")
+                elapsed = time.time() - t0
+                self.signals.log.emit(
+                    f"  ✓ Transcribed mono ({elapsed:.0f}s)")
             else:
                 self.signals.log.emit("  ✓ Mono data exists")
             lyrics_data = mono_path.read_text() if mono_path.exists() else "{}"
@@ -1508,8 +1524,11 @@ class AppolovaApp(QMainWindow):
                 self.signals.log.emit("  ✓ Cached onyx lyrics")
             elif not onyx_path.exists():
                 self.signals.log.emit(f"  Transcribing onyx ({Config.WHISPER_MODEL})…")
+                t0 = time.time()
                 transcribe_audio_onyx(str(job_folder), song_title)
-                self.signals.log.emit("  ✓ Transcribed (onyx)")
+                elapsed = time.time() - t0
+                self.signals.log.emit(
+                    f"  ✓ Transcribed onyx ({elapsed:.0f}s)")
             else:
                 self.signals.log.emit("  ✓ Onyx data exists")
             lyrics_data = onyx_path.read_text() if onyx_path.exists() else "{}"

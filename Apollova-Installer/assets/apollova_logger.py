@@ -3,12 +3,12 @@ apollova_logger.py
 Shared logging module for Setup, Apollova, and Uninstall.
 
 Log files written to:
-  <install_root>/logs/setup.log
-  <install_root>/logs/app.log
-  <install_root>/logs/uninstall.log
+  <install_root>/assets/logs/setup.log
+  <install_root>/assets/logs/app.log
+  <install_root>/assets/logs/uninstall.log
 
 Each session appends a timestamped block. Logs are capped at 5 MB then rotated
-(old log renamed to .1, new file started) so disk space never runs away.
+(3 generations: .log.1, .log.2, .log.3) so disk space never runs away.
 
 Usage:
     from apollova_logger import get_logger
@@ -29,12 +29,13 @@ from pathlib import Path
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 MAX_LOG_BYTES = 5 * 1024 * 1024   # 5 MB before rotation
+MAX_LOG_BACKUPS = 3               # keep .log.1, .log.2, .log.3
 LOG_NAMES = ("setup", "app", "uninstall")
 
 
 # ── Resolve log directory ──────────────────────────────────────────────────────
 def _get_log_dir() -> Path:
-    """Return <install_root>/logs, creating it if needed."""
+    """Return <install_root>/assets/logs, creating it if needed."""
     if getattr(sys, "frozen", False):
         # Running as compiled exe — exe is in install root
         root = Path(sys.executable).parent
@@ -43,7 +44,7 @@ def _get_log_dir() -> Path:
         here = Path(__file__).parent
         root = here.parent if here.name == "assets" else here
 
-    log_dir = root / "logs"
+    log_dir = root / "assets" / "logs"
     try:
         log_dir.mkdir(parents=True, exist_ok=True)
     except Exception:
@@ -56,10 +57,19 @@ def _get_log_dir() -> Path:
 
 # ── Rotation ───────────────────────────────────────────────────────────────────
 def _rotate_if_needed(log_path: Path):
-    """If log exceeds MAX_LOG_BYTES, rename it to .1 and start fresh."""
+    """If log exceeds MAX_LOG_BYTES, rotate through 3 generations."""
     try:
         if log_path.exists() and log_path.stat().st_size > MAX_LOG_BYTES:
-            backup = log_path.with_suffix(".log.1")
+            # Shift existing backups: .3→delete, .2→.3, .1→.2
+            for i in range(MAX_LOG_BACKUPS, 1, -1):
+                older = log_path.parent / f"{log_path.stem}.log.{i}"
+                newer = log_path.parent / f"{log_path.stem}.log.{i - 1}"
+                if newer.exists():
+                    if older.exists():
+                        older.unlink()
+                    newer.rename(older)
+            # Current → .1
+            backup = log_path.parent / f"{log_path.stem}.log.1"
             if backup.exists():
                 backup.unlink()
             log_path.rename(backup)

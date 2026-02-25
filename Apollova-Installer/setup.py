@@ -446,8 +446,38 @@ class SetupWizard(QMainWindow):
         self.cancel_btn.setText("Cancel")
         threading.Thread(target=self._install_thread, daemon=True).start()
 
+    def _load_setup_state(self):
+        """Load completed steps from previous partial install."""
+        sf = self.root / "assets" / "logs" / "setup_state.json"
+        try:
+            if sf.exists():
+                return json.loads(sf.read_text())
+        except Exception:
+            pass
+        return {"completed_steps": []}
+
+    def _save_setup_state(self, completed):
+        """Persist completed step IDs so setup can resume."""
+        sf = self.root / "assets" / "logs" / "setup_state.json"
+        try:
+            sf.parent.mkdir(parents=True, exist_ok=True)
+            sf.write_text(json.dumps({"completed_steps": completed}))
+        except Exception:
+            pass
+
+    def _clear_setup_state(self):
+        sf = self.root / "assets" / "logs" / "setup_state.json"
+        try:
+            if sf.exists():
+                sf.unlink()
+        except Exception:
+            pass
+
     def _install_thread(self):
         try:
+            state = self._load_setup_state()
+            done_steps = set(state.get("completed_steps", []))
+
             steps = []
             if not self.python_path and self.py_install_chk.isChecked():
                 steps += [
@@ -473,19 +503,30 @@ class SetupWizard(QMainWindow):
                 ("shortcut",      100, "Finishing up..."),
             ]
 
+            completed = list(done_steps)
             for step_id, target_pct, label in steps:
                 if self.cancelled:
                     self.sig.update.emit("Installation cancelled.", 0, "")
                     return
+                # Skip steps completed in a previous run
+                if step_id in done_steps:
+                    log.info(f"Skipping already-completed step: {step_id}")
+                    self.sig.detail.emit(f"✓ {label.rstrip('.')} (cached)")
+                    self._set_target(target_pct)
+                    continue
                 self._set_target(target_pct)
                 self.sig.update.emit(label, self._progress, "")
                 ok = self._run_step(step_id)
                 if not ok:
+                    self._save_setup_state(completed)
                     return   # step already emitted failed signal
+                completed.append(step_id)
+                self._save_setup_state(completed)
 
             self._set_target(100)
             self.sig.update.emit("Installation complete!", 100, "")
             self._save_settings()
+            self._clear_setup_state()
             self.sig.done.emit()
 
         except Exception as e:
@@ -548,14 +589,20 @@ class SetupWizard(QMainWindow):
     def _step_upgrade_pip(self):
         python = self.python_path
         flags  = self._flags()
-        self.sig.detail.emit("Upgrading pip...")
+        self.sig.detail.emit("Upgrading pip, setuptools & wheel...")
         try:
-            subprocess.run(
-                [python, "-m", "pip", "install", "--upgrade", "pip"],
-                capture_output=True, timeout=120, creationflags=flags)
-        except Exception:
-            pass  # non-fatal
-        self.sig.detail.emit("✓ pip up to date.")
+            r = subprocess.run(
+                [python, "-m", "pip", "install", "--upgrade",
+                 "pip", "setuptools", "wheel"],
+                capture_output=True, text=True,
+                timeout=120, creationflags=flags)
+            log.cmd_result(
+                [python, "-m", "pip", "install", "--upgrade",
+                 "pip", "setuptools", "wheel"],
+                r.returncode, r.stdout, r.stderr)
+        except Exception as e:
+            log.warning(f"pip/setuptools/wheel upgrade failed: {e}")
+        self.sig.detail.emit("✓ pip, setuptools & wheel up to date.")
         return True
 
     def _step_install_base(self):
@@ -586,7 +633,15 @@ class SetupWizard(QMainWindow):
             if "==" in pkg_line:
                 self._uninstall_if_wrong_version(python, flags, pkg_line)
 
+            # openai-whisper and stable-ts need --no-build-isolation
+            # because their setup.py imports pkg_resources without
+            # declaring setuptools as a PEP 517 build dependency
+            extra = None
+            if pkg_name in ("openai-whisper", "stable-ts"):
+                extra = ["--no-build-isolation"]
+
             ok = self._pip_install(python, flags, pkg_line,
+                                   extra_args=extra,
                                    retries=3, timeout=300)
             log.pkg_install(pkg_name, ok)
             if not ok:
@@ -887,6 +942,9 @@ class SetupWizard(QMainWindow):
             self.assets_dir / "scripts" / "audio_processing.py",
             self.assets_dir / "scripts" / "image_processing.py",
             self.assets_dir / "scripts" / "lyric_processing.py",
+            self.assets_dir / "scripts" / "lyric_processing_mono.py",
+            self.assets_dir / "scripts" / "lyric_processing_onyx.py",
+            self.assets_dir / "scripts" / "lyric_alignment.py",
             self.assets_dir / "scripts" / "song_database.py",
             self.assets_dir / "scripts" / "genius_processing.py",
             self.assets_dir / "scripts" / "smart_picker.py",
@@ -1131,37 +1189,55 @@ class SetupWizard(QMainWindow):
     def _pip_install(self, python, flags, pkg, extra_args=None,
                      retries=3, timeout=300):
         """pip install with retry logic. Returns True on success."""
-        cmd = [python, "-m", "pip", "install"] + pkg.split()
+        base_cmd = [python, "-m", "pip", "install"] + pkg.split()
         if extra_args:
-            cmd += extra_args
+            base_cmd += extra_args
 
         for attempt in range(retries):
+            cmd = list(base_cmd)
+            # On retry, add --no-cache-dir to rule out cached bad wheels
+            if attempt > 0:
+                cmd.append("--no-cache-dir")
             try:
                 proc = subprocess.Popen(
                     cmd, stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
+                    stderr=subprocess.PIPE,
                     text=True, creationflags=flags)
-                lines = []
+                stdout_lines = []
+                # Read stdout line by line for live progress
                 while True:
                     line = proc.stdout.readline()
                     if not line and proc.poll() is not None:
                         break
                     if line:
                         line = line.strip()
-                        lines.append(line)
+                        stdout_lines.append(line)
                         if any(k in line for k in
                                ("Collecting", "Installing", "Successfully",
                                 "already", "Downloading")):
                             self.sig.detail.emit(f"  {line[:70]}")
                             self.sig.nudge.emit()
+                stderr_out = proc.stderr.read()
                 proc.wait(timeout=timeout)
+
+                # Always log the full output for debugging
+                full_stdout = "\n".join(stdout_lines)
+                log.cmd_result(cmd, proc.returncode,
+                               full_stdout, stderr_out)
+
                 if proc.returncode == 0:
                     return True
                 if attempt < retries - 1:
                     self.sig.detail.emit(
                         f"  Attempt {attempt + 1} failed, retrying...")
                     time.sleep(3)
+                else:
+                    # Final attempt failed — log the error detail
+                    detail = stderr_out.strip() or full_stdout[-500:]
+                    log.error(f"pip install {pkg} FAILED after {retries} "
+                              f"attempts:\n{detail[:500]}")
             except Exception as e:
+                log.error(f"pip install {pkg} exception: {e}")
                 if attempt == retries - 1:
                     self.sig.detail.emit(f"  pip error: {e}")
         return False

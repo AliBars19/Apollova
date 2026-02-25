@@ -44,11 +44,20 @@ class Config:
     # Lyric Settings
     MAX_LINE_LENGTH = 25
     
+    VALID_WHISPER_MODELS = [
+        'tiny', 'base', 'small', 'medium',
+        'large', 'large-v2', 'large-v3',
+    ]
+
     @classmethod
     def validate(cls):
+        """Validate config and return list of warning strings (empty = all OK)."""
+        warnings = []
         if not cls.GENIUS_API_TOKEN:
-            print("  Warning: GENIUS_API_TOKEN not set. Lyric fetching disabled.")
-        
-        if cls.WHISPER_MODEL not in ['tiny', 'base', 'small', 'medium', 'large-v3']:
-            print(f"  Warning: Unknown WHISPER_MODEL '{cls.WHISPER_MODEL}'. Using 'small'.")
+            warnings.append("GENIUS_API_TOKEN not set — lyric fetching disabled.")
+
+        if cls.WHISPER_MODEL not in cls.VALID_WHISPER_MODELS:
+            warnings.append(
+                f"Unknown WHISPER_MODEL '{cls.WHISPER_MODEL}'. Falling back to 'small'.")
             cls.WHISPER_MODEL = 'small'
+        return warnings

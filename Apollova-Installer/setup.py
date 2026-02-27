@@ -887,7 +887,7 @@ class SetupWizard(QMainWindow):
             ("torch",          "PyTorch"),
             ("whisper",        "openai-whisper"),
             ("stable_whisper", "stable-ts"),
-            ("pytubefix",      "pytubefix"),
+            ("yt_dlp",         "yt-dlp"),
             ("pydub",          "pydub"),
             ("librosa",        "librosa"),
             ("lyricsgenius",   "lyricsgenius"),

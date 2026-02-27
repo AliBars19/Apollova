@@ -72,7 +72,7 @@ REQUIRED_PACKAGES = [
     ("torch",          "PyTorch",          True),
     ("whisper",        "openai-whisper",   True),
     ("stable_whisper", "stable-ts",        True),
-    ("pytubefix",      "pytubefix",        True),
+    ("yt_dlp",         "yt-dlp",           True),
     ("pydub",          "pydub",            True),
     ("librosa",        "librosa",          True),
     ("lyricsgenius",   "lyricsgenius",     True),
@@ -388,19 +388,41 @@ class LoadingScreen(QMainWindow):
         return True, "All folders present"
 
     def _check_packages(self):
-        flags   = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-        failed  = []
-        for import_name, friendly, critical in REQUIRED_PACKAGES:
-            if import_name in ("torch", "stable_whisper"):
-                continue   # checked separately
-            r = subprocess.run(
-                [self.python, "-c",
-                 f"import warnings; warnings.filterwarnings('ignore'); "
-                 f"import {import_name}; print('ok')"],
-                capture_output=True, text=True,
-                timeout=15, creationflags=flags)
-            if r.returncode != 0 or "ok" not in r.stdout:
-                failed.append(friendly)
+        flags    = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        to_check = [
+            (imp, name)
+            for imp, name, _ in REQUIRED_PACKAGES
+            if imp not in ("torch", "stable_whisper")  # checked separately
+        ]
+
+        # Build a single script that attempts every import and reports failures.
+        # One subprocess instead of N — significantly faster on startup.
+        lines = [
+            "import warnings, json",
+            "warnings.filterwarnings('ignore')",
+            "failed = []",
+        ]
+        for imp, name in to_check:
+            lines.append(
+                f"try:\n    import {imp}\n"
+                f"except Exception:\n    failed.append({name!r})")
+        lines.append("print(json.dumps(failed))")
+
+        r = subprocess.run(
+            [self.python, "-c", "\n".join(lines)],
+            capture_output=True, text=True,
+            timeout=30, creationflags=flags)
+
+        failed = []
+        if r.returncode == 0:
+            try:
+                import json as _json
+                failed = _json.loads(r.stdout.strip())
+            except Exception:
+                pass  # empty failed list — treat as all OK
+        else:
+            # Subprocess itself crashed — assume everything missing
+            failed = [name for _, name in to_check]
 
         if failed:
             self._abort = True
@@ -412,7 +434,7 @@ class LoadingScreen(QMainWindow):
                 f"If this keeps happening, contact {SUPPORT_EMAIL}"
             )
             return False, f"{len(failed)} package(s) missing"
-        return True, f"{len(REQUIRED_PACKAGES) - 2} packages OK"
+        return True, f"{len(to_check)} packages OK"
 
     def _check_torch(self):
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0

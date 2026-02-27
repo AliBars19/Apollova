@@ -2,82 +2,97 @@
 Audio Processing - Download, trim, and beat detection
 Shared across Aurora, Mono, and Onyx templates
 
-- download_audio: YouTube download via pytubefix with OAuth
+- download_audio: YouTube download via yt-dlp
 - trim_audio: Clip extraction based on MM:SS timestamps
 - detect_beats: Beat detection via librosa (Aurora only)
 """
 import os
+import re
 import time
 import subprocess
-from pytubefix import YouTube
+import yt_dlp
 from pydub import AudioSegment
+
+_YT_ID_RE = re.compile(r'(?:youtube\.com/watch\?.*v=|youtu\.be/)([A-Za-z0-9_-]{11})')
+
+
+def _validate_youtube_url(url):
+    """Raise a user-friendly ValueError if the URL is not a valid YouTube video link."""
+    if not url or not isinstance(url, str) or url.strip() == "":
+        raise ValueError(
+            "No YouTube URL was provided for this song.\n\n"
+            "How to fix: Open the database editor in Settings, find this song, "
+            "and paste in a valid YouTube URL."
+        )
+    if url.strip().lower() == "unknown":
+        raise ValueError(
+            "This song has a placeholder URL ('unknown') stored in the database — "
+            "it was never given a real YouTube link.\n\n"
+            "How to fix: Open the database editor in Settings, find this song, "
+            "and replace 'unknown' with a real YouTube URL "
+            "(e.g. https://www.youtube.com/watch?v=XXXXXXXXXXX)."
+        )
+    if not _YT_ID_RE.search(url):
+        raise ValueError(
+            f"The URL stored for this song is not a valid YouTube video link:\n"
+            f"  '{url}'\n\n"
+            "Expected format: https://www.youtube.com/watch?v=XXXXXXXXXXX\n\n"
+            "How to fix: Open the database editor in Settings, find this song, "
+            "and update the URL to a direct YouTube watch link."
+        )
 
 
 def download_audio(url, job_folder, max_retries=3, use_oauth=True):
-    """Download audio from YouTube URL using pytubefix with OAuth"""
+    """Download audio from YouTube URL using yt-dlp"""
     mp3_path = os.path.join(job_folder, 'audio_source.mp3')
-    
+
     if os.path.exists(mp3_path):
         print(f"✓ Audio already downloaded")
         return mp3_path
-    
+
+    _validate_youtube_url(url)
     print(f"Downloading audio...")
-    
+
+    temp_base = os.path.join(job_folder, 'yt_temp')
+
+    ydl_opts = {
+        'format': 'bestaudio/best',
+        'outtmpl': temp_base + '.%(ext)s',
+        'postprocessors': [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '2',
+        }],
+        'quiet': True,
+        'no_warnings': True,
+        'retries': max_retries,
+    }
+
     for attempt in range(max_retries):
         try:
-            yt = YouTube(
-                url,
-                use_oauth=use_oauth,
-                allow_oauth_cache=True
-            )
-            
-            audio_stream = yt.streams.filter(
-                only_audio=True
-            ).order_by('abr').desc().first()
-            
-            if not audio_stream:
-                print(f"❌ No audio streams available")
-                return None
-            
-            temp_file = os.path.join(job_folder, f"temp_audio_{yt.video_id}.{audio_stream.subtype}")
-            audio_stream.download(output_path=job_folder, filename=f"temp_audio_{yt.video_id}.{audio_stream.subtype}")
-            
-            cmd = [
-                "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                "-i", temp_file,
-                "-vn",
-                "-acodec", "libmp3lame",
-                "-q:a", "2",
-                mp3_path
-            ]
-            subprocess.run(cmd, check=True)
-            
-            if os.path.exists(temp_file):
-                os.remove(temp_file)
-            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
+
+            temp_mp3 = temp_base + '.mp3'
+            if os.path.exists(temp_mp3):
+                os.rename(temp_mp3, mp3_path)
+
             if os.path.exists(mp3_path):
                 print(f"✓ Audio downloaded")
                 return mp3_path
             else:
-                raise Exception("MP3 conversion failed")
-                
+                raise Exception("MP3 file not found after download")
+
         except Exception as e:
             error_msg = str(e).lower()
-            
-            if "bot" in error_msg:
-                if attempt == 0 and not use_oauth:
-                    print(f"⚠️  Bot detected, retrying with login...")
-                    return download_audio(url, job_folder, max_retries=max_retries-1, use_oauth=True)
-                else:
-                    print(f"⚠️  Bot detection even with login, waiting 30s...")
-                    time.sleep(30)
-            elif "400" in error_msg:
-                print(f"⚠️  HTTP 400 error, waiting 5s...")
-                time.sleep(5)
-            elif "429" in error_msg:
+
+            if "429" in error_msg or "rate" in error_msg:
                 print(f"⚠️  Rate limited, waiting 15s...")
                 time.sleep(15)
-            
+            elif "403" in error_msg or "forbidden" in error_msg:
+                print(f"⚠️  Access denied, waiting 5s...")
+                time.sleep(5)
+
             if attempt < max_retries - 1:
                 print(f"  Download failed (attempt {attempt + 1}/{max_retries}), retrying...")
                 time.sleep(2)
@@ -85,7 +100,7 @@ def download_audio(url, job_folder, max_retries=3, use_oauth=True):
             else:
                 print(f"❌ Download failed after {max_retries} attempts: {e}")
                 raise
-    
+
     return None
 
 

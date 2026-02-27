@@ -2,7 +2,7 @@
 # Setup.exe will enforce these exact versions, uninstalling conflicting ones first.
 
 # Audio processing
-pytubefix==10.3.8
+yt-dlp
 pydub==0.25.1
 librosa==0.10.2
 

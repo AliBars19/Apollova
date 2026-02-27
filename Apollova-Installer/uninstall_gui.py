@@ -37,6 +37,15 @@ except Exception:
 
 SUPPORT_EMAIL = "support@apollova.app"
 
+# pip package name → actual installed directory name.
+# Needed because pip names don't always match what lands in site-packages.
+_PIP_TO_DIR = {
+    "openai-whisper": "whisper",
+    "stable-ts":      "stable_whisper",
+    "Pillow":         "PIL",
+    "python-dotenv":  "dotenv",
+}
+
 STYLE = """
 QMainWindow, QWidget {
     background-color: #1e1e2e;
@@ -251,6 +260,18 @@ class UninstallWizard(QMainWindow):
 
         self._hsep(rem_lay)
 
+        # Whisper models
+        self.whisper_chk = QCheckBox(
+            "Delete Whisper model cache  (whisper_models/ folder)")
+        self.whisper_chk.setChecked(False)
+        rem_lay.addWidget(self.whisper_chk)
+        self.whisper_note = QLabel(
+            "    Checking size...")
+        self.whisper_note.setStyleSheet("color:#6c7086; font-size:11px;")
+        rem_lay.addWidget(self.whisper_note)
+
+        self._hsep(rem_lay)
+
         # FFmpeg
         self.ffmpeg_chk = QCheckBox(
             "Remove FFmpeg  (installed by Apollova Setup)")
@@ -283,7 +304,6 @@ class UninstallWizard(QMainWindow):
         keep_lbl = QLabel(
             "  • After Effects template files (.aep)\n"
             "  • This installer folder and its contents\n"
-            "  • Whisper model cache (in whisper_models/)\n"
             "  • settings.json")
         keep_lbl.setStyleSheet("color:#6c7086; font-size:11px;")
         keep_lay.addWidget(keep_lbl)
@@ -345,6 +365,27 @@ class UninstallWizard(QMainWindow):
             self.py_lbl.setStyleSheet("color:#f38ba8;")
             self.python_chk.setEnabled(False)
 
+        # Whisper models label
+        wm_dir = self.root / "whisper_models"
+        if wm_dir.exists():
+            try:
+                wm_size = sum(
+                    f.stat().st_size for f in wm_dir.rglob("*") if f.is_file())
+                wm_gb = wm_size / (1024 ** 3)
+                size_str = (f"{wm_gb:.1f} GB" if wm_gb >= 1
+                            else f"{wm_size / (1024**2):.0f} MB")
+                self.whisper_note.setText(
+                    f"    ⚠ {size_str} of model files — "
+                    "models must be re-downloaded if you use Apollova again.")
+                self.whisper_note.setStyleSheet("color:#f9e2af; font-size:11px;")
+            except Exception:
+                self.whisper_note.setText(
+                    "    Whisper models folder found.")
+        else:
+            self.whisper_note.setText(
+                "    No Whisper models found — nothing to remove.")
+            self.whisper_chk.setEnabled(False)
+
         # FFmpeg label
         app_ffmpeg = self.assets_dir / "ffmpeg.exe"
         in_path    = self._ffmpeg_in_path()
@@ -392,6 +433,8 @@ class UninstallWizard(QMainWindow):
             actions.append("  • Delete all job folders (Aurora, Mono, Onyx)")
         if self.db_chk.isChecked():
             actions.append("  • Delete songs database")
+        if self.whisper_chk.isChecked():
+            actions.append("  • Delete Whisper model cache (whisper_models/)")
         if self.ffmpeg_chk.isChecked():
             actions.append("  • Remove FFmpeg")
         if self.python_chk.isChecked():
@@ -424,11 +467,13 @@ class UninstallWizard(QMainWindow):
         try:
             steps = [("packages", 40, "Removing Python packages...")]
             if self.jobs_chk.isChecked():
-                steps.append(("jobs", 55, "Deleting job folders..."))
+                steps.append(("jobs", 52, "Deleting job folders..."))
             if self.db_chk.isChecked():
-                steps.append(("database", 65, "Deleting database..."))
+                steps.append(("database", 60, "Deleting database..."))
+            if self.whisper_chk.isChecked():
+                steps.append(("whisper", 72, "Deleting Whisper model cache..."))
             if self.ffmpeg_chk.isChecked():
-                steps.append(("ffmpeg", 80, "Removing FFmpeg..."))
+                steps.append(("ffmpeg", 82, "Removing FFmpeg..."))
             if self.python_chk.isChecked():
                 steps.append(("python", 95, "Uninstalling Python..."))
             steps.append(("cleanup", 100, "Cleaning up..."))
@@ -461,6 +506,7 @@ class UninstallWizard(QMainWindow):
                 "packages": self._step_remove_packages,
                 "jobs":     self._step_delete_jobs,
                 "database": self._step_delete_database,
+                "whisper":  self._step_delete_whisper_models,
                 "ffmpeg":   self._step_remove_ffmpeg,
                 "python":   self._step_remove_python,
                 "cleanup":  self._step_cleanup,
@@ -479,41 +525,44 @@ class UninstallWizard(QMainWindow):
                 "You may need to remove packages manually.")
             return
 
-        flags = self._flags()
+        flags    = self._flags()
         packages = self._collect_packages()
-
         if not packages:
             self.sig.detail.emit("No packages found to remove.")
             return
 
-        self.sig.detail.emit(f"Removing {len(packages)} packages...")
-        total   = len(packages)
+        # Single pip call — much faster than one subprocess per package
+        self.sig.detail.emit(
+            f"Removing {len(packages)} packages (this may take a minute)...")
+        r = subprocess.run(
+            [self.python_path, "-m", "pip", "uninstall"] + packages + ["-y"],
+            capture_output=True, text=True, timeout=300, creationflags=flags)
+        log.pkg_install(
+            "all-packages",
+            r.returncode == 0,
+            f"batch-removed {len(packages)}" if r.returncode == 0
+            else r.stderr[:200])
+        if r.returncode != 0:
+            log.warning(f"pip uninstall stderr: {r.stderr[:300]}")
 
-        for i, pkg in enumerate(packages):
-            if self.cancelled:
-                return
-            self.sig.detail.emit(f"  Removing {pkg}  ({i+1}/{total})...")
-            self.sig.nudge.emit()
-            r = subprocess.run(
-                [self.python_path, "-m", "pip", "uninstall", pkg, "-y"],
-                capture_output=True, text=True, timeout=60, creationflags=flags)
-            log.pkg_install(pkg, r.returncode == 0,
-                            "removed" if r.returncode == 0 else r.stderr[:100])
-
-        # Also nuke any leftover copies from user AppData
+        # Remove any leftover directories in user AppData site-packages.
+        # pip names don't always match directory names — use the mapping.
         user_sp = self._get_user_site_packages()
         if user_sp:
             user_sp_path = Path(user_sp)
             for pkg in packages:
-                pkg_dir = user_sp_path / pkg
+                dir_name  = _PIP_TO_DIR.get(pkg, pkg)
+                dist_name = pkg.replace("-", "_")   # dist-info uses underscores
+
+                pkg_dir = user_sp_path / dir_name
                 if pkg_dir.exists():
-                    self.sig.detail.emit(f"  Removing AppData copy of {pkg}...")
+                    self.sig.detail.emit(f"  Removing leftover: {dir_name}...")
                     shutil.rmtree(pkg_dir, ignore_errors=True)
-                # Also remove dist-info
-                for item in user_sp_path.glob(f"{pkg}-*.dist-info"):
+
+                for item in user_sp_path.glob(f"{dist_name}-*.dist-info"):
                     shutil.rmtree(item, ignore_errors=True)
 
-        self.sig.detail.emit(f"✓ Removed {total} packages.")
+        self.sig.detail.emit(f"✓ Removed {len(packages)} packages.")
 
     def _step_delete_jobs(self):
         dirs = [
@@ -542,6 +591,18 @@ class UninstallWizard(QMainWindow):
                 self.sig.detail.emit(f"⚠ Could not delete database: {e}")
         else:
             self.sig.detail.emit("No database found.")
+
+    def _step_delete_whisper_models(self):
+        wm_dir = self.root / "whisper_models"
+        if wm_dir.exists():
+            try:
+                shutil.rmtree(wm_dir)
+                log.info("Whisper model cache deleted")
+                self.sig.detail.emit("✓ Whisper model cache deleted.")
+            except Exception as e:
+                self.sig.detail.emit(f"⚠ Could not delete whisper_models: {e}")
+        else:
+            self.sig.detail.emit("No Whisper model cache found.")
 
     def _step_remove_ffmpeg(self):
         # Remove from assets folder
@@ -644,14 +705,28 @@ class UninstallWizard(QMainWindow):
             self.sig.detail.emit(f"⚠ Python uninstall error: {e}")
 
     def _step_cleanup(self):
-        # Remove Apollova.bat if it exists
+        # Apollova.bat
         bat = self.root / "Apollova.bat"
         if bat.exists():
             try:
                 bat.unlink()
             except Exception:
                 pass
-        # Remove desktop shortcut
+
+        # __pycache__ folders (bytecode left over from running the app)
+        for pc in self.assets_dir.rglob("__pycache__"):
+            shutil.rmtree(pc, ignore_errors=True)
+
+        # Invalidate the launcher's 24h integrity-check cache so a fresh
+        # install isn't silently skipped by the old cached result
+        last_check = self.assets_dir / "logs" / "last_check.json"
+        if last_check.exists():
+            try:
+                last_check.unlink()
+            except Exception:
+                pass
+
+        # Desktop shortcut
         try:
             import winreg
             key     = winreg.OpenKey(
@@ -665,6 +740,7 @@ class UninstallWizard(QMainWindow):
                 self.sig.detail.emit("✓ Desktop shortcut removed.")
         except Exception:
             pass
+
         self.sig.detail.emit("✓ Cleanup complete.")
 
     # ─────────────────────────────────────────────────────────────────────────

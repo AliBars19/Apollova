@@ -5,6 +5,7 @@ PyQt6 GUI Application - No tkinter, no Tcl/Tk dependency
 """
 
 import os
+import re
 import sys
 import json
 import shutil
@@ -280,6 +281,10 @@ QScrollBar::handle:vertical:hover { background: #89b4fa; }
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 """
 
+
+# ── Validation patterns ───────────────────────────────────────────────────────
+_VALID_YT   = re.compile(r'(?:youtube\.com/watch\?.*v=|youtu\.be/)([A-Za-z0-9_-]{11})')
+_VALID_TIME = re.compile(r'^\d{1,2}:\d{2}$')
 
 # ── Worker signals (thread → UI) ──────────────────────────────────────────────
 class WorkerSignals(QObject):
@@ -897,34 +902,31 @@ class AppolovaApp(QMainWindow):
             QMessageBox.critical(self, "Missing Info", "Song title is required.")
             return
 
+        # If the URL field is empty but the song is cached, use the cached URL
         cached = self.song_db.get_song(title)
-        if not url and not cached:
-            QMessageBox.critical(self, "Missing Info",
-                "YouTube URL is required for songs not in the database.")
+        effective_url = url or (cached['youtube_url'] if cached else "")
+
+        errors = self._validate_song_record(effective_url, start, end)
+        if errors:
+            QMessageBox.critical(self, "Invalid Job Data",
+                "Fix the following before adding this job to the queue:\n\n• " +
+                "\n• ".join(errors))
             return
 
-        try:
-            sp = start.split(':'); ep = end.split(':')
-            if len(sp) != 2 or len(ep) != 2:
-                raise ValueError
-            if int(sp[0]) * 60 + int(sp[1]) >= int(ep[0]) * 60 + int(ep[1]):
-                QMessageBox.critical(self, "Invalid Time", "End time must be after start time.")
-                return
-        except ValueError:
-            QMessageBox.critical(self, "Invalid Time", "Use MM:SS format (e.g. 00:30).")
-            return
-
-        self._job_queue.append({'title': title, 'url': url, 'start': start, 'end': end})
+        self._job_queue.append(
+            {'title': title, 'url': effective_url, 'start': start, 'end': end})
         self._rebuild_queue_list()
         self._update_queue_counter()
         self._update_generate_btn_state()
 
-        # Clear fields for next entry
+        # Clear fields and highlights for next entry
         self.title_edit.clear()
         self.url_edit.clear()
         self.start_edit.setText("00:00")
         self.end_edit.setText("01:01")
         self.db_match_label.setText("")
+        for f in (self.url_edit, self.start_edit, self.end_edit):
+            self._highlight_field(f, False)
 
     def _remove_from_queue(self):
         row = self.queue_list.currentRow()
@@ -994,21 +996,102 @@ class AppolovaApp(QMainWindow):
             _set_label_style(self.smart_stats_label, "error")
             self.smart_stats_label.setText(f"❌ Error: {e}")
 
+    # ── Field validation helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _highlight_field(field, has_error: bool):
+        """Apply or clear a red border on an input field."""
+        if has_error:
+            field.setStyleSheet(
+                "border: 1px solid #f38ba8; border-radius: 4px;")
+        else:
+            field.setStyleSheet("")  # revert to global app stylesheet
+
+    def _validate_song_record(self, url, start, end):
+        """
+        Validate a song's core database fields.
+        Returns a list of human-readable error strings (empty = all valid).
+        """
+        errors = []
+
+        # ── URL ──
+        if not url or not url.strip():
+            errors.append("YouTube URL is missing")
+        elif url.strip().lower() == "unknown":
+            errors.append(
+                "YouTube URL is set to 'unknown' — this song was never "
+                "given a real YouTube link")
+        elif not _VALID_YT.search(url):
+            errors.append(
+                f"YouTube URL is not a valid YouTube watch link: '{url[:70]}'")
+
+        # ── Times ──
+        def _parse(val, label):
+            if not val or not val.strip():
+                errors.append(f"{label} is missing")
+                return None
+            if not _VALID_TIME.match(val.strip()):
+                errors.append(
+                    f"{label} '{val}' is not in MM:SS format (e.g. 00:30)")
+                return None
+            try:
+                m, s = val.strip().split(':')
+                return int(m) * 60 + int(s)
+            except ValueError:
+                errors.append(
+                    f"{label} '{val}' contains non-numeric characters")
+                return None
+
+        s_sec = _parse(start, "Start time")
+        e_sec = _parse(end,   "End time")
+        if s_sec is not None and e_sec is not None and s_sec >= e_sec:
+            errors.append(
+                f"Start time ({start}) must be before end time ({end})")
+
+        return errors
+
     # ── Database check ────────────────────────────────────────────────────────
 
     def _check_database(self):
         title = self.title_edit.text().strip()
         if len(title) < 3:
             self.db_match_label.setText("")
+            for f in (self.url_edit, self.start_edit, self.end_edit):
+                self._highlight_field(f, False)
             return
         cached = self.song_db.get_song(title)
         if cached:
-            _set_label_style(self.db_match_label, "success")
-            self.db_match_label.setText("✓ Found in database! URL and timestamps loaded.")
-            self.url_edit.setText(cached['youtube_url'])
-            self.start_edit.setText(cached['start_time'])
-            self.end_edit.setText(cached['end_time'])
+            url   = cached['youtube_url'] or ""
+            start = cached['start_time']  or ""
+            end   = cached['end_time']    or ""
+            self.url_edit.setText(url)
+            self.start_edit.setText(start)
+            self.end_edit.setText(end)
+
+            errors = self._validate_song_record(url, start, end)
+
+            # Highlight each field individually so the user knows exactly what to fix
+            self._highlight_field(self.url_edit,
+                                  any("URL" in e for e in errors))
+            self._highlight_field(self.start_edit,
+                                  any("Start" in e for e in errors))
+            self._highlight_field(self.end_edit,
+                                  any("End" in e or "end time" in e.lower()
+                                      for e in errors))
+
+            if errors:
+                _set_label_style(self.db_match_label, "error")
+                self.db_match_label.setText(
+                    "⚠ Found in database but has invalid data — "
+                    "fix the highlighted field(s):  " +
+                    "  |  ".join(errors))
+            else:
+                _set_label_style(self.db_match_label, "success")
+                self.db_match_label.setText(
+                    "✓ Found in database! URL and timestamps loaded.")
         else:
+            for f in (self.url_edit, self.start_edit, self.end_edit):
+                self._highlight_field(f, False)
             matches = self.song_db.search_songs(title)
             if matches:
                 _set_label_style(self.db_match_label, "warning")
@@ -1378,6 +1461,26 @@ class AppolovaApp(QMainWindow):
                     num_songs=int(self.jobs_combo.currentText()))
                 if not songs:
                     errors.append("No songs available in database.")
+                else:
+                    # Validate every song upfront before a single job starts
+                    bad = []
+                    for s in songs:
+                        song_errors = self._validate_song_record(
+                            s['youtube_url'], s['start_time'], s['end_time'])
+                        if song_errors:
+                            bad.append((s['song_title'], song_errors))
+                    if bad:
+                        lines = [
+                            f"{len(bad)} of the {len(songs)} selected song(s) "
+                            f"have invalid data and cannot be processed:\n"]
+                        for song_title, errs in bad:
+                            lines.append(f"• {song_title}:")
+                            for e in errs:
+                                lines.append(f"    – {e}")
+                        lines.append(
+                            "\nFix these entries in your database "
+                            "(Settings → Database Editor) before generating.")
+                        errors.append("\n".join(lines))
         else:
             n = int(self.jobs_combo.currentText())
             if len(self._job_queue) < n:
@@ -1385,7 +1488,7 @@ class AppolovaApp(QMainWindow):
                     f"Queue has {len(self._job_queue)} / {n} jobs. "
                     "Add all jobs before generating.")
         if errors:
-            QMessageBox.critical(self, "Validation Error", "\n".join(errors))
+            QMessageBox.critical(self, "Validation Error", "\n\n".join(errors))
             return False
         return True
 

@@ -206,24 +206,58 @@ QLineEdit:focus { border: 1px solid #89b4fa; }
 QPushButton {
     background: #313244;
     border: 1px solid #45475a;
-    border-radius: 5px;
-    padding: 7px 16px;
+    border-radius: 6px;
+    padding: 7px 18px;
     color: #cdd6f4;
+    min-height: 28px;
 }
-QPushButton:hover { background: #45475a; border-color: #89b4fa; }
-QPushButton:pressed { background: #89b4fa; color: #1e1e2e; }
-QPushButton:disabled { background: #1e1e2e; color: #585b70; border-color: #313244; }
+QPushButton:hover { background: #3a3d5c; border-color: #89b4fa; color: #cdd6f4; }
+QPushButton:pressed { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
+QPushButton:disabled { background: #1e1e2e; color: #45475a; border-color: #2a2a3c; }
 QPushButton#primary {
     background: #89b4fa;
     color: #1e1e2e;
     font-weight: bold;
     font-size: 14px;
-    padding: 10px 24px;
+    padding: 9px 26px;
+    border: none;
+    border-radius: 6px;
+    min-height: 34px;
 }
-QPushButton#primary:hover { background: #b4befe; }
-QPushButton#primary:disabled { background: #313244; color: #585b70; }
-QPushButton#danger { background: #f38ba8; color: #1e1e2e; }
-QPushButton#danger:hover { background: #eba0ac; }
+QPushButton#primary:hover { background: #b4befe; border: none; }
+QPushButton#primary:pressed { background: #cdd6f4; border: none; }
+QPushButton#primary:disabled { background: #2a2f45; color: #45475a; border: 1px solid #313244; }
+QPushButton#accent {
+    background: #1a2540;
+    color: #89b4fa;
+    border: 1px solid #4a6fa5;
+    border-radius: 6px;
+    padding: 7px 18px;
+    min-height: 28px;
+}
+QPushButton#accent:hover { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
+QPushButton#accent:pressed { background: #b4befe; color: #1e1e2e; }
+QPushButton#accent:disabled { background: #1e1e2e; color: #45475a; border-color: #2a2a3c; }
+QPushButton#danger {
+    background: #2e1520;
+    color: #f38ba8;
+    border: 1px solid #6b2d3e;
+    border-radius: 6px;
+    padding: 7px 18px;
+    min-height: 28px;
+}
+QPushButton#danger:hover { background: #f38ba8; color: #1e1e2e; border-color: #f38ba8; }
+QPushButton#danger:pressed { background: #eba0ac; color: #1e1e2e; }
+QPushButton#muted {
+    background: #1e1e2e;
+    color: #6c7086;
+    border: 1px solid #313244;
+    border-radius: 6px;
+    padding: 7px 18px;
+    min-height: 28px;
+}
+QPushButton#muted:hover { background: #313244; color: #a6adc8; border-color: #45475a; }
+QPushButton#muted:pressed { background: #45475a; color: #cdd6f4; }
 QComboBox {
     background: #313244;
     border: 1px solid #45475a;
@@ -238,8 +272,15 @@ QComboBox QAbstractItemView {
     selection-background-color: #89b4fa;
     selection-color: #1e1e2e;
 }
-QRadioButton { spacing: 6px; color: #cdd6f4; }
-QRadioButton::indicator { width: 14px; height: 14px; }
+QRadioButton { spacing: 8px; color: #cdd6f4; padding: 3px 0; }
+QRadioButton::indicator {
+    width: 16px; height: 16px;
+    border-radius: 8px;
+    border: 2px solid #45475a;
+    background: #1e1e2e;
+}
+QRadioButton::indicator:hover { border-color: #89b4fa; }
+QRadioButton::indicator:checked { background: #89b4fa; border-color: #89b4fa; }
 QTextEdit {
     background: #11111b;
     border: 1px solid #313244;
@@ -522,7 +563,11 @@ class AppolovaApp(QMainWindow):
         ml.addWidget(QLabel("YouTube URL:"))
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("https://www.youtube.com/watch?v=...")
+        self.url_edit.textChanged.connect(self._on_url_changed)
         ml.addWidget(self.url_edit)
+        self.url_error_label = _label("", "error")
+        self.url_error_label.setVisible(False)
+        ml.addWidget(self.url_error_label)
         tr = QHBoxLayout()
         tr.addWidget(QLabel("Start (MM:SS):"))
         self.start_edit = QLineEdit("00:00")
@@ -538,7 +583,8 @@ class AppolovaApp(QMainWindow):
 
         # ── Add to queue button ───────────────────────────────────────────────
         add_row = QHBoxLayout()
-        self.add_job_btn = QPushButton("＋  Add Job to Queue")
+        self.add_job_btn = QPushButton("＋  Add to Queue")
+        self.add_job_btn.setObjectName("accent")
         self.add_job_btn.clicked.connect(self._add_job_to_queue)
         add_row.addWidget(self.add_job_btn)
         add_row.addStretch()
@@ -569,11 +615,13 @@ class AppolovaApp(QMainWindow):
 
         # ── Queue action buttons ──────────────────────────────────────────────
         q_btn_row = QHBoxLayout()
-        self.remove_job_btn = QPushButton("Remove Selected")
+        self.remove_job_btn = QPushButton("✕  Remove Selected")
+        self.remove_job_btn.setObjectName("muted")
         self.remove_job_btn.setEnabled(False)
         self.remove_job_btn.clicked.connect(self._remove_from_queue)
         q_btn_row.addWidget(self.remove_job_btn)
-        self.clear_queue_btn = QPushButton("Clear Queue")
+        self.clear_queue_btn = QPushButton("🗑  Clear Queue")
+        self.clear_queue_btn.setObjectName("danger")
         self.clear_queue_btn.setEnabled(False)
         self.clear_queue_btn.clicked.connect(self._clear_queue)
         q_btn_row.addWidget(self.clear_queue_btn)
@@ -657,11 +705,12 @@ class AppolovaApp(QMainWindow):
         self.generate_btn.clicked.connect(self._start_generation)
         self.generate_btn.setEnabled(False)   # enabled when queue is full (manual) or always (smart)
         btn_row.addWidget(self.generate_btn)
-        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn = QPushButton("✕  Cancel")
+        self.cancel_btn.setObjectName("muted")
         self.cancel_btn.setEnabled(False)
         self.cancel_btn.clicked.connect(self._cancel_generation)
         btn_row.addWidget(self.cancel_btn)
-        open_btn = QPushButton("Open Jobs Folder")
+        open_btn = QPushButton("📂  Open Jobs Folder")
         open_btn.clicked.connect(self._open_jobs_folder)
         btn_row.addWidget(open_btn)
         btn_row.addStretch()
@@ -715,7 +764,8 @@ class AppolovaApp(QMainWindow):
         self.inject_ae_label       = status_row("After Effects:")
 
         ref_row = QHBoxLayout()
-        ref_btn = QPushButton("Refresh Status")
+        ref_btn = QPushButton("🔄  Refresh Status")
+        ref_btn.setObjectName("muted")
         ref_btn.clicked.connect(self._update_inject_status)
         ref_row.addWidget(ref_btn)
         ref_row.addStretch()
@@ -758,7 +808,8 @@ class AppolovaApp(QMainWindow):
         self.render_all_btn.setObjectName("primary")
         self.render_all_btn.clicked.connect(self._start_batch_render)
         bb_row.addWidget(self.render_all_btn)
-        self.batch_cancel_btn = QPushButton("Cancel")
+        self.batch_cancel_btn = QPushButton("✕  Cancel")
+        self.batch_cancel_btn.setObjectName("muted")
         self.batch_cancel_btn.setEnabled(False)
         self.batch_cancel_btn.clicked.connect(self._cancel_batch_render)
         bb_row.addWidget(self.batch_cancel_btn)
@@ -796,7 +847,7 @@ class AppolovaApp(QMainWindow):
         browse_btn = QPushButton("Browse...")
         browse_btn.clicked.connect(self._browse_ae_path)
         ae_row.addWidget(browse_btn)
-        detect_btn = QPushButton("Auto-Detect")
+        detect_btn = QPushButton("🔍  Auto-Detect")
         detect_btn.clicked.connect(self._auto_detect_ae_click)
         ae_row.addWidget(detect_btn)
         ae_lay.addLayout(ae_row)
@@ -941,6 +992,14 @@ class AppolovaApp(QMainWindow):
     def _clear_queue(self):
         if not self._job_queue:
             return
+        reply = QMessageBox.question(
+            self, "Clear Queue",
+            f"Are you sure you want to delete all {len(self._job_queue)} job(s) from the queue?\n\nThis cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         self._job_queue.clear()
         self._rebuild_queue_list()
         self._update_queue_counter()
@@ -1007,6 +1066,16 @@ class AppolovaApp(QMainWindow):
                 "border: 1px solid #f38ba8; border-radius: 4px;")
         else:
             field.setStyleSheet("")  # revert to global app stylesheet
+
+    def _on_url_changed(self, text):
+        url = text.strip()
+        if url and not _VALID_YT.search(url):
+            self._highlight_field(self.url_edit, True)
+            self.url_error_label.setText("⚠  This is not a valid YouTube URL")
+            self.url_error_label.setVisible(True)
+        else:
+            self._highlight_field(self.url_edit, False)
+            self.url_error_label.setVisible(False)
 
     def _validate_song_record(self, url, start, end):
         """

@@ -1,0 +1,9 @@
+Okay so on YRs computer there were issues downloading packages openai-whisper & stable-ts.
+These packages were fixed in dev env but i wasnt too sure about them working outside it and i was proven correct
+these two packages dont work and im gna find out if its the last thing i do
+
+Second of all when launching apollova.exe we was getting issues that apollova_license module was not found.
+I thought that all of the python files were compiled inside the .exe and that we could just ship it on its own 
+but i dont think the license part was included so we gotta fix that too. 
+
+most importantly make sure apollova.exe works by itself.

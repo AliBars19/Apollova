@@ -47,6 +47,11 @@ var TEMPLATE_PATH = "{{TEMPLATE_PATH}}";
 var AUTO_RENDER = "{{AUTO_RENDER}}";
 
 // -----------------------------
+// LYRIC FORMATTING CONSTANTS
+// -----------------------------
+var MAX_CHARS_PER_LINE = 30;  // Wrap to 2 lines above this char count (matches Mono/Onyx behaviour)
+
+// -----------------------------
 // MAIN
 // -----------------------------
 function main() {
@@ -93,11 +98,6 @@ function main() {
         if (files && files.length > 0) {
             jsonFiles.push(files[0]);
         }
-    }
-    
-    if (jsonFiles.length === 0) {
-        alert("No job_data.json files found inside subfolders of " + jobsFolder.fsName);
-        return;
     }
     
     if (jsonFiles.length === 0) {
@@ -291,12 +291,19 @@ function readTextFile(p) {
 
 function parseLyricsFile(p) {
     var raw = readTextFile(p);
-    var data = JSON.parse(raw);
+    if (!raw || raw.replace(/^\s+|\s+$/g, "").length === 0) {
+        $.writeln(" parseLyricsFile: empty file at " + p);
+        return { linesArray: [], tAndText: [] };
+    }
 
-    for (var i = 0; i < data.length; i++) {
-        if (data[i].lyric_current) {
-            data[i].lyric_current = data[i].lyric_current.replace(/\r/g, "\r");
-        }
+    // Strip UTF-8 BOM if present
+    raw = raw.replace(/^\uFEFF/, "");
+
+    var data;
+    try { data = JSON.parse(raw); }
+    catch (e) {
+        $.writeln(" parseLyricsFile: JSON parse error — " + e.toString());
+        return { linesArray: [], tAndText: [] };
     }
 
     var linesArray = [], tAndText = [];
@@ -305,8 +312,16 @@ function parseLyricsFile(p) {
         var cur = String(data[i].lyric_current || data[i].cur || "");
         var t   = Number(data[i].t || 0);
 
-        // Python already chunked to ~25 chars and assigned timestamps.
-        // Do NOT split again here.
+        // Normalise line endings: \r\n → \r, bare \n → \r
+        // AE text layers use \r as the line-break character inside expressions.
+        cur = cur.replace(/\r\n/g, "\r").replace(/\n/g, "\r");
+
+        // Apply word-wrap if Python did not already insert a line break.
+        // wrapTwoLines() is a no-op when cur is short enough.
+        if (cur.indexOf("\r") === -1) {
+            cur = wrapTwoLines(cur, MAX_CHARS_PER_LINE);
+        }
+
         linesArray.push(cur);
         tAndText.push({ t: t, cur: cur });
     }
@@ -461,28 +476,6 @@ function addToRenderQueue(comp, jobFolder, jobId, songTitle) {
 }
 
 
-function splitLongLines(line, maxLen) {
-    if (!line || typeof line !== "string") return [];
-    var words = line.split(" ");
-    var lines = [];
-    var buffer = ""; // renamed from 'current' to avoid global shadowing issues
-
-    for (var i = 0; i < words.length; i++) {
-        var w = String(words[i]);
-        if ((buffer + w).length > maxLen) {
-            lines.push(buffer.replace(/^\s+|\s+$/g, "")); // manual trim
-            buffer = w + " ";
-        } else {
-            buffer += w + " ";
-        }
-    }
-
-    if (buffer.replace(/^\s+|\s+$/g, "").length > 0) {
-        lines.push(buffer.replace(/^\s+|\s+$/g, ""));
-    }
-
-    return lines;
-}
 
 function replaceInAllComps(compName, layerName, newItem) {
     for (var i = 1; i <= app.project.numItems; i++) {
@@ -719,16 +712,44 @@ function relinkFootageInsideOutputFolder(jobId, audioPath, coverPath) {
 }
 
 function setOutputWorkAreaToAudio(jobId, audioPath) {
-    var comp = findCompByName("OUTPUT " + jobId);
-    if (!comp) return;
+    // Get duration from the already-relinked audio layer in LYRIC FONT comp.
+    // This avoids importing and immediately removing the audio file for every job,
+    // which was happening 12× per batch and served no purpose.
+    var dur = 0;
+    try {
+        var lfc   = findCompByName("LYRIC FONT " + jobId);
+        var audio = ensureAudioLayer(lfc);
+        if (audio && audio.source && audio.source.duration) {
+            dur = audio.source.duration;
+        }
+    } catch (_) {}
 
-    var imported = app.project.importFile(new ImportOptions(new File(audioPath)));
-    var dur = imported.duration;
-    imported.remove();
+    // Fallback: import the file if the layer route failed
+    if (!dur) {
+        try {
+            var af = new File(audioPath);
+            if (af.exists) {
+                var tmp = app.project.importFile(new ImportOptions(af));
+                dur = tmp.duration;
+                tmp.remove();
+                $.writeln(" setOutputWorkAreaToAudio: used import fallback for job " + jobId);
+            }
+        } catch (e) {
+            $.writeln(" setOutputWorkAreaToAudio: could not determine duration for job " + jobId + ": " + e.toString());
+            return;
+        }
+    }
 
-    comp.duration = dur;
-    comp.workAreaStart = 0;
-    comp.workAreaDuration = dur;
+    if (!dur) { $.writeln(" setOutputWorkAreaToAudio: zero duration for job " + jobId); return; }
+
+    try {
+        var comp = findCompByName("OUTPUT " + jobId);
+        comp.duration = dur;
+        comp.workAreaStart = 0;
+        comp.workAreaDuration = dur;
+    } catch (e) {
+        $.writeln(" Could not set OUTPUT " + jobId + " duration: " + e.toString());
+    }
 }
 
 
@@ -772,38 +793,45 @@ function applyBeatSync(jobId, beatsArray) {
  
     for (var k = intensity.numKeys; k >= 1; k--) intensity.removeKey(k);
 
-    var PEAK = 75;
-    var BASE = 15;
-
+    var PEAK     = 75;   // spotlight intensity on the beat hit
+    var BASE     = 15;   // resting intensity between beats
+    var DECAY    = 0.08; // seconds to hold peak before fading (avoids jumpy single-frame flash)
 
     var oneFrame = 1 / comp.frameRate;
 
-
     for (var i = 0; i < beatsArray.length - 1; i++) {
-        var t = beatsArray[i];
+        var t     = beatsArray[i];
         var nextT = beatsArray[i + 1];
 
-
+        // 1. Instant jump to PEAK on the beat (HOLD so the hit is immediate, not eased in)
         intensity.setValueAtTime(t, PEAK);
         var kPeak = intensity.nearestKeyIndex(t);
-        intensity.setInterpolationTypeAtKey(kPeak, KeyframeInterpolationType.LINEAR);
+        intensity.setInterpolationTypeAtKey(kPeak, KeyframeInterpolationType.HOLD);
 
+        // 2. Hold the peak for DECAY seconds, then begin linear fall to BASE
+        var tDecay = Math.min(t + DECAY, nextT - oneFrame);
+        if (tDecay > t) {
+            intensity.setValueAtTime(tDecay, PEAK);
+            var kDecay = intensity.nearestKeyIndex(tDecay);
+            intensity.setInterpolationTypeAtKey(kDecay, KeyframeInterpolationType.LINEAR);
+        }
 
+        // 3. Reach BASE one frame before the next beat so the next hit always punches from low
         var tBase = nextT - oneFrame;
-        if (tBase > t) {
+        if (tBase > tDecay) {
             intensity.setValueAtTime(tBase, BASE);
             var kBase = intensity.nearestKeyIndex(tBase);
             intensity.setInterpolationTypeAtKey(kBase, KeyframeInterpolationType.LINEAR);
         }
     }
 
-
+    // Final beat — HOLD peak, no fade (song ends)
     var lastBeat = beatsArray[beatsArray.length - 1];
     intensity.setValueAtTime(lastBeat, PEAK);
     var kFinal = intensity.nearestKeyIndex(lastBeat);
-    intensity.setInterpolationTypeAtKey(kFinal, KeyframeInterpolationType.LINEAR);
+    intensity.setInterpolationTypeAtKey(kFinal, KeyframeInterpolationType.HOLD);
 
-    $.writeln(" Beat sync applied with frame-gap falloff.");
+    $.writeln(" Beat sync applied: HOLD peak (" + DECAY + "s) → linear decay to " + BASE + " per beat.");
 }
 
 function applyComplementarySpectrumColor(jobId, baseHexColor) {

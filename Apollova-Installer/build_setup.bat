@@ -71,7 +71,6 @@ echo   Apollova.exe   - Launch the main app
 echo   Uninstall.exe  - Remove Apollova
 echo ========================================
 echo.
-pause
 exit /b 0
 
 

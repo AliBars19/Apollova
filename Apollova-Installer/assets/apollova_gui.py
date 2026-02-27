@@ -12,6 +12,7 @@ import shutil
 import time
 import threading
 import tempfile
+import traceback
 import subprocess
 from pathlib import Path
 from datetime import datetime
@@ -35,6 +36,11 @@ else:
 
 BUNDLED_JSX_DIR = ASSETS_DIR / "scripts" / "JSX"
 sys.path.insert(0, str(ASSETS_DIR))
+
+try:
+    from apollova_logger import get_logger as _get_logger
+except Exception:
+    _get_logger = None
 
 # ── Safe startup: friendly GUI errors instead of raw tracebacks ───────────────
 def _show_startup_error(title, message, fix=None):
@@ -417,6 +423,14 @@ class AppolovaApp(QMainWindow):
         self.signals.batch_progress.connect(self._batch_update_progress)
         self.signals.batch_template_status.connect(self._batch_update_template_status_slot)
         self.signals.batch_finished.connect(self._batch_render_complete)
+
+        # Initialise file logger
+        try:
+            self._log = _get_logger("app") if _get_logger else None
+            if self._log:
+                self._log.session_start("Apollova GUI")
+        except Exception:
+            self._log = None
 
         self._build_ui()
 
@@ -1332,11 +1346,15 @@ class AppolovaApp(QMainWindow):
         tp  = TEMPLATE_PATHS.get(t)
         d   = JOBS_DIRS.get(t)
         jsx = JSX_SCRIPTS.get(t)
+        if self._log:
+            self._log.section(f"JSX injection — template={t.upper()}, jsx={jsx}")
         try:
             src = BUNDLED_JSX_DIR / jsx
             if not src.exists():
                 src = ASSETS_DIR / "scripts" / "JSX" / jsx
             if not src.exists():
+                if self._log:
+                    self._log.error(f"JSX script not found: {jsx}")
                 QMessageBox.critical(self, "Error",
                     f"JSX script not found: {jsx}\n\nPlease reinstall.")
                 return
@@ -1345,15 +1363,25 @@ class AppolovaApp(QMainWindow):
             dst = tmp / jsx
             shutil.copy(src, dst)
             self._prepare_jsx_with_path(dst, d, tp)
+            if self._log:
+                self._log.info(f"JSX prepared at {dst} | jobs={d} | template={tp}")
         except Exception as e:
+            tb = traceback.format_exc()
+            if self._log:
+                self._log.error(f"JSX preparation failed: {type(e).__name__}: {e}\n{tb}")
             QMessageBox.critical(self, "Error", f"Failed to prepare JSX:\n{e}")
             return
         try:
             subprocess.Popen([ae, "-r", str(dst)])
+            if self._log:
+                self._log.info(f"After Effects launched: {ae}")
             QMessageBox.information(self, "Launched",
                 f"After Effects is launching…\n\nTemplate: {tp.name}\nJobs: {d}\n\n"
                 "The script will open the project and inject the jobs.")
         except Exception as e:
+            tb = traceback.format_exc()
+            if self._log:
+                self._log.error(f"After Effects launch failed: {type(e).__name__}: {e}\n{tb}")
             QMessageBox.critical(self, "Error",
                                  f"Failed to launch After Effects:\n{e}")
 
@@ -1645,6 +1673,19 @@ class AppolovaApp(QMainWindow):
         self.cancel_requested = True
         self.signals.log.emit("Cancellation requested…")
 
+    def _run_step(self, job_number, step_name, fn, *args, **kwargs):
+        """Run a processing step. On failure, logs the full traceback to file
+        and re-raises with the step name prepended so the popup is useful."""
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            tb = traceback.format_exc()
+            if self._log:
+                self._log.error(
+                    f"[Job {job_number:03}] STEP FAILED — {step_name}\n"
+                    f"  {type(e).__name__}: {e}\n{tb}")
+            raise RuntimeError(f"[{step_name}] {type(e).__name__}: {e}") from None
+
     def _process_jobs(self):
         try:
             num   = int(self.jobs_combo.currentText())
@@ -1652,6 +1693,12 @@ class AppolovaApp(QMainWindow):
             outd  = JOBS_DIRS.get(t)
             Config.WHISPER_MODEL = self.whisper_combo.currentText()
             Config.GENIUS_API_TOKEN = self.settings.get('genius_api_token', '')
+
+            if self._log:
+                mode = "SmartPicker" if self.use_smart_picker else "Manual"
+                self._log.section(
+                    f"Job batch started — {num} job(s) | {t.upper()} | {mode} | "
+                    f"Whisper: {Config.WHISPER_MODEL}")
 
             if self.use_smart_picker:
                 self.signals.log.emit(f"🤖 Smart Picker: {num} songs | {t.upper()}")
@@ -1714,7 +1761,11 @@ class AppolovaApp(QMainWindow):
             self.signals.stats_refresh.emit()
             self.signals.finished.emit()
         except Exception as e:
+            tb = traceback.format_exc()
             self.signals.log.emit(f"❌ Error: {e}")
+            self.signals.log.emit(f"─── Traceback ───\n{tb}")
+            if self._log:
+                self._log.error(f"Job batch failed: {type(e).__name__}: {e}\n{tb}")
             self.signals.error.emit(str(e))
 
     def _on_generation_finished(self):
@@ -1744,6 +1795,13 @@ class AppolovaApp(QMainWindow):
         ts = datetime.now().strftime("%H:%M:%S")
         self.log_text.append(f"[{ts}] {msg}")
         self.status_label.setText(msg[:80])
+        if self._log:
+            if "❌" in msg or "error" in msg.lower() or "fail" in msg.lower():
+                self._log.error(msg)
+            elif "⚠" in msg or "warning" in msg.lower():
+                self._log.warning(msg)
+            else:
+                self._log.info(msg)
 
     def _refresh_stats_label(self):
         s = self.song_db.get_stats()
@@ -1775,7 +1833,7 @@ class AppolovaApp(QMainWindow):
         audio_path = job_folder / "audio_source.mp3"
         if not audio_path.exists():
             self.signals.log.emit("  Downloading audio…")
-            download_audio(youtube_url, str(job_folder))
+            self._run_step(job_number, "Audio download", download_audio, youtube_url, str(job_folder))
             self.signals.log.emit("  ✓ Audio downloaded")
         else:
             self.signals.log.emit("  ✓ Audio exists")
@@ -1785,7 +1843,7 @@ class AppolovaApp(QMainWindow):
         trimmed = job_folder / "audio_trimmed.wav"
         if not trimmed.exists():
             self.signals.log.emit(f"  Trimming ({start_time} → {end_time})…")
-            trim_audio(str(job_folder), start_time, end_time)
+            self._run_step(job_number, "Audio trim", trim_audio, str(job_folder), start_time, end_time)
             self.signals.log.emit("  ✓ Trimmed")
         else:
             self.signals.log.emit("  ✓ Trimmed audio exists")
@@ -1802,7 +1860,7 @@ class AppolovaApp(QMainWindow):
                 self.signals.log.emit("  ✓ Cached beats")
             elif not beats_path.exists():
                 self.signals.log.emit("  Detecting beats…")
-                beats = detect_beats(str(job_folder))
+                beats = self._run_step(job_number, "Beat detection", detect_beats, str(job_folder))
                 with open(beats_path, 'w') as f:
                     json.dump(beats, f, indent=4)
                 self.signals.log.emit(f"  ✓ {len(beats)} beats")
@@ -1823,7 +1881,7 @@ class AppolovaApp(QMainWindow):
             elif not lyrics_path.exists():
                 self.signals.log.emit(f"  Transcribing ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                transcribe_audio(str(job_folder), song_title)
+                self._run_step(job_number, "Whisper transcription (Aurora)", transcribe_audio, str(job_folder), song_title)
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed ({elapsed:.0f}s)")
@@ -1841,7 +1899,7 @@ class AppolovaApp(QMainWindow):
             elif not mono_path.exists():
                 self.signals.log.emit(f"  Transcribing mono ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                transcribe_audio_mono(str(job_folder), song_title)
+                self._run_step(job_number, "Whisper transcription (Mono)", transcribe_audio_mono, str(job_folder), song_title)
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed mono ({elapsed:.0f}s)")
@@ -1859,7 +1917,7 @@ class AppolovaApp(QMainWindow):
             elif not onyx_path.exists():
                 self.signals.log.emit(f"  Transcribing onyx ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                transcribe_audio_onyx(str(job_folder), song_title)
+                self._run_step(job_number, "Whisper transcription (Onyx)", transcribe_audio_onyx, str(job_folder), song_title)
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed onyx ({elapsed:.0f}s)")
@@ -1878,11 +1936,11 @@ class AppolovaApp(QMainWindow):
             if cached and cached.get('genius_image_url'):
                 if not image_path.exists():
                     self.signals.log.emit("  Downloading cached image…")
-                    download_image(str(job_folder), cached['genius_image_url'])
+                    self._run_step(job_number, "Image download", download_image, str(job_folder), cached['genius_image_url'])
                 self.signals.log.emit("  ✓ Cached image")
             elif not image_path.exists():
                 self.signals.log.emit("  Fetching cover…")
-                ok = fetch_genius_image(song_title, str(job_folder))
+                ok = self._run_step(job_number, "Genius image fetch", fetch_genius_image, song_title, str(job_folder))
                 self.signals.log.emit("  ✓ Cover" if ok else "  ⚠ No cover")
             else:
                 self.signals.log.emit("  ✓ Cover exists")
@@ -1893,7 +1951,7 @@ class AppolovaApp(QMainWindow):
                     self.signals.log.emit("  ✓ Cached colors")
                 else:
                     self.signals.log.emit("  Extracting colors…")
-                    colors = extract_colors(str(job_folder))
+                    colors = self._run_step(job_number, "Color extraction", extract_colors, str(job_folder))
                     self.signals.log.emit(f"  ✓ Colors: {', '.join(colors)}")
 
         data_file = {

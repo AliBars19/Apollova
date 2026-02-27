@@ -361,6 +361,7 @@ class AppolovaApp(QMainWindow):
         self._job_queue             = []   # list of {title, url, start, end}
         self.is_processing          = False
         self.cancel_requested       = False
+        self._resume_mode           = False
         self.use_smart_picker       = False
         self.batch_render_active    = False
         self.batch_render_cancelled = False
@@ -1524,17 +1525,43 @@ class AppolovaApp(QMainWindow):
                 return
 
         if existing:
-            reply = QMessageBox.question(self, "Existing Jobs",
-                f"Found {len(existing)} existing jobs.\n\n"
-                "Yes = Delete and continue\nNo = Keep and continue",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No |
-                QMessageBox.StandardButton.Cancel)
-            if reply == QMessageBox.StandardButton.Cancel:
-                return
-            if reply == QMessageBox.StandardButton.Yes:
+            complete   = [j for j in existing if (j / "job_data.json").exists()]
+            incomplete = [j for j in existing if not (j / "job_data.json").exists()]
+            detail = f"Found {len(existing)} existing job(s)"
+            if complete:
+                detail += f"\n  • {len(complete)} complete"
+            if incomplete:
+                detail += f"\n  • {len(incomplete)} incomplete / failed"
+
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Existing Jobs")
+            dlg.setText("Existing jobs detected")
+            dlg.setInformativeText(
+                detail + "\n\n"
+                "Delete All  —  wipe everything and start fresh\n"
+                "Resume  —  skip completed jobs, retry the rest\n"
+                "Cancel  —  do nothing"
+            )
+            delete_btn = dlg.addButton("Delete All",
+                                       QMessageBox.ButtonRole.DestructiveRole)
+            resume_btn = dlg.addButton("Resume",
+                                       QMessageBox.ButtonRole.AcceptRole)
+            dlg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+            dlg.setDefaultButton(resume_btn)
+            dlg.exec()
+
+            clicked = dlg.clickedButton()
+            if clicked == delete_btn:
                 for j in existing:
                     shutil.rmtree(j)
+                self._resume_mode = False
                 self._check_existing_jobs()
+            elif clicked == resume_btn:
+                for j in incomplete:
+                    shutil.rmtree(j)
+                self._resume_mode = True
+            else:
+                return
 
         self.is_processing    = True
         self.cancel_requested = False
@@ -1559,21 +1586,39 @@ class AppolovaApp(QMainWindow):
 
             if self.use_smart_picker:
                 self.signals.log.emit(f"🤖 Smart Picker: {num} songs | {t.upper()}")
-                picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
-                songs  = picker.get_available_songs(num_songs=num)
+                picker   = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
                 outd.mkdir(parents=True, exist_ok=True)
-                for idx, s in enumerate(songs, 1):
+
+                start_idx = 1
+                if self._resume_mode:
+                    done = [j for j in outd.glob("job_*")
+                            if (j / "job_data.json").exists()]
+                    start_idx = len(done) + 1
+                    remaining = num - len(done)
+                    if remaining <= 0:
+                        self.signals.log.emit("All jobs already complete — nothing to do.")
+                        self.signals.finished.emit()
+                        return
+                    self.signals.log.emit(
+                        f"  Resuming from job {start_idx} "
+                        f"({len(done)} already complete, {remaining} remaining)")
+                    songs = picker.get_available_songs(num_songs=remaining)
+                else:
+                    songs = picker.get_available_songs(num_songs=num)
+
+                for i, s in enumerate(songs):
+                    idx = start_idx + i
                     if self.cancel_requested:
                         raise Exception("Cancelled by user")
                     self.signals.log.emit(
-                        f"\n{'='*40}\n📀 Job {idx}/{len(songs)}: {s['song_title'][:40]}")
+                        f"\n{'='*40}\n📀 Job {idx}/{num}: {s['song_title'][:40]}")
                     self._process_single_song(
                         idx, s['song_title'], s['youtube_url'],
                         s['start_time'], s['end_time'], t, outd)
                     picker.mark_song_used(s['song_title'])
-                    self.signals.progress.emit(idx / len(songs) * 100)
+                    self.signals.progress.emit(idx / num * 100)
                 self.signals.log.emit(
-                    f"\n{'='*40}\n🎉 SUCCESS! {len(songs)} job(s) created!\n📂 {outd}\n"
+                    f"\n{'='*40}\n🎉 SUCCESS! {num} job(s) created!\n📂 {outd}\n"
                     "Next: Go to JSX Injection tab")
             else:
                 total = len(self._job_queue)
@@ -1582,6 +1627,11 @@ class AppolovaApp(QMainWindow):
                 for idx, job in enumerate(self._job_queue, 1):
                     if self.cancel_requested:
                         raise Exception("Cancelled by user")
+                    if self._resume_mode and (outd / f"job_{idx:03}" / "job_data.json").exists():
+                        self.signals.log.emit(
+                            f"\n{'='*40}\n⏭ Job {idx}/{total}: {job['title'][:40]} — skipping (complete)")
+                        self.signals.progress.emit(idx / total * 100)
+                        continue
                     self.signals.log.emit(
                         f"\n{'='*40}\n📀 Job {idx}/{total}: {job['title'][:40]}")
                     self._process_single_song(
@@ -1599,7 +1649,8 @@ class AppolovaApp(QMainWindow):
             self.signals.error.emit(str(e))
 
     def _on_generation_finished(self):
-        self.is_processing = False
+        self.is_processing  = False
+        self._resume_mode   = False
         self._job_queue.clear()
         self._rebuild_queue_list()
         self._update_queue_counter()
@@ -1613,6 +1664,7 @@ class AppolovaApp(QMainWindow):
 
     def _on_generation_error(self, msg):
         self.is_processing = False
+        self._resume_mode  = False
         self._lock_inputs(False)
         self._update_generate_btn_state()
         self.cancel_btn.setEnabled(False)

@@ -71,6 +71,12 @@ function main() {
 
     clearAllJobComps();
 
+    // Clear render queue before adding new jobs
+    for (var i = app.project.renderQueue.numItems; i >= 1; i--) {
+        try { app.project.renderQueue.item(i).remove(); } catch (e) {}
+    }
+    $.writeln("Render queue cleared.");
+
     // Use injected path or fallback to prompt
     var jobsFolder;
     if (JOBS_PATH.indexOf("{{") === -1 && JOBS_PATH !== "") {

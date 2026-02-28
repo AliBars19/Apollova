@@ -46,6 +46,12 @@ function main() {
 
     clearAllJobComps();
 
+    // Clear render queue before adding new jobs
+    for (var i = app.project.renderQueue.numItems; i >= 1; i--) {
+        try { app.project.renderQueue.item(i).remove(); } catch (e) {}
+    }
+    $.writeln("Render queue cleared.");
+
     var jobsFolder = Folder.selectDialog("Select your /jobs folder (Visuals-Mono/jobs)");
     if (!jobsFolder) return;
 

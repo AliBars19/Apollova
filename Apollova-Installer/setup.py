@@ -165,6 +165,10 @@ class SetupWizard(QMainWindow):
         self.assets_dir  = self.root / "assets"
         self.req_dir     = self.assets_dir / "requirements"
 
+        # When running as a frozen Setup.exe, extract all bundled assets to
+        # self.root before anything else so every later step finds them on disk.
+        self._extract_bundled_files()
+
         icon = self.assets_dir / "icon.ico"
         if not icon.exists():
             icon = self.root / "icon.ico"
@@ -489,16 +493,19 @@ class SetupWizard(QMainWindow):
                 ("upgrade_pip",     15, "Upgrading pip..."),
                 ("install_base",    45, "Installing packages..."),
                 ("fix_numpy",       50, "Verifying NumPy..."),
-                ("fix_torch",       70, "Installing & verifying PyTorch..."),
+                ("fix_torch",       65, "Installing & verifying PyTorch..."),
             ]
             if self.gpu_chk.isChecked():
-                steps.append(("install_gpu", 80, "Installing GPU packages..."))
+                steps.append(("install_gpu", 75, "Installing GPU packages..."))
+            # Whisper step always runs after torch — torch must exist first so
+            # pip doesn't pull in the wrong version when resolving stable-ts deps.
+            steps.append(("install_whisper", 85, "Installing Whisper..."))
             if self.ffmpeg_chk.isChecked() or not (
                     self._ffmpeg_in_path() or self._ffmpeg_in_app()):
-                steps.append(("install_ffmpeg", 85, "Installing FFmpeg..."))
+                steps.append(("install_ffmpeg", 88, "Installing FFmpeg..."))
             steps += [
-                ("verify_all",     92, "Verifying all packages..."),
-                ("verify_files",   95, "Verifying file integrity..."),
+                ("verify_all",     93, "Verifying all packages..."),
+                ("verify_files",   96, "Verifying file integrity..."),
                 ("create_files",   98, "Creating launcher files..."),
                 ("shortcut",      100, "Finishing up..."),
             ]
@@ -551,8 +558,9 @@ class SetupWizard(QMainWindow):
             "install_base":  self._step_install_base,
             "fix_numpy":     self._step_fix_numpy,
             "fix_torch":     self._step_fix_torch,
-            "install_gpu":   self._step_install_gpu,
-            "install_ffmpeg":self._step_install_ffmpeg,
+            "install_gpu":     self._step_install_gpu,
+            "install_whisper": self._step_install_whisper,
+            "install_ffmpeg":  self._step_install_ffmpeg,
             "verify_all":    self._step_verify_all,
             "verify_files":  self._step_verify_files,
             "create_files":  self._step_create_files,
@@ -782,6 +790,55 @@ class SetupWizard(QMainWindow):
             "  If transcription fails, install Visual C++ Redistributable:\n"
             "  https://aka.ms/vs/17/release/vc_redist.x64.exe")
         return True  # non-fatal
+
+    def _step_install_whisper(self):
+        """Install openai-whisper and stable-ts as a dedicated post-torch step.
+
+        Why separate from install_base:
+          • Both packages use old-style setup.py without PEP 517 build deps,
+            so they need --no-build-isolation or the build fails.
+          • stable-ts lists torch/torchaudio as dependencies.  Installing it
+            during install_base (before torch) causes pip to pull in the latest
+            torch instead of our pinned version — and at ~1.5 GB that also risks
+            timing out the 300 s timeout.  Installing after fix_torch means pip
+            sees torch already satisfied and skips the download entirely.
+          • stable-ts gets --no-deps so it can't touch openai-whisper or torch
+            after we've just pinned them.
+        """
+        python = self.python_path
+        flags  = self._flags()
+
+        pkgs = [
+            ("openai-whisper==20240930", ["--no-build-isolation"]),
+            ("stable-ts==2.17.4",        ["--no-build-isolation", "--no-deps"]),
+        ]
+
+        failed = []
+        for pkg_line, extra in pkgs:
+            pkg_name = pkg_line.split("==")[0]
+            self.sig.detail.emit(f"Installing {pkg_name}...")
+            self.sig.nudge.emit()
+            if "==" in pkg_line:
+                self._uninstall_if_wrong_version(python, flags, pkg_line)
+            ok = self._pip_install(python, flags, pkg_line,
+                                   extra_args=extra,
+                                   retries=3, timeout=300)
+            log.pkg_install(pkg_name, ok)
+            if not ok:
+                failed.append(pkg_name)
+
+        if failed:
+            self.sig.failed.emit(
+                "Whisper Install Failed",
+                "The following packages could not be installed:\n\n"
+                + "\n".join(f"  • {p}" for p in failed),
+                f"Please check your internet connection and try again.\n"
+                f"If this continues, contact {SUPPORT_EMAIL}"
+            )
+            return False
+
+        self.sig.detail.emit("✓ Whisper packages installed.")
+        return True
 
     def _step_install_gpu(self):
         req = self.req_dir / "requirements-gpu.txt"
@@ -1095,6 +1152,42 @@ class SetupWizard(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
     #  Helpers
     # ─────────────────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    #  Bundled-asset extraction (frozen exe only)
+    # ─────────────────────────────────────────────────────────────────────────
+    def _extract_bundled_files(self):
+        """When running as a frozen Setup.exe, extract the bundled assets/
+        directory from sys._MEIPASS to self.root so that all later steps
+        (file checks, pip install reading requirements-base.txt, etc.) work
+        exactly as if the folder structure was already on disk.
+
+        This is what lets us ship just the three bare .exe files — Setup.exe
+        carries every Python script and requirements file inside itself.
+        """
+        if not getattr(sys, "frozen", False):
+            return
+        meipass = Path(getattr(sys, "_MEIPASS", ""))
+        bundled = meipass / "assets"
+        if not bundled.exists():
+            return
+        dest = self.root / "assets"
+        extracted = 0
+        for src_file in bundled.rglob("*"):
+            if src_file.is_file():
+                rel = src_file.relative_to(bundled)
+                dst_file = dest / rel
+                dst_file.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.copy2(src_file, dst_file)
+                    extracted += 1
+                except Exception:
+                    pass
+        if extracted:
+            try:
+                log.info(f"Extracted {extracted} bundled asset files to {dest}")
+            except Exception:
+                pass
+
     def _flags(self):
         return subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 

@@ -1636,7 +1636,7 @@ class AppolovaApp(QMainWindow):
             dlg.setInformativeText(
                 detail + "\n\n"
                 "Delete All  —  wipe everything and start fresh\n"
-                "Resume  —  skip completed jobs, retry the rest\n"
+                "Resume  —  skip completed and failed jobs, continue from where left off\n"
                 "Cancel  —  do nothing"
             )
             delete_btn = dlg.addButton("Delete All",
@@ -1654,8 +1654,6 @@ class AppolovaApp(QMainWindow):
                 self._resume_mode = False
                 self._check_existing_jobs()
             elif clicked == resume_btn:
-                for j in incomplete:
-                    shutil.rmtree(j)
                 self._resume_mode = True
             else:
                 return
@@ -1707,55 +1705,82 @@ class AppolovaApp(QMainWindow):
 
                 start_idx = 1
                 if self._resume_mode:
-                    done = [j for j in outd.glob("job_*")
-                            if (j / "job_data.json").exists()]
-                    start_idx = len(done) + 1
-                    remaining = num - len(done)
+                    all_existing = list(outd.glob("job_*"))
+                    done = [j for j in all_existing if (j / "job_data.json").exists()]
+                    failed = [j for j in all_existing if not (j / "job_data.json").exists()]
+                    start_idx = len(all_existing) + 1
+                    remaining = num - len(all_existing)
                     if remaining <= 0:
                         self.signals.log.emit("All jobs already complete — nothing to do.")
                         self.signals.finished.emit()
                         return
                     self.signals.log.emit(
                         f"  Resuming from job {start_idx} "
-                        f"({len(done)} already complete, {remaining} remaining)")
+                        f"({len(done)} complete, {len(failed)} failed/skipped, {remaining} remaining)")
                     songs = picker.get_available_songs(num_songs=remaining)
                 else:
                     songs = picker.get_available_songs(num_songs=num)
 
+                skipped = []
                 for i, s in enumerate(songs):
                     idx = start_idx + i
                     if self.cancel_requested:
                         raise Exception("Cancelled by user")
                     self.signals.log.emit(
                         f"\n{'='*40}\n📀 Job {idx}/{num}: {s['song_title'][:40]}")
-                    self._process_single_song(
-                        idx, s['song_title'], s['youtube_url'],
-                        s['start_time'], s['end_time'], t, outd)
-                    picker.mark_song_used(s['song_title'])
+                    try:
+                        self._process_single_song(
+                            idx, s['song_title'], s['youtube_url'],
+                            s['start_time'], s['end_time'], t, outd)
+                        picker.mark_song_used(s['song_title'])
+                    except Exception as song_err:
+                        if "Cancelled" in str(song_err):
+                            raise
+                        self.signals.log.emit(
+                            f"  ⚠ Skipping song — {song_err}")
+                        skipped.append(s['song_title'])
                     self.signals.progress.emit(idx / num * 100)
+                completed = len(songs) - len(skipped)
+                skip_note = (f"\n⚠ {len(skipped)} song(s) skipped: "
+                             + ", ".join(skipped)) if skipped else ""
                 self.signals.log.emit(
-                    f"\n{'='*40}\n🎉 SUCCESS! {num} job(s) created!\n📂 {outd}\n"
+                    f"\n{'='*40}\n🎉 Done! {completed}/{num} job(s) created!{skip_note}\n📂 {outd}\n"
                     "Next: Go to JSX Injection tab")
             else:
                 total = len(self._job_queue)
                 self.signals.log.emit(f"Starting {total} queued job(s) | {t.upper()}")
                 outd.mkdir(parents=True, exist_ok=True)
+                skipped = []
                 for idx, job in enumerate(self._job_queue, 1):
                     if self.cancel_requested:
                         raise Exception("Cancelled by user")
-                    if self._resume_mode and (outd / f"job_{idx:03}" / "job_data.json").exists():
+                    if self._resume_mode and (outd / f"job_{idx:03}").exists():
+                        job_folder_status = (
+                            "complete" if (outd / f"job_{idx:03}" / "job_data.json").exists()
+                            else "previously failed — skipping"
+                        )
                         self.signals.log.emit(
-                            f"\n{'='*40}\n⏭ Job {idx}/{total}: {job['title'][:40]} — skipping (complete)")
+                            f"\n{'='*40}\n⏭ Job {idx}/{total}: {job['title'][:40]} — {job_folder_status}")
                         self.signals.progress.emit(idx / total * 100)
                         continue
                     self.signals.log.emit(
                         f"\n{'='*40}\n📀 Job {idx}/{total}: {job['title'][:40]}")
-                    self._process_single_song(
-                        idx, job['title'], job['url'],
-                        job['start'], job['end'], t, outd)
+                    try:
+                        self._process_single_song(
+                            idx, job['title'], job['url'],
+                            job['start'], job['end'], t, outd)
+                    except Exception as song_err:
+                        if "Cancelled" in str(song_err):
+                            raise
+                        self.signals.log.emit(
+                            f"  ⚠ Skipping song — {song_err}")
+                        skipped.append(job['title'])
                     self.signals.progress.emit(idx / total * 100)
+                completed = total - len(skipped)
+                skip_note = (f"\n⚠ {len(skipped)} song(s) skipped: "
+                             + ", ".join(skipped)) if skipped else ""
                 self.signals.log.emit(
-                    f"\n{'='*40}\n🎉 SUCCESS! {total} job(s) created!\n📂 {outd}\n"
+                    f"\n{'='*40}\n🎉 Done! {completed}/{total} job(s) created!{skip_note}\n📂 {outd}\n"
                     "Next: Go to JSX Injection tab")
 
             self.signals.stats_refresh.emit()
@@ -1872,6 +1897,7 @@ class AppolovaApp(QMainWindow):
         # Transcribe (per-template)
         chk()
         lyrics_path = job_folder / "lyrics.txt"
+        lyrics_was_transcribed = False
         if template == 'aurora':
             if cached and cached.get('transcribed_lyrics'):
                 with open(lyrics_path, 'w', encoding='utf-8') as f:
@@ -1885,6 +1911,7 @@ class AppolovaApp(QMainWindow):
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed ({elapsed:.0f}s)")
+                lyrics_was_transcribed = True
             else:
                 self.signals.log.emit("  ✓ Lyrics exist")
             lyrics_data = lyrics_path.read_text() if lyrics_path.exists() else ""
@@ -1903,6 +1930,7 @@ class AppolovaApp(QMainWindow):
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed mono ({elapsed:.0f}s)")
+                lyrics_was_transcribed = True
             else:
                 self.signals.log.emit("  ✓ Mono data exists")
             lyrics_data = mono_path.read_text() if mono_path.exists() else "{}"
@@ -1921,6 +1949,7 @@ class AppolovaApp(QMainWindow):
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed onyx ({elapsed:.0f}s)")
+                lyrics_was_transcribed = True
             else:
                 self.signals.log.emit("  ✓ Onyx data exists")
             lyrics_data = onyx_path.read_text() if onyx_path.exists() else "{}"
@@ -1980,13 +2009,15 @@ class AppolovaApp(QMainWindow):
                 genius_image_url=None, colors=colors, beats=beats)
         elif cached and not self.use_smart_picker:
             self.song_db.mark_song_used(song_title)
-        if not self.use_smart_picker:
+        if lyrics_was_transcribed:
             if template == 'aurora':
                 self.song_db.update_lyrics(song_title, lyrics_data)
             elif template == 'mono':
                 self.song_db.update_mono_lyrics(song_title, lyrics_data)
             elif template == 'onyx':
                 self.song_db.update_onyx_lyrics(song_title, lyrics_data)
+            if self.use_smart_picker:
+                self.signals.log.emit("  ✓ Lyrics cached to database")
 
         self.signals.log.emit(f"  ✓ Job {job_number} complete")
         return (job_data, job_folder) if return_data else None

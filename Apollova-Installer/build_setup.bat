@@ -40,6 +40,12 @@ echo Verifying source files...
 if not exist "%SCRIPT_DIR%setup.py"            ( echo ERROR: setup.py not found in %SCRIPT_DIR% & pause & exit /b 1 )
 if not exist "%SCRIPT_DIR%apollova_launcher.py" ( echo ERROR: apollova_launcher.py not found & pause & exit /b 1 )
 if not exist "%SCRIPT_DIR%uninstall_gui.py"     ( echo ERROR: uninstall_gui.py not found & pause & exit /b 1 )
+if not exist "%SCRIPT_DIR%assets\apollova_secrets.py" (
+    echo ERROR: assets\apollova_secrets.py not found.
+    echo Create it from assets\apollova_secrets.example.py before building.
+    pause
+    exit /b 1
+)
 echo All source files present.
 echo.
 
@@ -48,12 +54,25 @@ rmdir /s /q build_temp 2>nul
 del /q "%SCRIPT_DIR%Setup.exe" "%SCRIPT_DIR%Apollova.exe" "%SCRIPT_DIR%Uninstall.exe" 2>nul
 echo.
 
-REM Helper macro - build one exe
-REM Usage: call :build_exe <script> <name>
-
-call :build_exe "%SCRIPT_DIR%setup.py" "Setup"
+REM ── Setup.exe ─────────────────────────────────────────────────────────────
+REM Bundles the entire assets/ folder (Python scripts, JSX files, requirements)
+REM so Setup.exe can be shipped as a standalone exe with no folder alongside it.
+REM On first run it extracts those files next to itself before installing.
+echo [Building Setup.exe — with bundled assets]
+set "VER_FLAG="
+if exist "%VERSION_FILE%" set "VER_FLAG=--version-file "%VERSION_FILE%""
+if exist "%ICON_PATH%" (
+    %PY% -m PyInstaller --onefile --windowed --name "Setup" --icon "%ICON_PATH%" %VER_FLAG% --collect-all PyQt6 --add-data "%SCRIPT_DIR%assets;assets" --distpath "%SCRIPT_DIR%." --workpath "%SCRIPT_DIR%build_temp" --specpath "%SCRIPT_DIR%build_temp" --clean "%SCRIPT_DIR%setup.py"
+) else (
+    %PY% -m PyInstaller --onefile --windowed --name "Setup" %VER_FLAG% --collect-all PyQt6 --add-data "%SCRIPT_DIR%assets;assets" --distpath "%SCRIPT_DIR%." --workpath "%SCRIPT_DIR%build_temp" --specpath "%SCRIPT_DIR%build_temp" --clean "%SCRIPT_DIR%setup.py"
+)
 if not exist "%SCRIPT_DIR%Setup.exe" ( echo FAILED: Setup.exe & pause & exit /b 1 )
+echo Setup.exe done.
+echo.
 
+REM ── Apollova.exe + Uninstall.exe ──────────────────────────────────────────
+REM These are thin launchers — they don't bundle assets because Setup.exe
+REM extracts everything to disk first.  The generic subroutine handles them.
 call :build_exe "%SCRIPT_DIR%apollova_launcher.py" "Apollova"
 if not exist "%SCRIPT_DIR%Apollova.exe" ( echo FAILED: Apollova.exe & pause & exit /b 1 )
 
@@ -66,7 +85,7 @@ echo.
 echo ========================================
 echo   All 3 executables built successfully!
 echo.
-echo   Setup.exe      - First-time installer
+echo   Setup.exe      - Self-contained installer (ships alone)
 echo   Apollova.exe   - Launch the main app
 echo   Uninstall.exe  - Remove Apollova
 echo ========================================

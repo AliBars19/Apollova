@@ -6,9 +6,9 @@ yt-dlp
 pydub==0.25.1
 librosa==0.10.2
 
-# Transcription (torch installed separately by setup)
-openai-whisper==20240930
-stable-ts==2.17.4
+# Transcription — openai-whisper and stable-ts are installed in a dedicated
+# step AFTER torch so pip never pulls in the wrong torch version during base
+# install.  See _step_install_whisper() in setup.py.
 
 # Lyrics
 lyricsgenius==3.0.1

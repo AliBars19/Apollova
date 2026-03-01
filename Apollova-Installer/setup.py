@@ -1171,10 +1171,20 @@ class SetupWizard(QMainWindow):
         if not bundled.exists():
             return
         dest = self.root / "assets"
+        # Directories that must never be extracted:
+        #   logs/        — contains last_check.json with "passed: true" from the
+        #                  build machine; extracting it would cause Apollova.exe
+        #                  to skip ALL integrity checks for 24 h on the customer's
+        #                  machine because _checks_cache_valid() trusts that file.
+        #   __pycache__  — dev-machine bytecode, not needed on customer machine.
+        _SKIP_DIRS = {"logs", "__pycache__"}
+
         extracted = 0
         for src_file in bundled.rglob("*"):
             if src_file.is_file():
                 rel = src_file.relative_to(bundled)
+                if any(part in _SKIP_DIRS for part in rel.parts):
+                    continue
                 dst_file = dest / rel
                 dst_file.parent.mkdir(parents=True, exist_ok=True)
                 try:

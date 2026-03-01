@@ -1708,7 +1708,9 @@ class AppolovaApp(QMainWindow):
                     all_existing = list(outd.glob("job_*"))
                     done = [j for j in all_existing if (j / "job_data.json").exists()]
                     failed = [j for j in all_existing if not (j / "job_data.json").exists()]
-                    start_idx = len(all_existing) + 1
+                    nums = [int(j.name.split("_")[1]) for j in all_existing
+                            if j.name.startswith("job_") and j.name.split("_")[1].isdigit()]
+                    start_idx = (max(nums) + 1) if nums else 1
                     remaining = num - len(all_existing)
                     if remaining <= 0:
                         self.signals.log.emit("All jobs already complete — nothing to do.")
@@ -1734,7 +1736,7 @@ class AppolovaApp(QMainWindow):
                             s['start_time'], s['end_time'], t, outd)
                         picker.mark_song_used(s['song_title'])
                     except Exception as song_err:
-                        if "Cancelled" in str(song_err):
+                        if str(song_err) == "Cancelled by user":
                             raise
                         self.signals.log.emit(
                             f"  ⚠ Skipping song — {song_err}")
@@ -1770,7 +1772,7 @@ class AppolovaApp(QMainWindow):
                             idx, job['title'], job['url'],
                             job['start'], job['end'], t, outd)
                     except Exception as song_err:
-                        if "Cancelled" in str(song_err):
+                        if str(song_err) == "Cancelled by user":
                             raise
                         self.signals.log.emit(
                             f"  ⚠ Skipping song — {song_err}")

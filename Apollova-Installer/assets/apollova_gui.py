@@ -656,9 +656,17 @@ class AppolovaApp(QMainWindow):
         sl.addWidget(desc_lbl)
         self.smart_stats_label = QLabel("Loading stats...")
         sl.addWidget(self.smart_stats_label)
+        sp_btn_row = QHBoxLayout()
         ref_btn = QPushButton("🔄 Refresh Stats")
         ref_btn.clicked.connect(self._refresh_smart_picker_stats)
-        sl.addWidget(ref_btn)
+        sp_btn_row.addWidget(ref_btn)
+        self.reshuffle_btn = QPushButton("🔀 Reshuffle Songs")
+        self.reshuffle_btn.setObjectName("accent")
+        self.reshuffle_btn.setToolTip("Pick a different random selection from the same priority pool")
+        self.reshuffle_btn.clicked.connect(self._reshuffle_songs)
+        sp_btn_row.addWidget(self.reshuffle_btn)
+        sp_btn_row.addStretch()
+        sl.addLayout(sp_btn_row)
         sl.addWidget(QLabel("Next songs to be selected:"))
         self.smart_listbox = QListWidget()
         self.smart_listbox.setMinimumHeight(150)
@@ -1056,6 +1064,34 @@ class AppolovaApp(QMainWindow):
 
             num_jobs = int(self.jobs_combo.currentText())
             songs    = picker.get_available_songs(num_songs=num_jobs)
+            self.smart_listbox.clear()
+            for i, s in enumerate(songs, 1):
+                tag = "🆕 new" if s['use_count'] == 1 else f"📊 {s['use_count']}x"
+                self.smart_listbox.addItem(
+                    f"{i:2}. {s['song_title'][:45]:<45} ({tag})")
+            if len(songs) < num_jobs:
+                self.smart_warning_label.setText(
+                    f"⚠️ Only {len(songs)} songs available, {num_jobs} requested.")
+            else:
+                self.smart_warning_label.setText("")
+        except Exception as e:
+            _set_label_style(self.smart_stats_label, "error")
+            self.smart_stats_label.setText(f"❌ Error: {e}")
+
+    def _reshuffle_songs(self):
+        """Re-pick songs with randomization within each use_count tier."""
+        try:
+            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            stats  = picker.get_database_stats()
+            if stats['total_songs'] == 0:
+                return
+
+            self.smart_stats_label.setText(
+                f"📊 Total: {stats['total_songs']} | Unused: {stats['unused_songs']} | "
+                f"Uses: {stats['min_uses']}–{stats['max_uses']} (avg {stats['avg_uses']})")
+
+            num_jobs = int(self.jobs_combo.currentText())
+            songs    = picker.get_available_songs(num_songs=num_jobs, shuffle=True)
             self.smart_listbox.clear()
             for i, s in enumerate(songs, 1):
                 tag = "🆕 new" if s['use_count'] == 1 else f"📊 {s['use_count']}x"
@@ -1593,7 +1629,7 @@ class AppolovaApp(QMainWindow):
     def _lock_inputs(self, lock):
         for w in [self.title_edit, self.url_edit, self.start_edit,
                   self.end_edit, self.jobs_combo, self.whisper_combo,
-                  self.add_job_btn]:
+                  self.add_job_btn, self.reshuffle_btn]:
             w.setEnabled(not lock)
         for btn in self.job_tpl_group.buttons():
             btn.setEnabled(not lock)
@@ -1610,7 +1646,7 @@ class AppolovaApp(QMainWindow):
         if self.use_smart_picker:
             num  = int(self.jobs_combo.currentText())
             picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
-            songs  = picker.get_available_songs(num_songs=num)
+            songs  = picker.get_available_songs(num_songs=num, shuffle=True)
             sl = "\n".join(
                 [f"  {i+1}. {s['song_title'][:40]}" for i, s in enumerate(songs[:12])])
             if len(songs) > 12:
@@ -1719,9 +1755,9 @@ class AppolovaApp(QMainWindow):
                     self.signals.log.emit(
                         f"  Resuming from job {start_idx} "
                         f"({len(done)} complete, {len(failed)} failed/skipped, {remaining} remaining)")
-                    songs = picker.get_available_songs(num_songs=remaining)
+                    songs = picker.get_available_songs(num_songs=remaining, shuffle=True)
                 else:
-                    songs = picker.get_available_songs(num_songs=num)
+                    songs = picker.get_available_songs(num_songs=num, shuffle=True)
 
                 skipped = []
                 for i, s in enumerate(songs):
@@ -1805,6 +1841,8 @@ class AppolovaApp(QMainWindow):
         self._update_generate_btn_state()
         self.cancel_btn.setEnabled(False)
         self._check_existing_jobs()
+        if self.use_smart_picker:
+            self._refresh_smart_picker_stats()
         QMessageBox.information(self, "Complete!",
             f"Jobs created for {self._job_template().upper()}!\n\n"
             "Go to JSX Injection tab to inject into After Effects.")

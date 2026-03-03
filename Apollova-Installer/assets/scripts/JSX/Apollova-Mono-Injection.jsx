@@ -95,49 +95,52 @@ function main() {
     var jsonFiles = [];
     
     for (var i = 0; i < subfolders.length; i++) {
-        // Look for mono_data.json in each job folder
-        var files = subfolders[i].getFiles("mono_data.json");
+        // Look for job_data.json in each job folder
+        var files = subfolders[i].getFiles("job_data.json");
         if (files && files.length > 0) {
             jsonFiles.push(files[0]);
         }
     }
-    
+
     if (jsonFiles.length === 0) {
-        alert("No mono_data.json files found inside subfolders of " + jobsFolder.fsName);
+        alert("No job_data.json files found inside subfolders of " + jobsFolder.fsName);
         return;
     }
 
     for (var j = 0; j < jsonFiles.length; j++) {
-        var monoFile = jsonFiles[j];
-        if (!monoFile.exists || !monoFile.open("r")) continue;
-        var monoText = monoFile.read();
-        monoFile.close();
-        if (!monoText) continue;
+        var jobFile = jsonFiles[j];
+        if (!jobFile.exists || !jobFile.open("r")) continue;
+        var jobText = jobFile.read();
+        jobFile.close();
+        if (!jobText) continue;
 
-        var monoData;
-        try { monoData = JSON.parse(monoText); }
+        var jobData;
+        try { jobData = JSON.parse(jobText); }
         catch (e) {
-            $.writeln("Error parsing " + monoFile.name + ": " + e.toString());
-            writeErrorLog("JSON parse error: " + monoFile.name + " — " + e.toString());
+            $.writeln("Error parsing " + jobFile.name + ": " + e.toString());
+            writeErrorLog("JSON parse error: " + jobFile.name + " — " + e.toString());
             continue;
         }
 
-        // Also read job_data.json for paths and metadata
-        var jobFolder = monoFile.parent;
-        var jobDataFile = new File(jobFolder.fsName + "/job_data.json");
-        var jobData = {};
-        
-        if (jobDataFile.exists && jobDataFile.open("r")) {
-            var jobDataText = jobDataFile.read();
-            jobDataFile.close();
-            try { jobData = JSON.parse(jobDataText); }
-            catch (e) { $.writeln("Could not parse job_data.json"); }
+        var jobFolder = jobFile.parent;
+
+        // Read mono markers from the lyrics_file referenced in job_data.json
+        var monoData = {};
+        var lyricsPath = jobData.lyrics_file
+            ? toAbsolute(jobData.lyrics_file)
+            : (jobFolder.fsName + "/mono_data.json");
+        var lyricsFile = new File(lyricsPath);
+        if (lyricsFile.exists && lyricsFile.open("r")) {
+            var lyricsText = lyricsFile.read();
+            lyricsFile.close();
+            try { monoData = JSON.parse(lyricsText); }
+            catch (e) { $.writeln("Could not parse lyrics file: " + lyricsPath); }
         }
 
         // Convert paths to absolute
         jobData.audio_trimmed = toAbsolute(jobData.audio_trimmed || (jobFolder.fsName + "/audio_trimmed.wav"));
         jobData.job_folder = jobFolder.fsName.replace(/\\/g, "/");
-        
+
         // For mono, we may or may not have cover image (optional)
         var hasCoverImage = false;
         if (jobData.cover_image) {

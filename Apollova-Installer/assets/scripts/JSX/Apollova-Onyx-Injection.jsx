@@ -95,52 +95,53 @@ function main() {
     var jsonFiles = [];
     
     for (var i = 0; i < subfolders.length; i++) {
-        // Look for onyx_data.json in each job folder
-        var files = subfolders[i].getFiles("onyx_data.json");
+        // Look for job_data.json in each job folder
+        var files = subfolders[i].getFiles("job_data.json");
         if (files && files.length > 0) {
             jsonFiles.push(files[0]);
         }
     }
-    
+
     if (jsonFiles.length === 0) {
-        alert("No onyx_data.json files found inside subfolders of " + jobsFolder.fsName);
+        alert("No job_data.json files found inside subfolders of " + jobsFolder.fsName);
         return;
     }
 
     for (var j = 0; j < jsonFiles.length; j++) {
-        var onyxFile = jsonFiles[j];
-        if (!onyxFile.exists || !onyxFile.open("r")) continue;
-        var onyxText = onyxFile.read();
-        onyxFile.close();
-        if (!onyxText) continue;
+        var jobFile = jsonFiles[j];
+        if (!jobFile.exists || !jobFile.open("r")) continue;
+        var jobText = jobFile.read();
+        jobFile.close();
+        if (!jobText) continue;
 
-        var onyxData;
-        try { onyxData = JSON.parse(onyxText); }
+        var jobData;
+        try { jobData = JSON.parse(jobText); }
         catch (e) {
-            $.writeln("Error parsing " + onyxFile.name + ": " + e.toString());
-            writeErrorLog("JSON parse error: " + onyxFile.name + " — " + e.toString());
+            $.writeln("Error parsing " + jobFile.name + ": " + e.toString());
+            writeErrorLog("JSON parse error: " + jobFile.name + " — " + e.toString());
             continue;
         }
 
-        // Get job folder from actual file location (reliable)
-        var jobFolder = onyxFile.parent;
-        
-        // Also read job_data.json for paths and metadata
-        var jobDataFile = new File(jobFolder.fsName + "/job_data.json");
-        var jobData = {};
-        
-        if (jobDataFile.exists && jobDataFile.open("r")) {
-            var jobDataText = jobDataFile.read();
-            jobDataFile.close();
-            try { jobData = JSON.parse(jobDataText); }
-            catch (e) { $.writeln("Could not parse job_data.json"); }
+        var jobFolder = jobFile.parent;
+
+        // Read onyx markers from the lyrics_file referenced in job_data.json
+        var onyxData = {};
+        var lyricsPath = jobData.lyrics_file
+            ? toAbsolute(jobData.lyrics_file)
+            : (jobFolder.fsName + "/onyx_data.json");
+        var lyricsFile = new File(lyricsPath);
+        if (lyricsFile.exists && lyricsFile.open("r")) {
+            var lyricsText = lyricsFile.read();
+            lyricsFile.close();
+            try { onyxData = JSON.parse(lyricsText); }
+            catch (e) { $.writeln("Could not parse lyrics file: " + lyricsPath); }
         }
 
         // Convert paths to absolute WITH FALLBACKS
         jobData.audio_trimmed = toAbsolute(jobData.audio_trimmed) || (jobFolder.fsName + "/audio_trimmed.wav");
         jobData.cover_image = toAbsolute(jobData.cover_image) || (jobFolder.fsName + "/cover.jpg");
         jobData.job_folder = jobFolder.fsName.replace(/\\/g, "/");
-        
+
         var jobId = jobData.job_id || (j + 1);
         var songTitle = jobData.song_title || "Unknown";
         var markers = onyxData.markers || [];

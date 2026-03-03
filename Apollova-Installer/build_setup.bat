@@ -5,12 +5,28 @@ echo   Setup.exe + Apollova.exe + Uninstall.exe
 echo ========================================
 echo.
 
-set PY=py -3.11
+REM ── Auto-detect Python: use PY_CMD env var, or try py -3.11, then python
+if defined PY_CMD (
+    set PY=%PY_CMD%
+) else (
+    py -3.11 --version >nul 2>&1
+    if not errorlevel 1 (
+        set PY=py -3.11
+    ) else (
+        python --version >nul 2>&1
+        if not errorlevel 1 (
+            set PY=python
+        ) else (
+            echo ERROR: Python not found. Install Python 3.11+ or set PY_CMD.
+            pause
+            exit /b 1
+        )
+    )
+)
 
 %PY% --version >nul 2>&1
 if errorlevel 1 (
-    echo ERROR: Python 3.11 not found.
-    echo Install from: https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe
+    echo ERROR: Python not working with: %PY%
     pause
     exit /b 1
 )

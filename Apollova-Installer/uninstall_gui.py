@@ -137,7 +137,7 @@ class UninstallWizard(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Apollova Uninstaller")
+        self.setWindowTitle("Apollova Uninstaller v1.0.0")
         self.resize(580, 700)
         self.setMinimumSize(520, 580)
         self.setMaximumWidth(720)

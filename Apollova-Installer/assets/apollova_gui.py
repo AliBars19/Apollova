@@ -57,6 +57,7 @@ else:
     BASE_DIR   = ASSETS_DIR.parent
 
 BUNDLED_JSX_DIR = ASSETS_DIR / "scripts" / "JSX"
+APP_VERSION = "1.0.0"
 sys.path.insert(0, str(ASSETS_DIR))
 
 try:
@@ -410,7 +411,7 @@ class AppolovaApp(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Apollova - Lyric Video Generator")
+        self.setWindowTitle(f"Apollova v{APP_VERSION} - Lyric Video Generator")
         self.resize(960, 800)
         self.setMinimumSize(800, 600)
 

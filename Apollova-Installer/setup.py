@@ -165,7 +165,7 @@ class SetupWizard(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Apollova Setup")
+        self.setWindowTitle("Apollova Setup v1.0.0")
         self.resize(580, 680)
         self.setMinimumSize(520, 560)
         self.setMaximumWidth(720)

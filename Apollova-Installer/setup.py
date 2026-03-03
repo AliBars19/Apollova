@@ -444,6 +444,18 @@ class SetupWizard(QMainWindow):
         else:
             self.close()
 
+    def closeEvent(self, event):
+        """Clean up lock file and log session on window close."""
+        self.cancelled = True
+        lockfile = getattr(self, "_lockfile", None)
+        if lockfile and lockfile.exists():
+            try:
+                lockfile.unlink()
+            except Exception:
+                pass
+        log.session_end("Setup", success=not self.installing)
+        event.accept()
+
     def _start_install(self):
         if self.installing:
             return

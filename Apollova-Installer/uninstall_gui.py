@@ -439,6 +439,12 @@ class UninstallWizard(QMainWindow):
         else:
             self.close()
 
+    def closeEvent(self, event):
+        """Signal cancel and log session end on window close."""
+        self.cancelled = True
+        log.session_end("Uninstaller", success=not self.uninstalling)
+        event.accept()
+
     def _start_uninstall(self):
         if self.uninstalling:
             return

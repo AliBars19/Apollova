@@ -1684,6 +1684,22 @@ class AppolovaApp(QMainWindow):
         self.remove_job_btn.setEnabled(False)
         self.clear_queue_btn.setEnabled(not lock and bool(self._job_queue))
 
+    # ── Window close cleanup ──────────────────────────────────────────────────
+
+    def closeEvent(self, event):
+        """Cancel running operations and free GPU memory on window close."""
+        self.cancel_requested = True
+        self.batch_render_cancelled = True
+        try:
+            from scripts.whisper_common import unload_model
+            unload_model()
+        except Exception:
+            pass
+        if self._log:
+            self._log.session_end("Apollova GUI",
+                                  success=not self.is_processing)
+        event.accept()
+
     def _start_generation(self):
         if not self._validate_inputs():
             return

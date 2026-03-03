@@ -1352,13 +1352,20 @@ class SetupWizard(QMainWindow):
 
     def _check_internet(self):
         for host, port in INTERNET_HOSTS:
+            s = None
             try:
-                socket.setdefaulttimeout(4)
-                socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect(
-                    (host, port))
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(4)
+                s.connect((host, port))
                 return True
             except Exception:
                 continue
+            finally:
+                if s is not None:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
         return False
 
     def _find_python(self):

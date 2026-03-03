@@ -79,7 +79,9 @@ function main() {
 
     // Clear render queue before adding new jobs
     for (var i = app.project.renderQueue.numItems; i >= 1; i--) {
-        try { app.project.renderQueue.item(i).remove(); } catch (e) {}
+        try { app.project.renderQueue.item(i).remove(); } catch (e) {
+            $.writeln("Could not remove render queue item " + i + ": " + e.toString());
+        }
     }
     $.writeln("Render queue cleared.");
 
@@ -120,7 +122,18 @@ function main() {
 
         var jobData;
         try { jobData = JSON.parse(jsonText); }
-        catch (e) { alert("Error parsing " + jobFile.name + ": " + e.toString()); continue; }
+        catch (e) {
+            $.writeln("Error parsing " + jobFile.name + ": " + e.toString());
+            writeErrorLog("JSON parse error: " + jobFile.name + " — " + e.toString());
+            continue;
+        }
+
+        // Validate required JSON fields
+        if (!jobData.job_id || !jobData.song_title) {
+            $.writeln("Skipping " + jobFile.name + ": missing job_id or song_title");
+            writeErrorLog("Missing job_id/song_title in " + jobFile.name);
+            continue;
+        }
 
         // Get job folder from the json file location (reliable)
         var jobFolder = jobFile.parent;
@@ -135,8 +148,16 @@ function main() {
 
         var audioFile = new File(jobData.audio_trimmed);
         var imageFile = new File(jobData.cover_image);
-        if (!audioFile.exists) { alert(" Missing audio:\n" + jobData.audio_trimmed); continue; }
-        if (!imageFile.exists) { alert(" Missing image:\n" + jobData.cover_image); continue; }
+        if (!audioFile.exists) {
+            $.writeln("Missing audio: " + jobData.audio_trimmed);
+            writeErrorLog("Missing audio for job " + jobData.job_id + ": " + jobData.audio_trimmed);
+            continue;
+        }
+        if (!imageFile.exists) {
+            $.writeln("Missing image: " + jobData.cover_image);
+            writeErrorLog("Missing image for job " + jobData.job_id + ": " + jobData.cover_image);
+            continue;
+        }
 
         // Duplicate MAIN
         var template = findCompByName("MAIN");
@@ -217,7 +238,7 @@ function main() {
         }
         app.quit();
     } else {
-        alert(" All jobs queued. Review in Render Queue, then click Render.");
+        $.writeln("All jobs queued. Review in Render Queue, then click Render.");
     }
 }
 
@@ -225,8 +246,8 @@ function main() {
 function writeErrorLog(message) {
     if (JOBS_PATH.indexOf("{{") === -1 && JOBS_PATH !== "") {
         var errorFile = new File(JOBS_PATH + "/batch_error.txt");
-        errorFile.open("w");
-        errorFile.write(message);
+        errorFile.open("a");
+        errorFile.writeln("[" + new Date().toLocaleString() + "] " + message);
         errorFile.close();
     }
 }
@@ -318,12 +339,16 @@ function parseLyricsFile(p) {
         var cur = String(data[i].lyric_current || data[i].cur || "");
         var t   = Number(data[i].t || 0);
 
-        // Normalise line endings: \r\n → \r, bare \n → \r
-        // AE text layers use \r as the line-break character inside expressions.
+        // CRITICAL: Python writes line breaks as literal "\r" (backslash + r) in the JSON.
+        // After JSON.parse these are the two characters \ and r, NOT a carriage-return byte.
+        // Convert them to real CR bytes so AE expressions interpret them as line breaks.
+        // Also strip the spaces Python puts around the \r: "first \r second" → "first\rsecond"
+        cur = cur.replace(/ *\\r */g, "\r");
+
+        // Normalise any remaining line endings: \r\n → \r, bare \n → \r
         cur = cur.replace(/\r\n/g, "\r").replace(/\n/g, "\r");
 
-        // Apply word-wrap if Python did not already insert a line break.
-        // wrapTwoLines() is a no-op when cur is short enough.
+        // Apply word-wrap only if Python did not already insert a line break.
         if (cur.indexOf("\r") === -1) {
             cur = wrapTwoLines(cur, MAX_CHARS_PER_LINE);
         }
@@ -357,14 +382,18 @@ function wrapTwoLines(s, limit) {
 function escapeLyricForExpression(l) {
     if (!l) return "";
 
-    // 1. Escape backslashes FIRST
-    l = l.replace(/\\/g, "\\\\");    
+    // 1. Escape backslashes FIRST (so we don't double-escape later insertions)
+    l = l.replace(/\\/g, "\\\\");
 
     // 2. Escape quotes
-    l = l.replace(/"/g, '\\"');      
+    l = l.replace(/"/g, '\\"');
 
     // 3. Convert actual carriage-return characters to the literal sequence "\r"
+    //    AE expression engine interprets \r inside a string as a line break.
     l = l.replace(/\r/g, "\\r");
+
+    // 4. Safety: catch any stray newlines that survived normalisation
+    l = l.replace(/\n/g, "\\n");
 
     return l;
 }
@@ -443,7 +472,10 @@ function setAudioMarkersFromTArray(lyricComp, tAndText) {
     var lastT = 0;
     for (var k = 0; k < tAndText.length; k++) {
         var t = Number(tAndText[k].t) || 0;
+        // Flatten CR/LF for marker display — markers are for timing only,
+        // the expression reads lyrics[] by index, not from marker text.
         var name = String(tAndText[k].cur || ("LYRIC_" + (k + 1)));
+        name = name.replace(/[\r\n]/g, " ");
         try {
             mk.setValueAtTime(t, new MarkerValue(name));
             if (t > lastT) lastT = t;
@@ -470,8 +502,12 @@ function addToRenderQueue(comp, jobFolder, jobId, songTitle) {
         var outFile = new File(outPath);
 
         var rq = app.project.renderQueue.items.add(comp);
-        try { rq.applyTemplate("Best Settings"); } catch (e) {}
-        try { rq.outputModule(1).applyTemplate("H.264"); } catch (e) {}
+        try { rq.applyTemplate("Best Settings"); } catch (e) {
+            $.writeln("Could not apply 'Best Settings' template: " + e.toString());
+        }
+        try { rq.outputModule(1).applyTemplate("H.264"); } catch (e) {
+            $.writeln("Could not apply 'H.264' output template: " + e.toString());
+        }
         rq.outputModule(1).file = outFile;
 
         return outPath;
@@ -534,8 +570,10 @@ function autoResizeCoverInOutput(jobId) {
         var lyr = comp.layer(i);
         if (!(lyr instanceof AVLayer)) continue;
 
+        if (!lyr.source) continue;
+
         var isCover = (lyr.name.toUpperCase() === "COVER") ||
-                      (lyr.source && lyr.source.name.toUpperCase() === "COVER");
+                      (lyr.source.name && lyr.source.name.toUpperCase() === "COVER");
         if (!isCover) continue;
 
         var lw = lyr.source.width;

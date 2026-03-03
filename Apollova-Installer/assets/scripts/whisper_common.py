@@ -42,6 +42,14 @@ _cached_model = None
 _cached_on_cpu = None
 
 
+def get_device_info():
+    """Return string describing which device Whisper will use."""
+    if HAS_TORCH and torch.cuda.is_available():
+        name = torch.cuda.get_device_name(0)
+        return f"GPU ({name})"
+    return "CPU"
+
+
 def load_whisper_model(force_cpu=False):
     """Load Whisper model with caching — skip reload if same config."""
     global _cached_model, _cached_on_cpu
@@ -56,11 +64,12 @@ def load_whisper_model(force_cpu=False):
 
     os.makedirs(Config.WHISPER_CACHE_DIR, exist_ok=True)
 
+    device = get_device_info()
     if force_cpu and HAS_TORCH:
         original_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
         try:
-            print(f"  Loading {Config.WHISPER_MODEL} on CPU...")
+            print(f"  Loading {Config.WHISPER_MODEL} on CPU (forced)...")
             _cached_model = load_model(
                 Config.WHISPER_MODEL,
                 download_root=Config.WHISPER_CACHE_DIR,
@@ -72,7 +81,7 @@ def load_whisper_model(force_cpu=False):
             else:
                 os.environ.pop("CUDA_VISIBLE_DEVICES", None)
     else:
-        print(f"  Loading {Config.WHISPER_MODEL}...")
+        print(f"  Loading {Config.WHISPER_MODEL} on {device}...")
         _cached_model = load_model(
             Config.WHISPER_MODEL,
             download_root=Config.WHISPER_CACHE_DIR,
@@ -350,6 +359,13 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
     if regroup_passes is None:
         regroup_passes = [True, True, True, True]
 
+    # Verify the actual audio file duration matches what caller reported
+    actual_dur = get_audio_duration(audio_path)
+    print(f"  🔍 Whisper input: {audio_path}")
+    print(f"  🔍 File duration: {actual_dur:.1f}s (caller reported: {duration}s)")
+    if actual_dur is not None and duration is not None and actual_dur > duration + 10:
+        print(f"  ⚠ WARNING: audio file ({actual_dur:.1f}s) much longer than expected ({duration}s)!")
+
     # #13: Graceful when duration is unknown
     if duration is not None:
         min_expected = max(2, int(duration / 3.5))
@@ -414,25 +430,37 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
     best_pass_idx = -1
     model = None
     used_cpu_fallback = False
+    import time as _time
 
     try:
         model = load_whisper_model()
+        device = get_device_info()
+        print(f"  🖥 Device: {device}")
+        batch_start = _time.time()
 
         for idx, p in enumerate(passes):
+            # Time cap: if we already have a result and spent > 120s, stop
+            elapsed_total = _time.time() - batch_start
+            if best_result is not None and elapsed_total > 120:
+                print(f"  ⏱ Time cap reached ({elapsed_total:.0f}s) — using best result from pass {best_pass_idx + 1}")
+                return best_result, best_pass_idx
+
             try:
                 clear_vram()
+                pass_start = _time.time()
                 print(f"  {p['name']}...")
                 result = model.transcribe(audio_path, **p["params"])
+                pass_time = _time.time() - pass_start
 
                 if not result or not result.segments:
-                    print(f"    \u2192 0 segments")
+                    print(f"    \u2192 0 segments ({pass_time:.0f}s)")
                     continue
 
                 count = sum(
                     1 for s in result.segments
                     if s.text.strip() and len(s.text.strip()) > 1
                 )
-                print(f"    \u2192 {count} segments")
+                print(f"    \u2192 {count} segments ({pass_time:.0f}s)")
 
                 # #3: Weighted score
                 weighted = count * p["weight"]
@@ -446,6 +474,11 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 if count >= threshold:
                     print(f"    \u2713 Sufficient ({count} \u2265 {threshold} expected)")
                     return result, idx
+
+                # After pass 2: if we have ANY result, accept it
+                if idx >= 1 and best_result is not None:
+                    print(f"    \u2713 Accepting best after {idx + 1} passes (score {best_score:.1f})")
+                    return best_result, best_pass_idx
 
             except RuntimeError as e:
                 if "CUDA out of memory" in str(e) and not used_cpu_fallback:

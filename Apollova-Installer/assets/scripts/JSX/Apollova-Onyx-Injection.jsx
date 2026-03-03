@@ -73,7 +73,9 @@ function main() {
 
     // Clear render queue before adding new jobs
     for (var i = app.project.renderQueue.numItems; i >= 1; i--) {
-        try { app.project.renderQueue.item(i).remove(); } catch (e) {}
+        try { app.project.renderQueue.item(i).remove(); } catch (e) {
+            $.writeln("Could not remove render queue item " + i + ": " + e.toString());
+        }
     }
     $.writeln("Render queue cleared.");
 
@@ -114,7 +116,11 @@ function main() {
 
         var onyxData;
         try { onyxData = JSON.parse(onyxText); }
-        catch (e) { alert("Error parsing " + onyxFile.name + ": " + e.toString()); continue; }
+        catch (e) {
+            $.writeln("Error parsing " + onyxFile.name + ": " + e.toString());
+            writeErrorLog("JSON parse error: " + onyxFile.name + " — " + e.toString());
+            continue;
+        }
 
         // Get job folder from actual file location (reliable)
         var jobFolder = onyxFile.parent;
@@ -147,12 +153,14 @@ function main() {
         var audioFile = new File(jobData.audio_trimmed);
         var coverFile = new File(jobData.cover_image);
         
-        if (!audioFile.exists) { 
-            alert("Missing audio:\n" + jobData.audio_trimmed); 
-            continue; 
+        if (!audioFile.exists) {
+            $.writeln("Missing audio: " + jobData.audio_trimmed);
+            writeErrorLog("Missing audio for job " + jobId + ": " + jobData.audio_trimmed);
+            continue;
         }
         if (!coverFile.exists) {
-            alert("Missing cover image:\n" + jobData.cover_image);
+            $.writeln("Missing cover image: " + jobData.cover_image);
+            writeErrorLog("Missing cover for job " + jobId + ": " + jobData.cover_image);
             continue;
         }
 
@@ -233,7 +241,7 @@ function main() {
         }
         app.quit();
     } else {
-        alert("ONYX batch processing complete!\n\nReview in Render Queue, then click Render.");
+        $.writeln("ONYX batch processing complete. Review in Render Queue, then click Render.");
     }
 }
 
@@ -241,8 +249,8 @@ function main() {
 function writeErrorLog(message) {
     if (JOBS_PATH.indexOf("{{") === -1 && JOBS_PATH !== "") {
         var errorFile = new File(JOBS_PATH + "/batch_error.txt");
-        errorFile.open("w");
-        errorFile.write(message);
+        errorFile.open("a");
+        errorFile.writeln("[" + new Date().toLocaleString() + "] " + message);
         errorFile.close();
     }
 }
@@ -445,17 +453,37 @@ function addGaussianBlurToLyricText(lyricText, markers) {
 
 
 function setAllCompDurations(jobId, audioPath) {
-    // Import audio to get accurate duration
-    var audioFile = new File(audioPath);
-    if (!audioFile.exists) {
-        $.writeln("Audio file not found for duration check: " + audioPath);
-        return;
+    // Get duration from the already-relinked audio layer in LYRIC FONT comp.
+    // This avoids importing and immediately removing the audio file for every job.
+    var dur = 0;
+    try {
+        var lfc   = findCompByName("LYRIC FONT " + jobId);
+        var audio = ensureAudioLayer(lfc);
+        if (audio && audio.source && audio.source.duration) {
+            dur = audio.source.duration;
+        }
+    } catch (_) {}
+
+    // Fallback: import the file if the layer route failed
+    if (!dur) {
+        var audioFile = new File(audioPath);
+        if (!audioFile.exists) {
+            $.writeln("Audio file not found for duration check: " + audioPath);
+            return;
+        }
+        try {
+            var imported = app.project.importFile(new ImportOptions(audioFile));
+            dur = imported.duration;
+            imported.remove();
+            $.writeln("setAllCompDurations: used import fallback for job " + jobId);
+        } catch (e) {
+            $.writeln("setAllCompDurations: could not determine duration for job " + jobId + ": " + e.toString());
+            return;
+        }
     }
-    
-    var imported = app.project.importFile(new ImportOptions(audioFile));
-    var dur = imported.duration;
-    imported.remove();
-    
+
+    if (!dur) { $.writeln("setAllCompDurations: zero duration for job " + jobId); return; }
+
     $.writeln("Audio duration for job " + jobId + ": " + dur + "s");
 
     // Set OUTPUT comp duration

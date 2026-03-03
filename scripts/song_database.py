@@ -97,9 +97,9 @@ class SongDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        lyrics_json = json.dumps(transcribed_lyrics) if transcribed_lyrics else None
-        colors_json = json.dumps(colors) if colors else None
-        beats_json = json.dumps(beats) if beats else None
+        lyrics_json = json.dumps(transcribed_lyrics) if transcribed_lyrics is not None else None
+        colors_json = json.dumps(colors) if colors is not None else None
+        beats_json = json.dumps(beats) if beats is not None else None
         
         cursor.execute("""
             INSERT INTO songs (song_title, youtube_url, start_time, end_time, 
@@ -145,7 +145,7 @@ class SongDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        lyrics_json = json.dumps(transcribed_lyrics) if transcribed_lyrics else None
+        lyrics_json = json.dumps(transcribed_lyrics) if transcribed_lyrics is not None else None
         
         cursor.execute("""
             UPDATE songs 
@@ -183,7 +183,7 @@ class SongDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        lyrics_json = json.dumps(mono_lyrics) if mono_lyrics else None
+        lyrics_json = json.dumps(mono_lyrics) if mono_lyrics is not None else None
         
         cursor.execute("""
             UPDATE songs 
@@ -221,7 +221,7 @@ class SongDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        lyrics_json = json.dumps(onyx_lyrics) if onyx_lyrics else None
+        lyrics_json = json.dumps(onyx_lyrics) if onyx_lyrics is not None else None
         
         cursor.execute("""
             UPDATE songs 
@@ -255,8 +255,8 @@ class SongDatabase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        colors_json = json.dumps(colors) if colors else None
-        beats_json = json.dumps(beats) if beats else None
+        colors_json = json.dumps(colors) if colors is not None else None
+        beats_json = json.dumps(beats) if beats is not None else None
         
         cursor.execute("""
             UPDATE songs 
@@ -318,6 +318,16 @@ class SongDatabase:
         conn.close()
         return deleted
     
+    def clear_all_lyrics(self):
+        """Clear all cached lyrics (Aurora, Mono, Onyx) from every song"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE songs SET transcribed_lyrics = NULL, mono_lyrics = NULL, onyx_lyrics = NULL")
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
     def get_stats(self):
         """Get database statistics"""
         conn = sqlite3.connect(self.db_path)

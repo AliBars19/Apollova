@@ -20,6 +20,7 @@ Usage:
 """
 
 import logging
+import logging.handlers
 import os
 import sys
 import platform
@@ -55,28 +56,6 @@ def _get_log_dir() -> Path:
     return log_dir
 
 
-# ── Rotation ───────────────────────────────────────────────────────────────────
-def _rotate_if_needed(log_path: Path):
-    """If log exceeds MAX_LOG_BYTES, rotate through 3 generations."""
-    try:
-        if log_path.exists() and log_path.stat().st_size > MAX_LOG_BYTES:
-            # Shift existing backups: .3→delete, .2→.3, .1→.2
-            for i in range(MAX_LOG_BACKUPS, 1, -1):
-                older = log_path.parent / f"{log_path.stem}.log.{i}"
-                newer = log_path.parent / f"{log_path.stem}.log.{i - 1}"
-                if newer.exists():
-                    if older.exists():
-                        older.unlink()
-                    newer.rename(older)
-            # Current → .1
-            backup = log_path.parent / f"{log_path.stem}.log.1"
-            if backup.exists():
-                backup.unlink()
-            log_path.rename(backup)
-    except Exception:
-        pass
-
-
 # ── Custom formatter ───────────────────────────────────────────────────────────
 class _Formatter(logging.Formatter):
     LEVEL_ICONS = {
@@ -107,9 +86,14 @@ class ApollovaLogger:
         self._logger.handlers.clear()
         self._logger.propagate = False
 
-        # File handler
+        # RotatingFileHandler — automatic rotation during long sessions
         try:
-            fh = logging.FileHandler(str(log_path), encoding="utf-8")
+            fh = logging.handlers.RotatingFileHandler(
+                str(log_path),
+                maxBytes=MAX_LOG_BYTES,
+                backupCount=MAX_LOG_BACKUPS,
+                encoding="utf-8",
+            )
             fh.setLevel(logging.DEBUG)
             fh.setFormatter(_Formatter())
             self._logger.addHandler(fh)
@@ -181,6 +165,37 @@ class ApollovaLogger:
         else:
             self.warning(msg)
 
+    def performance_summary(self, timings: dict, total_time: float = 0,
+                            device: str = ""):
+        """Log a formatted table of step timings for end-of-batch reporting.
+
+        Args:
+            timings: dict of {step_name: seconds} or {step_name: (seconds, status)}
+            total_time: overall elapsed time in seconds
+            device: GPU/CPU device string
+        """
+        lines = ["\n┌─────────────────────────────────────────────────┐",
+                 "│              PERFORMANCE SUMMARY                 │",
+                 "├──────────────────────────────┬──────┬────────────┤",
+                 "│ Step                         │ Time │ Status     │",
+                 "├──────────────────────────────┼──────┼────────────┤"]
+        for step, val in timings.items():
+            if isinstance(val, tuple):
+                secs, status = val
+            else:
+                secs, status = val, "ok"
+            lines.append(
+                f"│ {step:<28} │ {secs:>4.0f}s │ {status:<10} │")
+        lines.append("├──────────────────────────────┼──────┼────────────┤")
+        if total_time:
+            lines.append(
+                f"│ {'TOTAL':<28} │ {total_time:>4.0f}s │            │")
+        if device:
+            lines.append(
+                f"│ Device: {device:<39} │")
+        lines.append("└─────────────────────────────────────────────────┘")
+        self.info("\n".join(lines))
+
     @property
     def path(self) -> Path:
         return self._path
@@ -200,6 +215,5 @@ def get_logger(name: str) -> ApollovaLogger:
     if name not in _instances:
         log_dir  = _get_log_dir()
         log_path = log_dir / f"{name}.log"
-        _rotate_if_needed(log_path)
         _instances[name] = ApollovaLogger(name, log_path)
     return _instances[name]

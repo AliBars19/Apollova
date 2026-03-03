@@ -431,6 +431,44 @@ class SetupWizard(QMainWindow):
     def _start_install(self):
         if self.installing:
             return
+        # Concurrent setup protection
+        lockfile = self.root / "assets" / "logs" / "setup.lock"
+        if lockfile.exists():
+            try:
+                pid = int(lockfile.read_text().strip())
+                # Check if the PID is still running (Windows-only API)
+                is_running = False
+                if sys.platform == "win32":
+                    import ctypes
+                    kernel32 = ctypes.windll.kernel32
+                    handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+                    if handle:
+                        kernel32.CloseHandle(handle)
+                        is_running = True
+                else:
+                    # POSIX fallback: signal 0 checks if process exists
+                    try:
+                        os.kill(pid, 0)
+                        is_running = True
+                    except OSError:
+                        pass
+                if is_running:
+                    reply = QMessageBox.warning(self, "Setup Already Running",
+                        f"Another Setup appears to be running (PID {pid}).\n\n"
+                        "Running two installers simultaneously can cause conflicts.\n"
+                        "Continue anyway?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No)
+                    if reply != QMessageBox.StandardButton.Yes:
+                        return
+            except Exception:
+                pass  # Stale lock or check failed — continue
+        try:
+            lockfile.parent.mkdir(parents=True, exist_ok=True)
+            lockfile.write_text(str(os.getpid()))
+        except Exception:
+            pass
+        self._lockfile = lockfile
         if not self._online:
             QMessageBox.warning(self, "No Connection",
                 "An internet connection is required to install Apollova.\n\n"
@@ -482,7 +520,7 @@ class SetupWizard(QMainWindow):
             state = self._load_setup_state()
             done_steps = set(state.get("completed_steps", []))
 
-            steps = []
+            steps = [("disk_check", 2, "Checking disk space...")]
             if not self.python_path and self.py_install_chk.isChecked():
                 steps += [
                     ("dl_python",      5,  "Downloading Python..."),
@@ -548,9 +586,17 @@ class SetupWizard(QMainWindow):
             self.installing = False
             self.install_btn.setEnabled(True)
             self.cancel_btn.setText("Close")
+            # Clean up lockfile
+            try:
+                lf = getattr(self, '_lockfile', None)
+                if lf and lf.exists():
+                    lf.unlink()
+            except Exception:
+                pass
 
     def _run_step(self, step_id):
         dispatch = {
+            "disk_check":    self._step_disk_check,
             "dl_python":     self._step_dl_python,
             "inst_python":   self._step_inst_python,
             "check_internet":self._step_check_internet,
@@ -583,6 +629,28 @@ class SetupWizard(QMainWindow):
     # ─────────────────────────────────────────────────────────────────────────
     #  Steps
     # ─────────────────────────────────────────────────────────────────────────
+    def _step_disk_check(self):
+        """Require 4 GB for GPU install, 2 GB for CPU-only."""
+        required_gb = 4 if self.gpu_chk.isChecked() else 2
+        try:
+            usage = shutil.disk_usage(str(self.root))
+            free_gb = usage.free / (1024 ** 3)
+            log.info(f"Disk space: {free_gb:.1f} GB free, {required_gb} GB required")
+            if free_gb < required_gb:
+                self.sig.failed.emit(
+                    "Insufficient Disk Space",
+                    f"Apollova needs at least {required_gb} GB of free disk space.\n\n"
+                    f"Available: {free_gb:.1f} GB on {self.root.drive or self.root}",
+                    "Free up disk space and try again.\n"
+                    "GPU install requires ~4 GB, CPU-only requires ~2 GB."
+                )
+                return False
+            self.sig.detail.emit(f"✓ Disk space: {free_gb:.1f} GB free ({required_gb} GB required)")
+        except Exception as e:
+            log.warning(f"Disk space check failed: {e}")
+            self.sig.detail.emit(f"⚠ Could not check disk space: {e}")
+        return True
+
     def _step_check_internet(self):
         if not self._check_internet():
             self.sig.failed.emit(
@@ -610,6 +678,21 @@ class SetupWizard(QMainWindow):
                 r.returncode, r.stdout, r.stderr)
         except Exception as e:
             log.warning(f"pip/setuptools/wheel upgrade failed: {e}")
+
+        # Verify pip works
+        try:
+            pv = subprocess.run(
+                [python, "-m", "pip", "--version"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=flags)
+            if pv.returncode == 0:
+                log.info(f"pip version: {pv.stdout.strip()[:60]}")
+            else:
+                log.warning(f"pip --version failed: {pv.stderr[:200]}")
+                self.sig.detail.emit("⚠ pip may not be working correctly.")
+        except Exception as e:
+            log.warning(f"pip verify failed: {e}")
+
         self.sig.detail.emit("✓ pip, setuptools & wheel up to date.")
         return True
 
@@ -686,8 +769,10 @@ class SetupWizard(QMainWindow):
                 ok = self._pip_install(python, flags, "numpy==1.26.4",
                                        retries=3, timeout=180)
                 if not ok:
+                    log.error("NumPy downgrade to 1.26.4 failed")
                     self.sig.detail.emit(
-                        "⚠ NumPy downgrade failed — torch may have issues.")
+                        "⚠ NumPy downgrade failed — PyTorch and Whisper may not work.\n"
+                        "  Try manually: pip install numpy==1.26.4")
                     return True  # non-fatal, continue
             else:
                 self.sig.detail.emit(f"✓ NumPy {ver} — compatible.")
@@ -704,7 +789,7 @@ class SetupWizard(QMainWindow):
             [python, "-c",
              "import warnings; warnings.filterwarnings('ignore'); "
              "import torch; torch.tensor([1.0]); print('ok')"],
-            capture_output=True, text=True, timeout=30, creationflags=flags)
+            capture_output=True, text=True, timeout=60, creationflags=flags)
 
         if test.returncode == 0 and "ok" in test.stdout:
             ver = self._get_pkg_version(python, flags, "torch")
@@ -777,7 +862,7 @@ class SetupWizard(QMainWindow):
             [python, "-c",
              "import warnings; warnings.filterwarnings('ignore'); "
              "import torch; torch.tensor([1.0]); print('ok')"],
-            capture_output=True, text=True, timeout=30, creationflags=flags)
+            capture_output=True, text=True, timeout=60, creationflags=flags)
 
         if verify.returncode == 0 and "ok" in verify.stdout:
             log.info(f"PyTorch {TORCH_VERSION} verified working after fix")
@@ -848,6 +933,36 @@ class SetupWizard(QMainWindow):
 
         python = self.python_path
         flags  = self._flags()
+
+        # 1A: CUDA detection — check nvidia-smi before downloading 1.5GB
+        self.sig.detail.emit("Checking for NVIDIA GPU...")
+        try:
+            nv = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=flags)
+            if nv.returncode != 0 or not nv.stdout.strip():
+                log.warning("nvidia-smi failed or returned no GPU")
+                self.sig.detail.emit(
+                    "⚠ No NVIDIA GPU detected (nvidia-smi failed).\n"
+                    "  Skipping GPU install — using CPU PyTorch instead.")
+                return True
+            gpu_name = nv.stdout.strip().split("\n")[0]
+            log.info(f"NVIDIA GPU detected: {gpu_name}")
+            self.sig.detail.emit(f"GPU detected: {gpu_name}")
+        except FileNotFoundError:
+            log.warning("nvidia-smi not found — no NVIDIA driver installed")
+            self.sig.detail.emit(
+                "⚠ NVIDIA drivers not found (nvidia-smi missing).\n"
+                "  Skipping GPU install — using CPU PyTorch instead.")
+            return True
+        except Exception as e:
+            log.warning(f"GPU detection failed: {e}")
+            self.sig.detail.emit(
+                f"⚠ GPU detection failed: {e}\n"
+                "  Skipping GPU install — using CPU PyTorch instead.")
+            return True
+
         self.sig.detail.emit("Installing GPU packages (~1.5 GB)...")
 
         # Reinstall torch with CUDA
@@ -855,10 +970,13 @@ class SetupWizard(QMainWindow):
             [python, "-m", "pip", "uninstall", "torch", "torchaudio", "-y"],
             capture_output=True, timeout=60, creationflags=flags)
 
+        # 1B: No --no-deps — CUDA runtime packages (nvidia-cublas-cu12, etc.)
+        # are required for torch.cuda.is_available() to return True
         ok = self._pip_install(
             python, flags,
             f"torch=={TORCH_VERSION} torchaudio=={TORCH_VERSION}",
-            extra_args=["--index-url", TORCH_INDEX_CUDA],
+            extra_args=["--index-url", TORCH_INDEX_CUDA,
+                        "--force-reinstall"],
             retries=2, timeout=1800)
 
         if not ok:
@@ -866,7 +984,27 @@ class SetupWizard(QMainWindow):
                 "⚠ GPU packages failed — falling back to CPU PyTorch.")
             self._step_fix_torch()
         else:
-            self.sig.detail.emit("✓ GPU packages installed.")
+            # 1C: GPU verification after install
+            self.sig.detail.emit("Verifying GPU acceleration...")
+            verify = subprocess.run(
+                [python, "-c",
+                 "import warnings; warnings.filterwarnings('ignore'); "
+                 "import torch; "
+                 "avail = torch.cuda.is_available(); "
+                 "name = torch.cuda.get_device_name(0) if avail else 'none'; "
+                 "print('CUDA:' + str(avail) + ':' + name)"],
+                capture_output=True, text=True, timeout=60,
+                creationflags=flags)
+            out = verify.stdout.strip()
+            if "CUDA:True:" in out:
+                dev = out.split("CUDA:True:")[1]
+                log.info(f"GPU verified: {dev}")
+                self.sig.detail.emit(f"✓ GPU acceleration active — {dev}")
+            else:
+                log.warning(f"GPU installed but CUDA unavailable: {out}")
+                self.sig.detail.emit(
+                    "⚠ GPU packages installed but CUDA unavailable.\n"
+                    "  Whisper will use CPU. Try updating your NVIDIA drivers.")
         return True
 
     def _step_install_ffmpeg(self):
@@ -960,11 +1098,14 @@ class SetupWizard(QMainWindow):
         for import_name, friendly in packages:
             self.sig.detail.emit(f"Verifying {friendly}...")
             self.sig.nudge.emit()
+            # torch first-import can take 30-60s on slow systems
+            pkg_timeout = 60 if import_name == "torch" else 20
             r = subprocess.run(
                 [python, "-c",
                  f"import warnings; warnings.filterwarnings('ignore'); "
                  f"import {import_name}; print('ok')"],
-                capture_output=True, text=True, timeout=20, creationflags=flags)
+                capture_output=True, text=True, timeout=pkg_timeout,
+                creationflags=flags)
             if r.returncode != 0 or "ok" not in r.stdout:
                 failed.append(friendly)
 
@@ -1292,7 +1433,7 @@ class SetupWizard(QMainWindow):
     def _pip_install(self, python, flags, pkg, extra_args=None,
                      retries=3, timeout=300):
         """pip install with retry logic. Returns True on success."""
-        base_cmd = [python, "-m", "pip", "install"] + pkg.split()
+        base_cmd = [python, "-m", "pip", "install", "--no-user"] + pkg.split()
         if extra_args:
             base_cmd += extra_args
 

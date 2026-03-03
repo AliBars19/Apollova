@@ -11,29 +11,42 @@ Priority system:
 import sqlite3
 import random
 from datetime import datetime
+from itertools import groupby
 
 
 class SmartSongPicker:
     """Intelligently picks songs from database based on usage patterns"""
-    
+
     def __init__(self, db_path="database/songs.db"):
         self.db_path = db_path
-    
-    def get_available_songs(self, num_songs=12):
-        """Get songs prioritized by fair rotation"""
+
+    def get_available_songs(self, num_songs=12, shuffle=False):
+        """
+        Get songs prioritized by:
+        1. Never used songs first (use_count = 1)
+        2. Then by least use_count
+        3. Then by oldest last_used
+        4. Random tiebreaker
+
+        If shuffle=True, fetches a larger pool from each use_count tier
+        and randomly selects from within each tier. This gives a fresh
+        selection each call while still respecting the fair-rotation order.
+
+        Returns list of dicts with song info
+        """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
+
         cursor.execute("SELECT COUNT(*) FROM songs")
         total_songs = cursor.fetchone()[0]
-        
+
         if total_songs == 0:
             conn.close()
             return []
-        
+
         cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1")
         unused_count = cursor.fetchone()[0]
-        
+
         if unused_count >= num_songs:
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
@@ -42,21 +55,37 @@ class SmartSongPicker:
                 ORDER BY RANDOM()
                 LIMIT ?
             """, (num_songs,))
+            rows = cursor.fetchall()
+        elif shuffle:
+            cursor.execute("""
+                SELECT id, song_title, youtube_url, start_time, end_time, use_count
+                FROM songs
+                ORDER BY
+                    CASE WHEN use_count = 1 THEN 0 ELSE 1 END,
+                    use_count ASC
+            """)
+            all_rows = cursor.fetchall()
+            grouped = []
+            for _key, group in groupby(all_rows, key=lambda r: r[5]):
+                tier = list(group)
+                random.shuffle(tier)
+                grouped.extend(tier)
+            rows = grouped[:num_songs]
         else:
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
                 FROM songs
-                ORDER BY 
+                ORDER BY
                     CASE WHEN use_count = 1 THEN 0 ELSE 1 END,
                     use_count ASC,
                     last_used ASC,
                     RANDOM()
                 LIMIT ?
             """, (num_songs,))
-        
-        rows = cursor.fetchall()
+            rows = cursor.fetchall()
+
         conn.close()
-        
+
         return [{
             "id": row[0],
             "song_title": row[1],
@@ -110,6 +139,16 @@ class SmartSongPicker:
         conn.commit()
         conn.close()
     
+    def reset_all_use_counts(self):
+        """Reset all songs to unused (use_count = 1, last_used = NULL)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE songs SET use_count = 1, last_used = NULL")
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
     def get_song_ranking_preview(self, num_songs=20):
         """Preview which songs would be picked next"""
         conn = sqlite3.connect(self.db_path)

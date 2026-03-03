@@ -73,7 +73,9 @@ function main() {
 
     // Clear render queue before adding new jobs
     for (var i = app.project.renderQueue.numItems; i >= 1; i--) {
-        try { app.project.renderQueue.item(i).remove(); } catch (e) {}
+        try { app.project.renderQueue.item(i).remove(); } catch (e) {
+            $.writeln("Could not remove render queue item " + i + ": " + e.toString());
+        }
     }
     $.writeln("Render queue cleared.");
 
@@ -114,7 +116,11 @@ function main() {
 
         var monoData;
         try { monoData = JSON.parse(monoText); }
-        catch (e) { alert("Error parsing " + monoFile.name + ": " + e.toString()); continue; }
+        catch (e) {
+            $.writeln("Error parsing " + monoFile.name + ": " + e.toString());
+            writeErrorLog("JSON parse error: " + monoFile.name + " — " + e.toString());
+            continue;
+        }
 
         // Also read job_data.json for paths and metadata
         var jobFolder = monoFile.parent;
@@ -149,9 +155,10 @@ function main() {
         $.writeln("Markers: " + markers.length);
 
         var audioFile = new File(jobData.audio_trimmed);
-        if (!audioFile.exists) { 
-            alert("Missing audio:\n" + jobData.audio_trimmed); 
-            continue; 
+        if (!audioFile.exists) {
+            $.writeln("Missing audio: " + jobData.audio_trimmed);
+            writeErrorLog("Missing audio for job " + jobId + ": " + jobData.audio_trimmed);
+            continue;
         }
 
         // Duplicate MAIN template
@@ -207,16 +214,8 @@ function main() {
 
         // Add to render queue
         try {
-            var outputComp = null;
-            // Try different naming conventions
-            try { outputComp = findCompByName("OUTPUT " + jobId); } catch(e1) {}
-            if (!outputComp) {
-                try { outputComp = findCompByName("OUTPUT" + jobId); } catch(e2) {}
-            }
-            if (!outputComp) {
-                try { outputComp = findCompByName("OUTPUT " + jobId + " "); } catch(e3) {}
-            }
-            
+            var outputComp = findOutputComp(jobId);
+
             if (outputComp) {
                 var renderPath = addToRenderQueue(
                     outputComp,
@@ -247,7 +246,7 @@ function main() {
         }
         app.quit();
     } else {
-        alert("MONO batch processing complete!\n\nReview in Render Queue, then click Render.");
+        $.writeln("MONO batch processing complete. Review in Render Queue, then click Render.");
     }
 }
 
@@ -255,8 +254,8 @@ function main() {
 function writeErrorLog(message) {
     if (JOBS_PATH.indexOf("{{") === -1 && JOBS_PATH !== "") {
         var errorFile = new File(JOBS_PATH + "/batch_error.txt");
-        errorFile.open("w");
-        errorFile.write(message);
+        errorFile.open("a");
+        errorFile.writeln("[" + new Date().toLocaleString() + "] " + message);
         errorFile.close();
     }
 }
@@ -813,6 +812,18 @@ function relinkAudioOnly(jobId, audioPath) {
 // SHARED HELPER FUNCTIONS
 // -----------------------------
 
+function findOutputComp(jobId) {
+    // Try common naming conventions: "OUTPUT 1", "OUTPUT1", "OUTPUT 1 "
+    var names = ["OUTPUT " + jobId, "OUTPUT" + jobId];
+    for (var n = 0; n < names.length; n++) {
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var it = app.project.item(i);
+            if (it instanceof CompItem && it.name === names[n]) return it;
+        }
+    }
+    return null;
+}
+
 function findFolderByName(name) {
     for (var i = 1; i <= app.project.numItems; i++) {
         var it = app.project.item(i);
@@ -965,17 +976,35 @@ function setWorkAreaToAudioDuration(jobId) {
 }
 
 function setOutputWorkAreaToAudio(jobId, audioPath) {
-    // Import audio to get accurate duration
-    var audioFile = new File(audioPath);
-    if (!audioFile.exists) {
-        $.writeln("Audio file not found for duration check: " + audioPath);
-        return;
+    // Get duration from the already-relinked audio layer in LYRIC FONT comp.
+    // This avoids importing and immediately removing the audio file for every job.
+    var dur = 0;
+    try {
+        var lfc   = findCompByName("LYRIC FONT " + jobId);
+        var audio = ensureAudioLayer(lfc);
+        if (audio && audio.source && audio.source.duration) {
+            dur = audio.source.duration;
+        }
+    } catch (_) {}
+
+    // Fallback: import the file if the layer route failed
+    if (!dur) {
+        try {
+            var af = new File(audioPath);
+            if (af.exists) {
+                var tmp = app.project.importFile(new ImportOptions(af));
+                dur = tmp.duration;
+                tmp.remove();
+                $.writeln("setOutputWorkAreaToAudio: used import fallback for job " + jobId);
+            }
+        } catch (e) {
+            $.writeln("setOutputWorkAreaToAudio: could not determine duration for job " + jobId + ": " + e.toString());
+            return;
+        }
     }
-    
-    var imported = app.project.importFile(new ImportOptions(audioFile));
-    var dur = imported.duration;
-    imported.remove();
-    
+
+    if (!dur) { $.writeln("setOutputWorkAreaToAudio: zero duration for job " + jobId); return; }
+
     $.writeln("Audio duration for job " + jobId + ": " + dur + "s");
 
     // Set OUTPUT comp duration
@@ -988,18 +1017,18 @@ function setOutputWorkAreaToAudio(jobId, audioPath) {
     } catch(e) {
         $.writeln("Could not set OUTPUT " + jobId + " duration: " + e.toString());
     }
-    
+
     // Set LYRIC FONT comp duration
     try {
-        var lyricComp = findCompByName("LYRIC FONT " + jobId);
-        lyricComp.duration = dur;
-        lyricComp.workAreaStart = 0;
-        lyricComp.workAreaDuration = dur;
+        var lyricFontComp = findCompByName("LYRIC FONT " + jobId);
+        lyricFontComp.duration = dur;
+        lyricFontComp.workAreaStart = 0;
+        lyricFontComp.workAreaDuration = dur;
         $.writeln("Set LYRIC FONT " + jobId + " duration to " + dur + "s");
     } catch(e) {
         $.writeln("Could not set LYRIC FONT " + jobId + " duration: " + e.toString());
     }
-    
+
     // Set BACKGROUND comp duration
     try {
         var bgComp = findCompByName("BACKGROUND " + jobId);

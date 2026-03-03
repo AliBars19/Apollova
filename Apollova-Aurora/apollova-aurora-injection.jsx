@@ -318,12 +318,16 @@ function parseLyricsFile(p) {
         var cur = String(data[i].lyric_current || data[i].cur || "");
         var t   = Number(data[i].t || 0);
 
-        // Normalise line endings: \r\n → \r, bare \n → \r
-        // AE text layers use \r as the line-break character inside expressions.
+        // CRITICAL: Python writes line breaks as literal "\r" (backslash + r) in the JSON.
+        // After JSON.parse these are the two characters \ and r, NOT a carriage-return byte.
+        // Convert them to real CR bytes so AE expressions interpret them as line breaks.
+        // Also strip the spaces Python puts around the \r: "first \r second" → "first\rsecond"
+        cur = cur.replace(/ *\\r */g, "\r");
+
+        // Normalise any remaining line endings: \r\n → \r, bare \n → \r
         cur = cur.replace(/\r\n/g, "\r").replace(/\n/g, "\r");
 
-        // Apply word-wrap if Python did not already insert a line break.
-        // wrapTwoLines() is a no-op when cur is short enough.
+        // Apply word-wrap only if Python did not already insert a line break.
         if (cur.indexOf("\r") === -1) {
             cur = wrapTwoLines(cur, MAX_CHARS_PER_LINE);
         }
@@ -357,14 +361,18 @@ function wrapTwoLines(s, limit) {
 function escapeLyricForExpression(l) {
     if (!l) return "";
 
-    // 1. Escape backslashes FIRST
-    l = l.replace(/\\/g, "\\\\");    
+    // 1. Escape backslashes FIRST (so we don't double-escape later insertions)
+    l = l.replace(/\\/g, "\\\\");
 
     // 2. Escape quotes
-    l = l.replace(/"/g, '\\"');      
+    l = l.replace(/"/g, '\\"');
 
     // 3. Convert actual carriage-return characters to the literal sequence "\r"
+    //    AE expression engine interprets \r inside a string as a line break.
     l = l.replace(/\r/g, "\\r");
+
+    // 4. Safety: catch any stray newlines that survived normalisation
+    l = l.replace(/\n/g, "\\n");
 
     return l;
 }
@@ -443,7 +451,10 @@ function setAudioMarkersFromTArray(lyricComp, tAndText) {
     var lastT = 0;
     for (var k = 0; k < tAndText.length; k++) {
         var t = Number(tAndText[k].t) || 0;
+        // Flatten CR/LF for marker display — markers are for timing only,
+        // the expression reads lyrics[] by index, not from marker text.
         var name = String(tAndText[k].cur || ("LYRIC_" + (k + 1)));
+        name = name.replace(/[\r\n]/g, " ");
         try {
             mk.setValueAtTime(t, new MarkerValue(name));
             if (t > lastT) lastT = t;

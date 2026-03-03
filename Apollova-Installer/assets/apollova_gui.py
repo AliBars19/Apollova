@@ -410,6 +410,7 @@ class AppolovaApp(QMainWindow):
         self.cancel_requested       = False
         self._resume_mode           = False
         self.use_smart_picker       = False
+        self._smart_songs           = []
         self.batch_render_active    = False
         self.batch_render_cancelled = False
         self.batch_results          = {}
@@ -665,6 +666,10 @@ class AppolovaApp(QMainWindow):
         self.reshuffle_btn.setToolTip("Pick a different random selection from the same priority pool")
         self.reshuffle_btn.clicked.connect(self._reshuffle_songs)
         sp_btn_row.addWidget(self.reshuffle_btn)
+        self.reset_uses_btn = QPushButton("🔄 Reset Uses")
+        self.reset_uses_btn.setToolTip("Reset all song use counts back to unused")
+        self.reset_uses_btn.clicked.connect(self._reset_use_counts)
+        sp_btn_row.addWidget(self.reset_uses_btn)
         sp_btn_row.addStretch()
         sl.addLayout(sp_btn_row)
         sl.addWidget(QLabel("Next songs to be selected:"))
@@ -1064,6 +1069,7 @@ class AppolovaApp(QMainWindow):
 
             num_jobs = int(self.jobs_combo.currentText())
             songs    = picker.get_available_songs(num_songs=num_jobs)
+            self._smart_songs = songs
             self.smart_listbox.clear()
             for i, s in enumerate(songs, 1):
                 tag = "🆕 new" if s['use_count'] == 1 else f"📊 {s['use_count']}x"
@@ -1077,6 +1083,23 @@ class AppolovaApp(QMainWindow):
         except Exception as e:
             _set_label_style(self.smart_stats_label, "error")
             self.smart_stats_label.setText(f"❌ Error: {e}")
+
+    def _reset_use_counts(self):
+        """Reset all song use counts back to unused after confirmation."""
+        reply = QMessageBox.question(
+            self, "Reset Use Counts",
+            "This will mark ALL songs as unused (use_count → 1).\n\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            affected = picker.reset_all_use_counts()
+            self._refresh_smart_picker_stats()
+            QMessageBox.information(self, "Done",
+                f"Reset use counts for {affected} songs.")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to reset uses: {e}")
 
     def _reshuffle_songs(self):
         """Re-pick songs with randomization within each use_count tier."""
@@ -1092,6 +1115,7 @@ class AppolovaApp(QMainWindow):
 
             num_jobs = int(self.jobs_combo.currentText())
             songs    = picker.get_available_songs(num_songs=num_jobs, shuffle=True)
+            self._smart_songs = songs
             self.smart_listbox.clear()
             for i, s in enumerate(songs, 1):
                 tag = "🆕 new" if s['use_count'] == 1 else f"📊 {s['use_count']}x"
@@ -1629,7 +1653,7 @@ class AppolovaApp(QMainWindow):
     def _lock_inputs(self, lock):
         for w in [self.title_edit, self.url_edit, self.start_edit,
                   self.end_edit, self.jobs_combo, self.whisper_combo,
-                  self.add_job_btn, self.reshuffle_btn]:
+                  self.add_job_btn, self.reshuffle_btn, self.reset_uses_btn]:
             w.setEnabled(not lock)
         for btn in self.job_tpl_group.buttons():
             btn.setEnabled(not lock)
@@ -1644,9 +1668,11 @@ class AppolovaApp(QMainWindow):
         existing = list(d.glob("job_*")) if d.exists() else []
 
         if self.use_smart_picker:
-            num  = int(self.jobs_combo.currentText())
-            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
-            songs  = picker.get_available_songs(num_songs=num, shuffle=True)
+            songs = self._smart_songs
+            if not songs:
+                QMessageBox.warning(self, "No Songs",
+                    "No songs selected. Refresh or reshuffle first.")
+                return
             sl = "\n".join(
                 [f"  {i+1}. {s['song_title'][:40]}" for i, s in enumerate(songs[:12])])
             if len(songs) > 12:
@@ -1722,6 +1748,7 @@ class AppolovaApp(QMainWindow):
 
     def _process_jobs(self):
         try:
+            batch_t0 = time.time()
             num   = int(self.jobs_combo.currentText())
             t     = self._job_template()
             outd  = JOBS_DIRS.get(t)
@@ -1733,9 +1760,17 @@ class AppolovaApp(QMainWindow):
                 self._log.section(
                     f"Job batch started — {num} job(s) | {t.upper()} | {mode} | "
                     f"Whisper: {Config.WHISPER_MODEL}")
+                # Log system diagnostics for overnight test debugging
+                try:
+                    disk = shutil.disk_usage(str(outd or "."))
+                    self._log.info(f"System: disk_free={disk.free/(1024**3):.1f}GB  "
+                                   f"python={sys.version.split()[0]}  pid={os.getpid()}")
+                except Exception:
+                    pass
 
             if self.use_smart_picker:
-                self.signals.log.emit(f"🤖 Smart Picker: {num} songs | {t.upper()}")
+                songs = list(self._smart_songs)   # snapshot the pre-selected list
+                self.signals.log.emit(f"🤖 Smart Picker: {len(songs)} songs | {t.upper()}")
                 picker   = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
                 outd.mkdir(parents=True, exist_ok=True)
 
@@ -1755,9 +1790,7 @@ class AppolovaApp(QMainWindow):
                     self.signals.log.emit(
                         f"  Resuming from job {start_idx} "
                         f"({len(done)} complete, {len(failed)} failed/skipped, {remaining} remaining)")
-                    songs = picker.get_available_songs(num_songs=remaining, shuffle=True)
-                else:
-                    songs = picker.get_available_songs(num_songs=num, shuffle=True)
+                    songs = songs[:remaining]
 
                 skipped = []
                 for i, s in enumerate(songs):
@@ -1821,6 +1854,33 @@ class AppolovaApp(QMainWindow):
                     f"\n{'='*40}\n🎉 Done! {completed}/{total} job(s) created!{skip_note}\n📂 {outd}\n"
                     "Next: Go to JSX Injection tab")
 
+            # Batch completion summary
+            batch_elapsed = time.time() - batch_t0
+            batch_min, batch_sec = divmod(int(batch_elapsed), 60)
+            device_str = "unknown"
+            try:
+                from scripts.whisper_common import get_device_info
+                device_str = get_device_info()
+            except Exception:
+                pass
+            completed_count = num - len(skipped)
+            avg_time = batch_elapsed / max(completed_count, 1)
+            avg_min, avg_sec = divmod(int(avg_time), 60)
+            self.signals.log.emit(
+                f"\n{'─'*40}\n"
+                f"BATCH SUMMARY\n"
+                f"  Total time:  {batch_min}m {batch_sec:02d}s\n"
+                f"  Per job avg: {avg_min}m {avg_sec:02d}s\n"
+                f"  Succeeded:   {completed_count}\n"
+                f"  Failed:      {len(skipped)}\n"
+                f"  Device:      {device_str}\n"
+                f"{'─'*40}")
+            if self._log:
+                self._log.performance_summary(
+                    {"Batch total": batch_elapsed},
+                    total_time=batch_elapsed,
+                    device=device_str)
+
             self.signals.stats_refresh.emit()
             self.signals.finished.emit()
         except Exception as e:
@@ -1834,6 +1894,7 @@ class AppolovaApp(QMainWindow):
     def _on_generation_finished(self):
         self.is_processing  = False
         self._resume_mode   = False
+        self._smart_songs   = []
         self._job_queue.clear()
         self._rebuild_queue_list()
         self._update_queue_counter()
@@ -1850,11 +1911,36 @@ class AppolovaApp(QMainWindow):
     def _on_generation_error(self, msg):
         self.is_processing = False
         self._resume_mode  = False
+        self._smart_songs  = []
         self._lock_inputs(False)
         self._update_generate_btn_state()
         self.cancel_btn.setEnabled(False)
         self._check_existing_jobs()
-        QMessageBox.critical(self, "Error", msg)
+
+        # Append actionable fix suggestion based on error type
+        fix = ""
+        lower = msg.lower()
+        if "cancelled" in lower:
+            fix = ""  # User-initiated, no fix needed
+        elif "youtube" in lower or "yt_dlp" in lower or "pytubefix" in lower or "video" in lower:
+            fix = ("\n\nFix: Check the YouTube URL is correct and the video is public.\n"
+                   "If YouTube is blocking downloads, try updating: pip install -U yt-dlp")
+        elif "whisper" in lower or "transcri" in lower or "torch" in lower or "cuda" in lower:
+            fix = ("\n\nFix: Whisper transcription failed. Try:\n"
+                   "  1. Re-run Setup.exe to reinstall PyTorch\n"
+                   "  2. Try a smaller Whisper model (tiny/base)\n"
+                   "  3. Check that audio_trimmed.wav exists in the job folder")
+        elif "genius" in lower or "lyrics" in lower or "api" in lower:
+            fix = ("\n\nFix: Genius API issue. Check your API token in Settings.\n"
+                   "Get a token at: https://genius.com/api-clients")
+        elif "permission" in lower or "access" in lower or "denied" in lower:
+            fix = ("\n\nFix: Permission error. Try:\n"
+                   "  1. Run Apollova as Administrator\n"
+                   "  2. Check the install folder is not read-only")
+        elif "no module" in lower or "import" in lower:
+            fix = "\n\nFix: A required package is missing. Re-run Setup.exe to reinstall."
+
+        QMessageBox.critical(self, "Error", msg + fix)
 
     def _append_log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -1873,15 +1959,59 @@ class AppolovaApp(QMainWindow):
         self.stats_label.setText(
             f"📊 {s['total_songs']} songs | {s['cached_lyrics']} with lyrics")
 
-    # ── Single song processing (logic unchanged from original) ────────────────
+    # ── Transcription progress ticker ──────────────────────────────────────────
+
+    def _run_with_ticker(self, fn, *args, **kwargs):
+        """Run a long function (e.g. Whisper) with periodic log updates
+        so the user knows the app hasn't frozen."""
+        result = [None]
+        error  = [None]
+        done   = threading.Event()
+
+        def _worker():
+            try:
+                result[0] = fn(*args, **kwargs)
+            except Exception as e:
+                error[0] = e
+            finally:
+                done.set()
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+        elapsed = 0
+        while not done.wait(timeout=15):
+            elapsed += 15
+            m, s = divmod(elapsed, 60)
+            self.signals.log.emit(
+                f"    Transcribing... ({m}m {s:02d}s elapsed)")
+
+        if error[0] is not None:
+            raise error[0]
+        return result[0]
+
+    # ── Single song processing ────────────────────────────────────────────────
 
     def _process_single_song(self, job_number, song_title, youtube_url,
                               start_time, end_time, template, output_dir,
                               return_data=False):
+        job_t0 = time.time()
         job_folder  = output_dir / f"job_{job_number:03}"
         job_folder.mkdir(parents=True, exist_ok=True)
         needs_image = template in ['aurora', 'onyx']
         cached      = self.song_db.get_song(song_title)
+
+        # ── Test diagnostics: log system state at job start ──
+        try:
+            disk = shutil.disk_usage(str(output_dir))
+            disk_free_gb = disk.free / (1024 ** 3)
+            self.signals.log.emit(f"  [diag] Disk free: {disk_free_gb:.1f} GB")
+            if disk_free_gb < 1.0:
+                self.signals.log.emit("  ⚠ LOW DISK: less than 1 GB free!")
+                if self._log:
+                    self._log.warning(f"Low disk space at job {job_number}: {disk_free_gb:.1f} GB")
+        except Exception:
+            pass
 
         if cached:
             self.signals.log.emit("  ✓ Using cached data")
@@ -1899,7 +2029,10 @@ class AppolovaApp(QMainWindow):
         if not audio_path.exists():
             self.signals.log.emit("  Downloading audio…")
             self._run_step(job_number, "Audio download", download_audio, youtube_url, str(job_folder))
-            self.signals.log.emit("  ✓ Audio downloaded")
+            if not audio_path.exists():
+                raise FileNotFoundError(f"Audio download produced no file: {audio_path}")
+            size_mb = audio_path.stat().st_size / (1024 * 1024)
+            self.signals.log.emit(f"  ✓ Audio downloaded ({size_mb:.1f} MB)")
         else:
             self.signals.log.emit("  ✓ Audio exists")
 
@@ -1909,9 +2042,44 @@ class AppolovaApp(QMainWindow):
         if not trimmed.exists():
             self.signals.log.emit(f"  Trimming ({start_time} → {end_time})…")
             self._run_step(job_number, "Audio trim", trim_audio, str(job_folder), start_time, end_time)
-            self.signals.log.emit("  ✓ Trimmed")
+            if not trimmed.exists():
+                raise FileNotFoundError(f"Trim produced no file: {trimmed}")
+            trim_mb = trimmed.stat().st_size / (1024 * 1024)
+            self.signals.log.emit(f"  ✓ Trimmed ({trim_mb:.1f} MB)")
         else:
             self.signals.log.emit("  ✓ Trimmed audio exists")
+
+        # Verify trimmed audio duration matches expected clip length
+        try:
+            from pydub import AudioSegment as _AS
+            actual_dur = len(_AS.from_file(str(trimmed))) / 1000.0
+            s_parts = start_time.split(':')
+            e_parts = end_time.split(':')
+            expected_dur = (int(e_parts[0])*60 + int(e_parts[1])) - (int(s_parts[0])*60 + int(s_parts[1]))
+            self.signals.log.emit(f"  📏 Clip: {actual_dur:.1f}s (expected {expected_dur}s)")
+            if actual_dur > expected_dur + 5:
+                self.signals.log.emit(f"  ⚠ audio_trimmed.wav too long ({actual_dur:.1f}s) — re-trimming")
+                trimmed.unlink()
+                self._run_step(job_number, "Audio re-trim", trim_audio, str(job_folder), start_time, end_time)
+                actual_dur = len(_AS.from_file(str(trimmed))) / 1000.0
+                self.signals.log.emit(f"  ✓ Re-trimmed: {actual_dur:.1f}s")
+        except Exception as dur_err:
+            self.signals.log.emit(f"  ⚠ Duration check failed: {dur_err}")
+
+        # Delete audio_source.mp3 — no longer needed after trim
+        source_mp3 = job_folder / "audio_source.mp3"
+        if source_mp3.exists():
+            try:
+                source_mp3.unlink()
+            except Exception:
+                pass
+
+        # Log Whisper device (GPU/CPU)
+        try:
+            from scripts.whisper_common import get_device_info
+            self.signals.log.emit(f"  🖥 Whisper device: {get_device_info()}")
+        except Exception:
+            pass
 
         # Beats (Aurora only)
         beats = []
@@ -1947,11 +2115,18 @@ class AppolovaApp(QMainWindow):
             elif not lyrics_path.exists():
                 self.signals.log.emit(f"  Transcribing ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                self._run_step(job_number, "Whisper transcription (Aurora)", transcribe_audio, str(job_folder), song_title)
+                self._run_with_ticker(
+                    self._run_step, job_number, "Whisper transcription (Aurora)",
+                    transcribe_audio, str(job_folder), song_title)
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed ({elapsed:.0f}s)")
                 lyrics_was_transcribed = True
+                # Validate transcription output
+                if not lyrics_path.exists():
+                    self.signals.log.emit("  ⚠ ASSERT: lyrics.txt missing after transcription!")
+                elif lyrics_path.stat().st_size < 10:
+                    self.signals.log.emit(f"  ⚠ ASSERT: lyrics.txt suspiciously small ({lyrics_path.stat().st_size} bytes)")
             else:
                 self.signals.log.emit("  ✓ Lyrics exist")
             lyrics_data = lyrics_path.read_text() if lyrics_path.exists() else ""
@@ -1966,11 +2141,17 @@ class AppolovaApp(QMainWindow):
             elif not mono_path.exists():
                 self.signals.log.emit(f"  Transcribing mono ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                self._run_step(job_number, "Whisper transcription (Mono)", transcribe_audio_mono, str(job_folder), song_title)
+                self._run_with_ticker(
+                    self._run_step, job_number, "Whisper transcription (Mono)",
+                    transcribe_audio_mono, str(job_folder), song_title)
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed mono ({elapsed:.0f}s)")
                 lyrics_was_transcribed = True
+                if not mono_path.exists():
+                    self.signals.log.emit("  ⚠ ASSERT: mono_data.json missing after transcription!")
+                elif mono_path.stat().st_size < 10:
+                    self.signals.log.emit(f"  ⚠ ASSERT: mono_data.json suspiciously small ({mono_path.stat().st_size} bytes)")
             else:
                 self.signals.log.emit("  ✓ Mono data exists")
             lyrics_data = mono_path.read_text() if mono_path.exists() else "{}"
@@ -1985,11 +2166,17 @@ class AppolovaApp(QMainWindow):
             elif not onyx_path.exists():
                 self.signals.log.emit(f"  Transcribing onyx ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                self._run_step(job_number, "Whisper transcription (Onyx)", transcribe_audio_onyx, str(job_folder), song_title)
+                self._run_with_ticker(
+                    self._run_step, job_number, "Whisper transcription (Onyx)",
+                    transcribe_audio_onyx, str(job_folder), song_title)
                 elapsed = time.time() - t0
                 self.signals.log.emit(
                     f"  ✓ Transcribed onyx ({elapsed:.0f}s)")
                 lyrics_was_transcribed = True
+                if not onyx_path.exists():
+                    self.signals.log.emit("  ⚠ ASSERT: onyx_data.json missing after transcription!")
+                elif onyx_path.stat().st_size < 10:
+                    self.signals.log.emit(f"  ⚠ ASSERT: onyx_data.json suspiciously small ({onyx_path.stat().st_size} bytes)")
             else:
                 self.signals.log.emit("  ✓ Onyx data exists")
             lyrics_data = onyx_path.read_text() if onyx_path.exists() else "{}"
@@ -2038,6 +2225,14 @@ class AppolovaApp(QMainWindow):
             "colors": colors, "lyrics_file": str(data_file),
             "beats": beats, "created_at": datetime.now().isoformat(),
         }
+        # Validate job_data before writing
+        _missing = [k for k in ("job_id", "song_title", "audio_trimmed", "lyrics_file")
+                    if not job_data.get(k)]
+        if _missing:
+            self.signals.log.emit(f"  ⚠ ASSERT: job_data missing fields: {_missing}")
+        if not Path(job_data["audio_trimmed"]).exists():
+            self.signals.log.emit("  ⚠ ASSERT: audio_trimmed path in job_data does not exist!")
+
         with open(job_folder / "job_data.json", 'w') as f:
             json.dump(job_data, f, indent=4)
 
@@ -2050,16 +2245,29 @@ class AppolovaApp(QMainWindow):
         elif cached and not self.use_smart_picker:
             self.song_db.mark_song_used(song_title)
         if lyrics_was_transcribed:
-            if template == 'aurora':
-                self.song_db.update_lyrics(song_title, lyrics_data)
-            elif template == 'mono':
-                self.song_db.update_mono_lyrics(song_title, lyrics_data)
-            elif template == 'onyx':
-                self.song_db.update_onyx_lyrics(song_title, lyrics_data)
-            if self.use_smart_picker:
-                self.signals.log.emit("  ✓ Lyrics cached to database")
+            # lyrics_data is a raw JSON string from .read_text() — parse it
+            # so the DB methods (which call json.dumps) don't double-encode
+            try:
+                lyrics_parsed = json.loads(lyrics_data) if lyrics_data else None
+            except (json.JSONDecodeError, TypeError):
+                lyrics_parsed = None
+            if lyrics_parsed is not None:
+                if template == 'aurora':
+                    self.song_db.update_lyrics(song_title, lyrics_parsed)
+                elif template == 'mono':
+                    self.song_db.update_mono_lyrics(song_title, lyrics_parsed)
+                elif template == 'onyx':
+                    self.song_db.update_onyx_lyrics(song_title, lyrics_parsed)
+                if self.use_smart_picker:
+                    self.signals.log.emit("  ✓ Lyrics cached to database")
+            else:
+                self.signals.log.emit("  ⚠ No lyrics data to cache")
 
-        self.signals.log.emit(f"  ✓ Job {job_number} complete")
+        job_elapsed = time.time() - job_t0
+        jm, js = divmod(int(job_elapsed), 60)
+        self.signals.log.emit(f"  ✓ Job {job_number} complete ({jm}m {js:02d}s)")
+        if self._log:
+            self._log.info(f"Job {job_number} [{song_title[:30]}] finished in {job_elapsed:.1f}s")
         return (job_data, job_folder) if return_data else None
 
 

@@ -156,6 +156,16 @@ class SmartSongPicker:
         
         return unused_count == 0
     
+    def reset_all_use_counts(self):
+        """Reset all songs to unused (use_count = 1, last_used = NULL)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("UPDATE songs SET use_count = 1, last_used = NULL")
+        affected = cursor.rowcount
+        conn.commit()
+        conn.close()
+        return affected
+
     def get_song_ranking_preview(self, num_songs=20):
         """Show preview of which songs would be picked next"""
         conn = sqlite3.connect(self.db_path)

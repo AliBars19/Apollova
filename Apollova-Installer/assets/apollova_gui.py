@@ -1929,6 +1929,14 @@ class AppolovaApp(QMainWindow):
                     total_time=batch_elapsed,
                     device=device_str)
 
+            # Free GPU memory now that all transcription is done
+            try:
+                from scripts.whisper_common import unload_model
+                unload_model()
+                self.signals.log.emit("  ♻ Whisper model unloaded")
+            except Exception:
+                pass
+
             self.signals.stats_refresh.emit()
             self.signals.finished.emit()
         except Exception as e:

@@ -246,7 +246,8 @@ function main() {
             $.writeln("AUTO_RENDER: No items in render queue.");
             writeErrorLog("No items in render queue");
         }
-        app.quit();
+        // Let AE exit gracefully — app.quit() crashes after heavy renders
+        app.exitAfterLaunchAndEval = true;
     } else {
         $.writeln("All jobs queued. Review in Render Queue, then click Render.");
     }

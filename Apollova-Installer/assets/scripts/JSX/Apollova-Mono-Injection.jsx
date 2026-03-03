@@ -240,17 +240,21 @@ function main() {
     // Auto-render if flag is set
     if (AUTO_RENDER === "true") {
         if (app.project.renderQueue.numItems > 0) {
-            // Save project — aerender.exe will open this saved project and render
             try { app.project.save(); } catch (e) {
                 $.writeln("Could not save project: " + e.toString());
             }
-            $.writeln("AUTO_RENDER: " + app.project.renderQueue.numItems + " items queued. Project saved. Exiting for aerender.");
+            $.writeln("AUTO_RENDER: Starting render (" + app.project.renderQueue.numItems + " items)...");
+            try {
+                app.project.renderQueue.render();
+                $.writeln("AUTO_RENDER: Render complete.");
+            } catch (renderErr) {
+                $.writeln("AUTO_RENDER: Render failed — " + renderErr.toString());
+                writeErrorLog("Render failed: " + renderErr.toString());
+            }
         } else {
             $.writeln("AUTO_RENDER: No items in render queue.");
             writeErrorLog("No items in render queue");
         }
-        // Exit gracefully — rendering is handled externally by aerender.exe
-        app.exitAfterLaunchAndEval = true;
     } else {
         $.writeln("MONO batch processing complete. Review in Render Queue, then click Render.");
     }

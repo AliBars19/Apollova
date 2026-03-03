@@ -1592,8 +1592,10 @@ class AppolovaApp(QMainWindow):
             if err_log.exists():
                 err_log.unlink()
 
-            # Phase 1: Run JSX to queue compositions + save project
-            p = subprocess.Popen([ae, "-r", str(dst)])
+            # Launch AE with -s (keep AE open + visible) so user sees
+            # render progress.  renderQueue.render() runs inside JSX in
+            # interactive mode — this is reliable unlike headless -r mode.
+            p = subprocess.Popen([ae, "-s", str(dst)])
             while p.poll() is None:
                 if self.batch_render_cancelled:
                     p.terminate()
@@ -1602,25 +1604,6 @@ class AppolovaApp(QMainWindow):
                 time.sleep(1)
             if err_log.exists():
                 return False, err_log.read_text().strip()
-
-            # Phase 2: Use aerender.exe for reliable headless rendering
-            aerender = Path(ae).parent / "aerender.exe"
-            if not aerender.exists():
-                return False, f"aerender.exe not found next to AfterFX.exe"
-            self.signals.log.emit(f"  Launching aerender for {t.capitalize()}...")
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            p2 = subprocess.Popen(
-                [str(aerender), "-project", str(tp), "-close", "DO_NOT_SAVE_CHANGES"],
-                creationflags=flags,
-            )
-            while p2.poll() is None:
-                if self.batch_render_cancelled:
-                    p2.terminate()
-                    p2.wait(timeout=10)
-                    return False, "Cancelled by user"
-                time.sleep(1)
-            if p2.returncode != 0:
-                return False, f"aerender exited with code {p2.returncode}"
             return True, None
         except Exception as e:
             return False, str(e)

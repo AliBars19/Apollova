@@ -1370,8 +1370,10 @@ class AppolovaApp(QMainWindow):
 
     def _check_ffmpeg(self):
         try:
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
             r = subprocess.run(['ffmpeg', '-version'],
-                               capture_output=True, text=True, timeout=5)
+                               capture_output=True, text=True, timeout=5,
+                               creationflags=flags)
             if r.returncode == 0:
                 self.ffmpeg_status_label.setText("✓ FFmpeg found in PATH")
                 _set_label_style(self.ffmpeg_status_label, "success")

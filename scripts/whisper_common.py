@@ -694,7 +694,9 @@ def fix_marker_gaps(markers):
 # ============================================================================
 
 def save_whisper_cache(job_folder, segments):
-    """Save raw Whisper segments to whisper_raw.json for caching."""
+    """Save raw Whisper segments to whisper_raw.json for caching.
+    Tags the cache with the model name so stale caches are invalidated
+    when the user changes WHISPER_MODEL."""
     cache_path = os.path.join(job_folder, "whisper_raw.json")
     try:
         data = []
@@ -707,21 +709,33 @@ def save_whisper_cache(job_folder, segments):
             if "words" in seg:
                 entry["words"] = seg["words"]
             data.append(entry)
+        wrapper = {"model": Config.WHISPER_MODEL, "segments": data}
         with open(cache_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+            json.dump(wrapper, f, indent=2, ensure_ascii=False)
         print(f"  \U0001f4be Cached {len(data)} segments to whisper_raw.json")
     except Exception as e:
         print(f"  \u26a0 Failed to save Whisper cache: {e}")
 
 
 def load_whisper_cache(job_folder):
-    """Load cached Whisper segments if available."""
+    """Load cached Whisper segments if available.
+    Returns None if the cache was produced by a different model."""
     cache_path = os.path.join(job_folder, "whisper_raw.json")
     if not os.path.exists(cache_path):
         return None
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            raw = json.load(f)
+        # Support both old format (bare list) and new format (dict with model tag)
+        if isinstance(raw, dict):
+            cached_model = raw.get("model")
+            data = raw.get("segments", [])
+            if cached_model and cached_model != Config.WHISPER_MODEL:
+                print(f"  \u26a0 Cache model mismatch ({cached_model} vs {Config.WHISPER_MODEL}) — re-transcribing")
+                return None
+        else:
+            # Old format: bare list — use it but it can't be validated
+            data = raw
         if data:
             print(f"  \u267b Loaded {len(data)} segments from Whisper cache")
             return data

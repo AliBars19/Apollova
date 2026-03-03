@@ -17,6 +17,22 @@ import tempfile
 import time
 from pathlib import Path
 
+# ── Fix stdout/stderr for --windowed PyInstaller builds ──────────────────────
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QCheckBox, QProgressBar, QFrame,
@@ -837,16 +853,8 @@ class SetupWizard(QMainWindow):
         ok = self._pip_install(
             python, flags,
             f"torch=={TORCH_VERSION}",
-            extra_args=["--index-url", TORCH_INDEX_URL,
-                        "--no-user"],
+            extra_args=["--index-url", TORCH_INDEX_URL],
             retries=2, timeout=600)
-        if not ok:
-            # Retry without --no-user (permissions issue)
-            ok = self._pip_install(
-                python, flags,
-                f"torch=={TORCH_VERSION}",
-                extra_args=["--index-url", TORCH_INDEX_URL],
-                retries=2, timeout=600)
 
         self._pip_install(
             python, flags,
@@ -894,7 +902,7 @@ class SetupWizard(QMainWindow):
         flags  = self._flags()
 
         pkgs = [
-            ("openai-whisper==20240930", ["--no-build-isolation"]),
+            ("openai-whisper==20231117", ["--no-build-isolation"]),
             ("stable-ts==2.17.4",        ["--no-build-isolation", "--no-deps"]),
         ]
 
@@ -1433,7 +1441,7 @@ class SetupWizard(QMainWindow):
     def _pip_install(self, python, flags, pkg, extra_args=None,
                      retries=3, timeout=300):
         """pip install with retry logic. Returns True on success."""
-        base_cmd = [python, "-m", "pip", "install", "--no-user"] + pkg.split()
+        base_cmd = [python, "-m", "pip", "install"] + pkg.split()
         if extra_args:
             base_cmd += extra_args
 

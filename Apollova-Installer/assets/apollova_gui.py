@@ -7,6 +7,7 @@ PyQt6 GUI Application - No tkinter, no Tcl/Tk dependency
 import os
 import re
 import sys
+import io
 import json
 import shutil
 import time
@@ -16,6 +17,27 @@ import traceback
 import subprocess
 from pathlib import Path
 from datetime import datetime
+
+# ── Fix stdout/stderr for --windowed PyInstaller builds ──────────────────────
+# PyInstaller --windowed sets stdout/stderr to None on Windows, which causes
+# any print() call (especially ones with Unicode emoji) to crash silently.
+# Redirect to devnull so all print() calls in scripts are harmlessly absorbed.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")
+# Even when stdout exists, Windows cp1252 encoding can't handle emoji.
+# Reconfigure to UTF-8 with replace error handling so nothing ever crashes.
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -1731,7 +1753,8 @@ class AppolovaApp(QMainWindow):
 
     def _cancel_generation(self):
         self.cancel_requested = True
-        self.signals.log.emit("Cancellation requested…")
+        self.cancel_btn.setEnabled(False)
+        self.signals.log.emit("⚠ Cancelling — stopping current operation…")
 
     def _run_step(self, job_number, step_name, fn, *args, **kwargs):
         """Run a processing step. On failure, logs the full traceback to file
@@ -1962,29 +1985,109 @@ class AppolovaApp(QMainWindow):
     # ── Transcription progress ticker ──────────────────────────────────────────
 
     def _run_with_ticker(self, fn, *args, **kwargs):
-        """Run a long function (e.g. Whisper) with periodic log updates
-        so the user knows the app hasn't frozen."""
+        """Run a long function (e.g. Whisper) with periodic log updates.
+        Captures stdout/stderr to show pass-level progress and tqdm bars.
+        Checks cancel_requested every second and force-kills the worker."""
+        import ctypes
         result = [None]
         error  = [None]
         done   = threading.Event()
+        last_pct = [None]       # track tqdm percentage
+        last_pass = [""]        # track which pass is running
+        signals = self.signals  # capture for thread
+
+        class _LogCapture:
+            """Intercepts print() output from scripts, extracts progress."""
+            def __init__(self, signals_ref, pct_ref, pass_ref):
+                self._sig = signals_ref
+                self._pct = pct_ref
+                self._pass = pass_ref
+            def write(self, s):
+                if not s or not s.strip():
+                    return len(s) if s else 0
+                line = s.strip()
+                # tqdm progress line: "Transcribe:  45%|████      | 5.8/13.0"
+                if "Transcribe:" in line and "%" in line:
+                    try:
+                        pct = line.split("%")[0].split()[-1]
+                        pct_val = int(float(pct))
+                        # Only emit at meaningful intervals
+                        if self._pct[0] is None or abs(pct_val - self._pct[0]) >= 10:
+                            self._pct[0] = pct_val
+                            pass_label = self._pass[0]
+                            self._sig.log.emit(
+                                f"    {pass_label} {pct_val}%")
+                    except (ValueError, IndexError):
+                        pass
+                    return len(s)
+                # Pass labels from whisper_common
+                if line.startswith("Pass ") or line.startswith("  Pass "):
+                    self._pass[0] = line.strip()
+                    self._pct[0] = None  # reset for new pass
+                    self._sig.log.emit(f"    {line.strip()}")
+                    return len(s)
+                # Segment counts
+                if "segments" in line and ("→" in line or "✓" in line or "⚠" in line):
+                    self._sig.log.emit(f"    {line.strip()}")
+                    return len(s)
+                # Loading model
+                if "Loading" in line and ("GPU" in line or "CPU" in line):
+                    self._sig.log.emit(f"    {line.strip()}")
+                    return len(s)
+                # Reusing cached model
+                if "Reusing cached" in line:
+                    self._sig.log.emit(f"    {line.strip()}")
+                    return len(s)
+                return len(s)
+            def flush(self):
+                pass
+            def fileno(self):
+                raise io.UnsupportedOperation("fileno")
 
         def _worker():
+            # Redirect stdout+stderr so we capture print() and tqdm output
+            capture = _LogCapture(signals, last_pct, last_pass)
+            old_out, old_err = sys.stdout, sys.stderr
+            sys.stdout = capture
+            sys.stderr = capture
             try:
                 result[0] = fn(*args, **kwargs)
             except Exception as e:
                 error[0] = e
             finally:
+                sys.stdout = old_out
+                sys.stderr = old_err
                 done.set()
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
 
         elapsed = 0
-        while not done.wait(timeout=15):
-            elapsed += 15
-            m, s = divmod(elapsed, 60)
-            self.signals.log.emit(
-                f"    Transcribing... ({m}m {s:02d}s elapsed)")
+        while not done.wait(timeout=1):
+            elapsed += 1
+            # ── Instant cancel: force-kill the worker thread ──
+            if self.cancel_requested:
+                self.signals.log.emit("  Cancelling transcription…")
+                # Force-raise SystemExit in the worker thread
+                tid = t.ident
+                if tid is not None:
+                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                        ctypes.c_ulong(tid),
+                        ctypes.py_object(SystemExit))
+                # Give it a moment to die, then move on regardless
+                done.wait(timeout=3)
+                # Clean up GPU memory if whisper left things allocated
+                try:
+                    from scripts.whisper_common import unload_model
+                    unload_model()
+                except Exception:
+                    pass
+                raise Exception("Cancelled by user")
+            # Show elapsed time every 15 seconds if no tqdm progress
+            if elapsed % 15 == 0 and last_pct[0] is None:
+                m, s = divmod(elapsed, 60)
+                self.signals.log.emit(
+                    f"    Transcribing... ({m}m {s:02d}s elapsed)")
 
         if error[0] is not None:
             raise error[0]
@@ -2021,7 +2124,7 @@ class AppolovaApp(QMainWindow):
 
         def chk():
             if self.cancel_requested:
-                raise Exception("Cancelled")
+                raise Exception("Cancelled by user")
 
         # Audio download
         chk()

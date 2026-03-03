@@ -1587,7 +1587,14 @@ class AppolovaApp(QMainWindow):
             if err_log.exists():
                 err_log.unlink()
             p = subprocess.Popen([ae, "-r", str(dst)])
-            p.wait()
+            # Poll instead of blocking wait — allows cancel and avoids
+            # hanging forever if After Effects stalls
+            while p.poll() is None:
+                if self.batch_render_cancelled:
+                    p.terminate()
+                    p.wait(timeout=10)
+                    return False, "Cancelled by user"
+                time.sleep(1)
             if err_log.exists():
                 return False, err_log.read_text().strip()
             return True, None

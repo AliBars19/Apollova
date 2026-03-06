@@ -1461,7 +1461,8 @@ class AppolovaApp(QMainWindow):
             QMessageBox.critical(self, "Error", f"Failed to prepare JSX:\n{e}")
             return
         try:
-            subprocess.Popen([ae, "-r", str(dst)])
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            subprocess.Popen([ae, "-r", str(dst)], creationflags=flags)
             if self._log:
                 self._log.info(f"After Effects launched: {ae}")
             QMessageBox.information(self, "Launched",
@@ -1595,7 +1596,8 @@ class AppolovaApp(QMainWindow):
             # Launch AE with -s (keep AE open + visible) so user sees
             # render progress.  renderQueue.render() runs inside JSX in
             # interactive mode — this is reliable unlike headless -r mode.
-            p = subprocess.Popen([ae, "-s", str(dst)])
+            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            p = subprocess.Popen([ae, "-s", str(dst)], creationflags=flags)
             while p.poll() is None:
                 if self.batch_render_cancelled:
                     p.terminate()

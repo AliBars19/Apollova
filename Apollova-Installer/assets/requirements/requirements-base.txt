@@ -14,6 +14,9 @@ more-itertools
 numba
 tqdm
 
+# Vocal separation (improves Whisper accuracy on music)
+demucs==4.0.1
+
 # Lyrics
 lyricsgenius==3.0.1
 rapidfuzz==3.9.7

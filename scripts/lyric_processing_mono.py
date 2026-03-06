@@ -60,10 +60,11 @@ def transcribe_audio_mono(job_folder, song_title=None):
                 })
         else:
             # ============================================================
-            # MULTI-PASS TRANSCRIPTION (word timestamps required)
+            # VOCAL SEPARATION (Demucs) + MULTI-PASS TRANSCRIPTION
             # ============================================================
+            transcribe_path = whisper_common.separate_vocals(audio_path, job_folder)
             result, pass_idx = whisper_common.multi_pass_transcribe(
-                audio_path, initial_prompt, audio_duration, language,
+                transcribe_path, initial_prompt, audio_duration, language,
                 word_timestamps=True,
                 regroup_passes=[True, True, True, True]
             )

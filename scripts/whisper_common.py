@@ -123,6 +123,54 @@ def get_audio_duration(audio_path):
         return None
 
 
+def separate_vocals(audio_path, job_folder):
+    """
+    Use Demucs to extract vocals from audio for cleaner Whisper input.
+
+    Saves vocals.wav in the job folder.  Returns the vocals path if
+    successful, or the original audio_path as fallback.
+    """
+    vocals_path = os.path.join(job_folder, "vocals.wav")
+
+    # Use cached vocals if already separated
+    if os.path.exists(vocals_path):
+        print("  Reusing cached vocals.wav")
+        return vocals_path
+
+    try:
+        import subprocess, sys
+        print("  Separating vocals (Demucs)...")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            r = subprocess.run(
+                [sys.executable, "-m", "demucs", "-n", "htdemucs",
+                 "--two-stems", "vocals", "-o", tmpdir, audio_path],
+                capture_output=True, text=True, timeout=300,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if r.returncode != 0:
+                print(f"  Demucs failed: {r.stderr[:200]}")
+                return audio_path
+
+            stem = os.path.splitext(os.path.basename(audio_path))[0]
+            src = os.path.join(tmpdir, "htdemucs", stem, "vocals.wav")
+            if os.path.exists(src):
+                import shutil
+                shutil.copy2(src, vocals_path)
+                print("  Vocals separated successfully")
+                return vocals_path
+            else:
+                print("  Demucs output not found, using raw audio")
+                return audio_path
+
+    except ImportError:
+        print("  Demucs not installed, using raw audio")
+        return audio_path
+    except Exception as e:
+        print(f"  Vocal separation failed: {e}")
+        return audio_path
+
+
 def build_initial_prompt(song_title):
     """Build Whisper initial prompt from song title."""
     if not song_title:

@@ -69,7 +69,9 @@ function main() {
     }
     
     // Keep AE open after script runs (unless auto-render)
-    if (AUTO_RENDER !== "true") {
+    if (AUTO_RENDER === "true") {
+        app.exitAfterLaunchAndEval = true;
+    } else {
         app.exitAfterLaunchAndEval = false;
     }
     

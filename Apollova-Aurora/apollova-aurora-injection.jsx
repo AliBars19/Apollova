@@ -69,7 +69,9 @@ function main() {
     }
     
     // Keep AE open after script runs (unless auto-render)
-    if (AUTO_RENDER !== "true") {
+    if (AUTO_RENDER === "true") {
+        app.exitAfterLaunchAndEval = true;
+    } else {
         app.exitAfterLaunchAndEval = false;
     }
     
@@ -79,7 +81,9 @@ function main() {
 
     // Clear render queue before adding new jobs
     for (var i = app.project.renderQueue.numItems; i >= 1; i--) {
-        try { app.project.renderQueue.item(i).remove(); } catch (e) {}
+        try { app.project.renderQueue.item(i).remove(); } catch (e) {
+            $.writeln("Could not remove render queue item " + i + ": " + e.toString());
+        }
     }
     $.writeln("Render queue cleared.");
 
@@ -120,7 +124,18 @@ function main() {
 
         var jobData;
         try { jobData = JSON.parse(jsonText); }
-        catch (e) { alert("Error parsing " + jobFile.name + ": " + e.toString()); continue; }
+        catch (e) {
+            $.writeln("Error parsing " + jobFile.name + ": " + e.toString());
+            writeErrorLog("JSON parse error: " + jobFile.name + " — " + e.toString());
+            continue;
+        }
+
+        // Validate required JSON fields
+        if (!jobData.job_id || !jobData.song_title) {
+            $.writeln("Skipping " + jobFile.name + ": missing job_id or song_title");
+            writeErrorLog("Missing job_id/song_title in " + jobFile.name);
+            continue;
+        }
 
         // Get job folder from the json file location (reliable)
         var jobFolder = jobFile.parent;
@@ -135,8 +150,16 @@ function main() {
 
         var audioFile = new File(jobData.audio_trimmed);
         var imageFile = new File(jobData.cover_image);
-        if (!audioFile.exists) { alert(" Missing audio:\n" + jobData.audio_trimmed); continue; }
-        if (!imageFile.exists) { alert(" Missing image:\n" + jobData.cover_image); continue; }
+        if (!audioFile.exists) {
+            $.writeln("Missing audio: " + jobData.audio_trimmed);
+            writeErrorLog("Missing audio for job " + jobData.job_id + ": " + jobData.audio_trimmed);
+            continue;
+        }
+        if (!imageFile.exists) {
+            $.writeln("Missing image: " + jobData.cover_image);
+            writeErrorLog("Missing image for job " + jobData.job_id + ": " + jobData.cover_image);
+            continue;
+        }
 
         // Duplicate MAIN
         var template = findCompByName("MAIN");
@@ -224,7 +247,7 @@ function main() {
             writeErrorLog("No items in render queue");
         }
     } else {
-        alert(" All jobs queued. Review in Render Queue, then click Render.");
+        $.writeln("All jobs queued. Review in Render Queue, then click Render.");
     }
 }
 
@@ -232,8 +255,8 @@ function main() {
 function writeErrorLog(message) {
     if (JOBS_PATH.indexOf("{{") === -1 && JOBS_PATH !== "") {
         var errorFile = new File(JOBS_PATH + "/batch_error.txt");
-        errorFile.open("w");
-        errorFile.write(message);
+        errorFile.open("a");
+        errorFile.writeln("[" + new Date().toLocaleString() + "] " + message);
         errorFile.close();
     }
 }
@@ -550,8 +573,10 @@ function autoResizeCoverInOutput(jobId) {
         var lyr = comp.layer(i);
         if (!(lyr instanceof AVLayer)) continue;
 
+        if (!lyr.source) continue;
+
         var isCover = (lyr.name.toUpperCase() === "COVER") ||
-                      (lyr.source && lyr.source.name.toUpperCase() === "COVER");
+                      (lyr.source.name && lyr.source.name.toUpperCase() === "COVER");
         if (!isCover) continue;
 
         var lw = lyr.source.width;

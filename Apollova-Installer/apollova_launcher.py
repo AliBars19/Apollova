@@ -329,6 +329,8 @@ class LoadingScreen(QMainWindow):
         warnings = []
 
         for i, (label, fn) in enumerate(checks):
+            if self._abort:
+                break
             pct = int((i / total) * 90)
             self.sig.progress.emit(pct)
             try:

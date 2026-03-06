@@ -480,7 +480,7 @@ class AppolovaApp(QMainWindow):
     def _load_settings(self):
         if SETTINGS_FILE.exists():
             try:
-                with open(SETTINGS_FILE, 'r') as f:
+                with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
                     return json.load(f)
             except Exception:
                 pass
@@ -491,7 +491,7 @@ class AppolovaApp(QMainWindow):
         }
 
     def _save_settings(self):
-        with open(SETTINGS_FILE, 'w') as f:
+        with open(SETTINGS_FILE, 'w', encoding='utf-8') as f:
             json.dump(self.settings, f, indent=2)
 
     def _auto_detect_after_effects(self):
@@ -1421,7 +1421,7 @@ class AppolovaApp(QMainWindow):
         Config.WHISPER_MODEL    = self.whisper_combo.currentText()
         self._save_settings()
         env = INSTALL_DIR / ".env"
-        with open(env, 'w') as f:
+        with open(env, 'w', encoding='utf-8') as f:
             f.write(f"GENIUS_API_TOKEN={self.genius_edit.text()}\n")
             f.write(f"WHISPER_MODEL={self.whisper_combo.currentText()}\n")
         QMessageBox.information(self, "Saved", "Settings saved successfully!")
@@ -2233,13 +2233,13 @@ class AppolovaApp(QMainWindow):
             beats_path = job_folder / "beats.json"
             if cached and cached.get('beats'):
                 beats = cached['beats']
-                with open(beats_path, 'w') as f:
+                with open(beats_path, 'w', encoding='utf-8') as f:
                     json.dump(beats, f, indent=4)
                 self.signals.log.emit("  ✓ Cached beats")
             elif not beats_path.exists():
                 self.signals.log.emit("  Detecting beats…")
                 beats = self._run_step(job_number, "Beat detection", detect_beats, str(job_folder))
-                with open(beats_path, 'w') as f:
+                with open(beats_path, 'w', encoding='utf-8') as f:
                     json.dump(beats, f, indent=4)
                 self.signals.log.emit(f"  ✓ {len(beats)} beats")
             else:
@@ -2378,7 +2378,7 @@ class AppolovaApp(QMainWindow):
         if not Path(job_data["audio_trimmed"]).exists():
             self.signals.log.emit("  ⚠ ASSERT: audio_trimmed path in job_data does not exist!")
 
-        with open(job_folder / "job_data.json", 'w') as f:
+        with open(job_folder / "job_data.json", 'w', encoding='utf-8') as f:
             json.dump(job_data, f, indent=4)
 
         if not cached and not self.use_smart_picker:

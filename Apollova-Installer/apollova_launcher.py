@@ -573,10 +573,10 @@ class LoadingScreen(QMainWindow):
             env["PATH"] = str(app_ffmpeg) + os.pathsep + env.get("PATH", "")
 
         try:
-            os.chdir(str(self.root / "assets"))
             log.info(f"Launching: {self.python} {gui}")
             proc = subprocess.Popen(
                 [self.python, str(gui)],
+                cwd=str(self.root / "assets"),
                 env=env,
                 creationflags=flags)
             self.hide()

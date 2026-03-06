@@ -6,9 +6,13 @@ yt-dlp
 pydub==0.25.1
 librosa==0.10.2
 
-# Transcription — openai-whisper and stable-ts are installed in a dedicated
-# step AFTER torch so pip never pulls in the wrong torch version during base
-# install.  See _step_install_whisper() in setup.py.
+# Transcription deps — openai-whisper and stable-ts are installed in a
+# dedicated step AFTER torch with --no-deps, so their transitive
+# dependencies must be listed here explicitly.
+tiktoken
+more-itertools
+numba
+tqdm
 
 # Lyrics
 lyricsgenius==3.0.1

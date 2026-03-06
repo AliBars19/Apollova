@@ -917,14 +917,15 @@ class SetupWizard(QMainWindow):
             torch instead of our pinned version — and at ~1.5 GB that also risks
             timing out the 300 s timeout.  Installing after fix_torch means pip
             sees torch already satisfied and skips the download entirely.
-          • stable-ts gets --no-deps so it can't touch openai-whisper or torch
-            after we've just pinned them.
+          • Both get --no-deps so pip can't touch torch/numpy/etc. after
+            we've just pinned them.  All runtime dependencies (torch, numpy,
+            tiktoken, etc.) are already installed by install_base + fix_torch.
         """
         python = self.python_path
         flags  = self._flags()
 
         pkgs = [
-            ("openai-whisper==20231117", ["--no-build-isolation"]),
+            ("openai-whisper==20231117", ["--no-build-isolation", "--no-deps"]),
             ("stable-ts==2.17.4",        ["--no-build-isolation", "--no-deps"]),
         ]
 

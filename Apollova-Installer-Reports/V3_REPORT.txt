@@ -1,0 +1,12 @@
+okay so we tried again on yaqs computer and its been a week since V2 and there have been a
+lot of fixes since then but clearly not enough. in setup.exe whisper was not installing
+and because of that whispers dependencies were not installing one of them being pytorch
+
+this led to a massive error where even after we gave the license key in the prompt it still
+failed due to pytorch not being present and after that it showed that none of the packages
+were installed even tho thats not true. we will be fixing this
+
+additionally there was a pyinstaller error where after closing out of apollova.exe
+there would be an issue where a temp directory wouldnt be removed were gna fix that too
+
+i have a feeling were close though, v4 coming soon

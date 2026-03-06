@@ -535,7 +535,7 @@ class SetupWizard(QMainWindow):
         sf = self.root / "assets" / "logs" / "setup_state.json"
         try:
             if sf.exists():
-                return json.loads(sf.read_text())
+                return json.loads(sf.read_text(encoding="utf-8"))
         except Exception:
             pass
         return {"completed_steps": []}
@@ -545,7 +545,8 @@ class SetupWizard(QMainWindow):
         sf = self.root / "assets" / "logs" / "setup_state.json"
         try:
             sf.parent.mkdir(parents=True, exist_ok=True)
-            sf.write_text(json.dumps({"completed_steps": completed}))
+            sf.write_text(json.dumps({"completed_steps": completed}),
+                          encoding="utf-8")
         except Exception:
             pass
 
@@ -1560,7 +1561,7 @@ class SetupWizard(QMainWindow):
             data = {}
             if sf.exists():
                 try:
-                    data = json.loads(sf.read_text())
+                    data = json.loads(sf.read_text(encoding="utf-8"))
                 except Exception:
                     pass
             if self.python_path:
@@ -1569,7 +1570,7 @@ class SetupWizard(QMainWindow):
                 data["ffmpeg_path"] = str(self.assets_dir / "ffmpeg.exe")
             if self._python_installed_by_setup:
                 data["python_installed_by_setup"] = True
-            sf.write_text(json.dumps(data, indent=2))
+            sf.write_text(json.dumps(data, indent=2), encoding="utf-8")
         except Exception as e:
             self.sig.detail.emit(f"⚠ Could not save settings: {e}")
 

@@ -305,7 +305,7 @@ class LoadingScreen(QMainWindow):
         try:
             cache = self.root / "assets" / "logs" / "last_check.json"
             if cache.exists():
-                data = json.loads(cache.read_text())
+                data = json.loads(cache.read_text(encoding="utf-8"))
                 last = datetime.fromisoformat(data.get("timestamp", ""))
                 age_h = (datetime.now() - last).total_seconds() / 3600
                 if age_h < 24 and data.get("passed"):
@@ -321,7 +321,7 @@ class LoadingScreen(QMainWindow):
             cache.write_text(json.dumps({
                 "timestamp": datetime.now().isoformat(),
                 "passed": passed,
-            }))
+            }), encoding="utf-8")
         except Exception:
             pass
 
@@ -672,7 +672,7 @@ def main():
     sf = root / "settings.json"
     if sf.exists():
         try:
-            settings = json.loads(sf.read_text())
+            settings = json.loads(sf.read_text(encoding="utf-8"))
         except Exception:
             pass
 

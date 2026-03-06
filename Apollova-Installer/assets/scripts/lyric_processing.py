@@ -63,7 +63,8 @@ def transcribe_audio(job_folder, song_title=None):
             # MULTI-PASS TRANSCRIPTION
             # ============================================================
             result, pass_idx = whisper_common.multi_pass_transcribe(
-                audio_path, initial_prompt, audio_duration, language
+                audio_path, initial_prompt, audio_duration, language,
+                word_timestamps=True,
             )
 
             if not result or not result.segments:
@@ -99,6 +100,7 @@ def transcribe_audio(job_folder, song_title=None):
         segments = whisper_common.remove_hallucinations(segments, "lyric_current", initial_prompt)
         segments = whisper_common.remove_junk(segments, "lyric_current")
         segments = whisper_common.remove_stutter_duplicates(segments, "lyric_current")
+        segments = whisper_common.remove_repetition_loops(segments, "lyric_current")
         segments = whisper_common.remove_instrumental_hallucinations(
             segments, "lyric_current", audio_path
         )

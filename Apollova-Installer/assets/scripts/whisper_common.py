@@ -305,6 +305,43 @@ def remove_junk(items, text_key):
 
 
 # ============================================================================
+# REPETITION LOOP DETECTION (#18)
+# ============================================================================
+
+def remove_repetition_loops(items, text_key):
+    """
+    Detect Whisper hallucination loops where the same phrase repeats 3+
+    times in a row. Keep the first two occurrences, remove the rest.
+    Common with instrumental sections and mumbled vocals.
+    """
+    if len(items) < 3:
+        return items
+
+    clean_re = re.compile(r"[^a-zA-Z0-9\s]")
+    removed = 0
+    result = []
+    streak = 1
+
+    for i, item in enumerate(items):
+        curr = clean_re.sub("", item.get(text_key, "")).lower().strip()
+        prev = clean_re.sub("", items[i - 1].get(text_key, "")).lower().strip() if i > 0 else ""
+
+        if curr and prev and fuzz.ratio(curr, prev) > 85:
+            streak += 1
+        else:
+            streak = 1
+
+        if streak <= 2:
+            result.append(item)
+        else:
+            removed += 1
+
+    if removed:
+        print(f"   Removed {removed} repetition loop segment(s)")
+    return result
+
+
+# ============================================================================
 # STUTTER DUPLICATE REMOVAL (#8: Fuzzy matching)
 # ============================================================================
 
@@ -347,7 +384,7 @@ def remove_stutter_duplicates(items, text_key):
 # ============================================================================
 
 def multi_pass_transcribe(audio_path, prompt, duration, language,
-                          word_timestamps=False, regroup_passes=None):
+                          word_timestamps=True, regroup_passes=None):
     """
     Try multiple Whisper configurations, return (best_result, pass_index).
 
@@ -382,7 +419,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
             "name": "Pass 1 (strict)",
             "weight": 1.0,
             "params": dict(
-                vad=True, vad_threshold=0.35,
+                vad=True, vad_threshold=0.25,
                 suppress_silence=True, regroup=regroup_passes[0],
                 temperature=0, initial_prompt=prompt,
                 condition_on_previous_text=False,
@@ -439,9 +476,9 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
         batch_start = _time.time()
 
         for idx, p in enumerate(passes):
-            # Time cap: if we already have a result and spent > 120s, stop
+            # Time cap: if we already have a result and spent > 180s, stop
             elapsed_total = _time.time() - batch_start
-            if best_result is not None and elapsed_total > 120:
+            if best_result is not None and elapsed_total > 180:
                 print(f"  ⏱ Time cap reached ({elapsed_total:.0f}s) — using best result from pass {best_pass_idx + 1}")
                 return best_result, best_pass_idx
 
@@ -469,16 +506,10 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                     best_result = result
                     best_pass_idx = idx
 
-                # #3: Accept pass 1 at 70% of min_expected
-                threshold = int(min_expected * 0.7) if idx == 0 else min_expected
-                if count >= threshold:
-                    print(f"    \u2713 Sufficient ({count} \u2265 {threshold} expected)")
+                # Accept early only if we have genuinely good results
+                if count >= min_expected:
+                    print(f"    \u2713 Sufficient ({count} \u2265 {min_expected} expected)")
                     return result, idx
-
-                # After pass 2: if we have ANY result, accept it
-                if idx >= 1 and best_result is not None:
-                    print(f"    \u2713 Accepting best after {idx + 1} passes (score {best_score:.1f})")
-                    return best_result, best_pass_idx
 
             except RuntimeError as e:
                 if "CUDA out of memory" in str(e) and not used_cpu_fallback:
@@ -538,7 +569,7 @@ def build_markers_from_segments(segments):
 
         if not seg_text or len(seg_text) < 2:
             continue
-        if seg_end - seg_start > 15:
+        if seg_end - seg_start > 30:
             print(f"   \u26a0 Skipping overly long segment ({seg_end - seg_start:.1f}s): {seg_text[:30]}...")
             continue
 

@@ -97,6 +97,7 @@ def transcribe_audio_onyx(job_folder, song_title=None):
         markers = whisper_common.remove_hallucinations(markers, "text", initial_prompt)
         markers = whisper_common.remove_junk(markers, "text")
         markers = whisper_common.remove_stutter_duplicates(markers, "text")
+        markers = whisper_common.remove_repetition_loops(markers, "text")
         markers = whisper_common.remove_instrumental_hallucinations(
             markers, "text", audio_path
         )

@@ -446,12 +446,14 @@ class LoadingScreen(QMainWindow):
 
     def _check_torch(self):
         flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+        # torch first-import can take 30-60s on slow machines (DLL loading),
+        # so use a generous timeout to avoid false negatives.
         r = subprocess.run(
             [self.python, "-c",
              "import warnings; warnings.filterwarnings('ignore'); "
              "import torch; torch.tensor([1.0]); print('ok')"],
             capture_output=True, text=True,
-            timeout=20, creationflags=flags)
+            timeout=90, creationflags=flags)
 
         if r.returncode == 0 and "ok" in r.stdout:
             return True, "PyTorch working"

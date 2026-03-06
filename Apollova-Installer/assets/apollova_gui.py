@@ -1604,6 +1604,11 @@ class AppolovaApp(QMainWindow):
                     p.wait(timeout=10)
                     return False, "Cancelled by user"
                 time.sleep(1)
+            # Clean up temp JSX — AE has finished with it
+            try:
+                dst.unlink(missing_ok=True)
+            except Exception:
+                pass
             if err_log.exists():
                 return False, err_log.read_text().strip()
             return True, None
@@ -1709,6 +1714,13 @@ class AppolovaApp(QMainWindow):
         try:
             from scripts.whisper_common import unload_model
             unload_model()
+        except Exception:
+            pass
+        # Clean up temp JSX directory
+        try:
+            tmp = Path(tempfile.gettempdir()) / "Apollova"
+            if tmp.exists():
+                shutil.rmtree(tmp, ignore_errors=True)
         except Exception:
             pass
         if self._log:

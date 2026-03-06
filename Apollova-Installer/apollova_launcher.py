@@ -4,7 +4,9 @@ Shows a loading screen, runs full integrity checks, then launches the main app.
 Zero terminal output. Every failure shows a friendly GUI dialog.
 """
 
+import atexit
 import os
+import shutil
 import sys
 import json
 import subprocess
@@ -12,6 +14,23 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+
+# ── PyInstaller _MEI cleanup ─────────────────────────────────────────────────
+# --onefile builds extract to %TEMP%\_MEIXXXXXX. On crash (sys.exit(1)),
+# PyInstaller's built-in cleanup may fail because DLLs are still locked.
+# Register an atexit handler that retries with ignore_errors so the user
+# doesn't see the "Failed to remove temporary directory" warning dialog.
+def _cleanup_mei():
+    mei = getattr(sys, '_MEIPASS', None)
+    if mei and os.path.isdir(mei):
+        try:
+            shutil.rmtree(mei, ignore_errors=True)
+        except Exception:
+            pass
+
+if getattr(sys, 'frozen', False):
+    atexit.register(_cleanup_mei)
 
 # ── Fix stdout/stderr for --windowed PyInstaller builds ──────────────────────
 if sys.stdout is None:

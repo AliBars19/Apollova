@@ -4,6 +4,7 @@ Bulletproof installer — handles every failure case gracefully.
 Zero tkinter. Zero Tcl/Tk. Pure PyQt6.
 """
 
+import atexit
 import os
 import sys
 import json
@@ -16,6 +17,19 @@ import urllib.error
 import tempfile
 import time
 from pathlib import Path
+
+
+# ── PyInstaller _MEI cleanup ─────────────────────────────────────────────────
+def _cleanup_mei():
+    mei = getattr(sys, '_MEIPASS', None)
+    if mei and os.path.isdir(mei):
+        try:
+            shutil.rmtree(mei, ignore_errors=True)
+        except Exception:
+            pass
+
+if getattr(sys, 'frozen', False):
+    atexit.register(_cleanup_mei)
 
 # ── Fix stdout/stderr for --windowed PyInstaller builds ──────────────────────
 if sys.stdout is None:

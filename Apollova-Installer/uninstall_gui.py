@@ -5,6 +5,7 @@ Options to also remove Python and FFmpeg.
 Zero terminal output. Pure PyQt6.
 """
 
+import atexit
 import os
 import sys
 import json
@@ -13,6 +14,19 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+
+
+# ── PyInstaller _MEI cleanup ─────────────────────────────────────────────────
+def _cleanup_mei():
+    mei = getattr(sys, '_MEIPASS', None)
+    if mei and os.path.isdir(mei):
+        try:
+            shutil.rmtree(mei, ignore_errors=True)
+        except Exception:
+            pass
+
+if getattr(sys, 'frozen', False):
+    atexit.register(_cleanup_mei)
 
 # ── Fix stdout/stderr for --windowed PyInstaller builds ──────────────────────
 if sys.stdout is None:

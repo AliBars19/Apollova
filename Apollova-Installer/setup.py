@@ -576,6 +576,12 @@ class SetupWizard(QMainWindow):
                 ("shortcut",      100, "Finishing up..."),
             ]
 
+            # Save python_path to settings.json immediately so the launcher
+            # can always find the correct Python, even if a later step fails
+            # and the install aborts before _save_settings() at the end.
+            if self.python_path:
+                self._save_settings()
+
             completed = list(done_steps)
             for step_id, target_pct, label in steps:
                 if self.cancelled:
@@ -590,6 +596,10 @@ class SetupWizard(QMainWindow):
                 self._set_target(target_pct)
                 self.sig.update.emit(label, self._progress, "")
                 ok = self._run_step(step_id)
+                # Re-save settings after Python install so launcher always
+                # knows where Python is, even if a later step fails.
+                if step_id == "inst_python" and self.python_path:
+                    self._save_settings()
                 if not ok:
                     self._save_setup_state(completed)
                     return   # step already emitted failed signal

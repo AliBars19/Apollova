@@ -313,6 +313,13 @@ class SetupWizard(QMainWindow):
         gpu_note.setStyleSheet("color:#6c7086; font-size:11px;")
         opt_lay.addWidget(gpu_note)
 
+        has_nvidia, gpu_reason = self._detect_nvidia_gpu()
+        if not has_nvidia:
+            self.gpu_chk.setChecked(False)
+            self.gpu_chk.setEnabled(False)
+            gpu_note.setText(f"    {gpu_reason}")
+            gpu_note.setStyleSheet("color:#f38ba8; font-size:11px;")
+
         self._sep(opt_lay)
 
         self.ffmpeg_chk = QCheckBox(
@@ -369,6 +376,23 @@ class SetupWizard(QMainWindow):
         self.install_btn.clicked.connect(self._start_install)
         btn_lay.addWidget(self.install_btn)
         outer.addWidget(btn_w)
+
+    @staticmethod
+    def _detect_nvidia_gpu():
+        """Check if an NVIDIA GPU is present. Returns (bool, reason_string)."""
+        try:
+            r = subprocess.run(
+                ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+            )
+            if r.returncode == 0 and r.stdout.strip():
+                return True, r.stdout.strip().split("\n")[0]
+            return False, "No NVIDIA GPU detected — GPU acceleration unavailable."
+        except FileNotFoundError:
+            return False, "No NVIDIA GPU detected — GPU acceleration unavailable."
+        except Exception:
+            return False, "GPU detection failed — GPU acceleration unavailable."
 
     def _sep(self, parent):
         f = QFrame()

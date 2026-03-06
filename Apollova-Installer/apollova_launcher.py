@@ -411,34 +411,24 @@ class LoadingScreen(QMainWindow):
             if imp not in ("torch", "stable_whisper")  # checked separately
         ]
 
-        # Build a single script that attempts every import and reports failures.
-        # One subprocess instead of N — significantly faster on startup.
-        lines = [
-            "import warnings, json",
-            "warnings.filterwarnings('ignore')",
-            "failed = []",
-        ]
-        for imp, name in to_check:
-            lines.append(
-                f"try:\n    import {imp}\n"
-                f"except Exception:\n    failed.append({name!r})")
-        lines.append("print(json.dumps(failed))")
-
-        r = subprocess.run(
-            [self.python, "-c", "\n".join(lines)],
-            capture_output=True, text=True,
-            timeout=30, creationflags=flags)
-
+        # Check each package individually so one broken/slow import
+        # cannot cause ALL packages to be falsely reported as missing.
         failed = []
-        if r.returncode == 0:
+        for imp, name in to_check:
             try:
-                import json as _json
-                failed = _json.loads(r.stdout.strip())
+                r = subprocess.run(
+                    [self.python, "-c",
+                     f"import warnings; warnings.filterwarnings('ignore'); "
+                     f"import {imp}; print('ok')"],
+                    capture_output=True, text=True,
+                    timeout=15, creationflags=flags)
+                if r.returncode != 0 or "ok" not in r.stdout:
+                    failed.append(name)
+            except subprocess.TimeoutExpired:
+                # Slow import (e.g. whisper pulling in torch) — not missing
+                log.warning(f"Package check timed out for {name}, assuming present")
             except Exception:
-                pass  # empty failed list — treat as all OK
-        else:
-            # Subprocess itself crashed — assume everything missing
-            failed = [name for _, name in to_check]
+                failed.append(name)
 
         if failed:
             self._abort = True

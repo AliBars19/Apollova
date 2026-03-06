@@ -90,7 +90,7 @@ def _import_scripts():
     global Config, download_audio, trim_audio, detect_beats
     global download_image, extract_colors, transcribe_audio
     global transcribe_audio_mono, transcribe_audio_onyx
-    global SongDatabase, fetch_genius_image, SmartSongPicker
+    global SongDatabase, fetch_genius_image, fetch_genius_image_rotated, SmartSongPicker
 
     # Check files exist
     missing = [s for s in ["config","audio_processing","image_processing",
@@ -116,11 +116,13 @@ def _import_scripts():
         from scripts.lyric_processing_onyx import transcribe_audio_onyx as _tro
         from scripts.song_database import SongDatabase as _SD
         from scripts.genius_processing import fetch_genius_image as _fg
+        from scripts.genius_processing import fetch_genius_image_rotated as _fgr
         from scripts.smart_picker import SmartSongPicker as _SP
         Config=_C; download_audio=_da; trim_audio=_ta; detect_beats=_db
         download_image=_di; extract_colors=_ec; transcribe_audio=_tr
         transcribe_audio_mono=_trm; transcribe_audio_onyx=_tro
-        SongDatabase=_SD; fetch_genius_image=_fg; SmartSongPicker=_SP
+        SongDatabase=_SD; fetch_genius_image=_fg; fetch_genius_image_rotated=_fgr
+        SmartSongPicker=_SP
 
     except OSError as e:
         err = str(e)
@@ -157,7 +159,7 @@ def _import_scripts():
 Config=download_audio=trim_audio=detect_beats=None
 download_image=extract_colors=transcribe_audio=None
 transcribe_audio_mono=transcribe_audio_onyx=None
-SongDatabase=fetch_genius_image=SmartSongPicker=None
+SongDatabase=fetch_genius_image=fetch_genius_image_rotated=SmartSongPicker=None
 _import_scripts()
 
 # ── Directory constants ───────────────────────────────────────────────────────
@@ -920,6 +922,19 @@ class AppolovaApp(QMainWindow):
         genius_lay.addWidget(_label("Get your token at: https://genius.com/api-clients", "muted"))
         layout.addWidget(genius_grp)
 
+        # Image Rotation
+        img_grp = QGroupBox("Cover Image")
+        img_lay = QVBoxLayout(img_grp)
+        self.image_rotation_chk = QCheckBox(
+            "Enable image rotation  (uses a different cover each time a song is processed)")
+        self.image_rotation_chk.setChecked(
+            self.settings.get('image_rotation', False))
+        img_lay.addWidget(self.image_rotation_chk)
+        img_lay.addWidget(_label(
+            "    Fetches an alternative image from Genius each run so TikTok "
+            "videos look different.  Requires internet.", "muted"))
+        layout.addWidget(img_grp)
+
         # FFmpeg
         ffmpeg_grp = QGroupBox("FFmpeg")
         ffmpeg_lay = QVBoxLayout(ffmpeg_grp)
@@ -1417,6 +1432,7 @@ class AppolovaApp(QMainWindow):
         self.settings['after_effects_path'] = self.ae_path_edit.text()
         self.settings['genius_api_token']   = self.genius_edit.text()
         self.settings['whisper_model']      = self.whisper_combo.currentText()
+        self.settings['image_rotation']     = self.image_rotation_chk.isChecked()
         Config.GENIUS_API_TOKEN = self.genius_edit.text()
         Config.WHISPER_MODEL    = self.whisper_combo.currentText()
         self._save_settings()
@@ -2344,9 +2360,29 @@ class AppolovaApp(QMainWindow):
         # Image / colors
         image_path = job_folder / "cover.png"
         colors     = ['#ffffff', '#000000']
+        rotation_enabled = self.settings.get('image_rotation', False)
+        rotated_url = None
         if needs_image:
             chk()
-            if cached and cached.get('genius_image_url'):
+            if rotation_enabled and Config.GENIUS_API_TOKEN:
+                # Image rotation: always fetch a new image different from DB
+                current_url = cached.get('genius_image_url') if cached else None
+                self.signals.log.emit("  Rotating cover image…")
+                if image_path.exists():
+                    image_path.unlink()
+                _, rotated_url = self._run_step(
+                    job_number, "Image rotation",
+                    fetch_genius_image_rotated,
+                    song_title, str(job_folder), current_url)
+                if image_path.exists():
+                    self.signals.log.emit("  ✓ Rotated cover")
+                else:
+                    # Rotation failed — fall back to standard fetch
+                    self.signals.log.emit("  ⚠ Rotation failed, using standard fetch")
+                    ok = self._run_step(job_number, "Genius image fetch",
+                                        fetch_genius_image, song_title, str(job_folder))
+                    self.signals.log.emit("  ✓ Cover" if ok else "  ⚠ No cover")
+            elif cached and cached.get('genius_image_url'):
                 if not image_path.exists():
                     self.signals.log.emit("  Downloading cached image…")
                     self._run_step(job_number, "Image download", download_image, str(job_folder), cached['genius_image_url'])
@@ -2359,7 +2395,7 @@ class AppolovaApp(QMainWindow):
                 self.signals.log.emit("  ✓ Cover exists")
             chk()
             if image_path.exists():
-                if cached and cached.get('colors'):
+                if cached and cached.get('colors') and not rotation_enabled:
                     colors = cached['colors']
                     self.signals.log.emit("  ✓ Cached colors")
                 else:
@@ -2401,6 +2437,10 @@ class AppolovaApp(QMainWindow):
                 genius_image_url=None, colors=colors, beats=beats)
         elif cached and not self.use_smart_picker:
             self.song_db.mark_song_used(song_title)
+        # Update DB with rotated image URL and fresh colors
+        if rotated_url:
+            self.song_db.update_image_url(song_title, rotated_url)
+            self.song_db.update_colors_and_beats(song_title, colors, None)
         if lyrics_was_transcribed:
             # lyrics_data is a raw JSON string from .read_text() — parse it
             # so the DB methods (which call json.dumps) don't double-encode

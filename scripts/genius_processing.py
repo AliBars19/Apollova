@@ -119,6 +119,81 @@ def fetch_genius_image(song_title, job_folder):
 
 
 # ============================================================================
+# PUBLIC API: fetch_genius_image_rotated
+# ============================================================================
+def fetch_genius_image_rotated(song_title, job_folder, current_url=None):
+    """
+    Fetch an alternative cover image from Genius for image rotation.
+
+    Collects all available image URLs from search results (song_art and header)
+    and picks one that differs from *current_url*.  Falls back to the standard
+    fetch if no alternative is found.
+
+    Returns (image_path, chosen_url) tuple, or (None, None) on failure.
+    """
+    from scripts.image_processing import download_image
+
+    if not Config.GENIUS_API_TOKEN or not song_title:
+        return None, None
+
+    headers = {"Authorization": f"Bearer {Config.GENIUS_API_TOKEN}"}
+    artist, title = _parse_song_title(song_title)
+    query = f"{title} {artist}" if artist else title
+
+    try:
+        response = _request_with_retry(
+            "GET", f"{Config.GENIUS_BASE_URL}/search",
+            params={"q": query},
+            headers=headers,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        print(f"  Genius image rotation search failed: {e}")
+        return None, None
+
+    hits = data.get("response", {}).get("hits", [])
+    if not hits:
+        print("  No Genius results found for image rotation")
+        return None, None
+
+    # Collect all unique image URLs across all hits
+    candidates = []
+    for hit in hits:
+        result = hit.get("result", {})
+        for key in ("song_art_image_url", "header_image_url",
+                     "song_art_image_thumbnail_url"):
+            url = result.get(key)
+            if url and url not in candidates:
+                candidates.append(url)
+
+    if not candidates:
+        print("  No image candidates found")
+        return None, None
+
+    # Filter out the current URL so we get something different
+    if current_url:
+        alternatives = [u for u in candidates if u != current_url]
+    else:
+        alternatives = candidates
+
+    if not alternatives:
+        # All candidates match current — use any candidate (still better than nothing)
+        alternatives = candidates
+
+    # Pick a random alternative for variety
+    chosen = random.choice(alternatives)
+    print(f"  Image rotation: picked {'new' if chosen != current_url else 'same'} image")
+
+    try:
+        img_path = download_image(job_folder, chosen)
+        return img_path, chosen
+    except Exception as e:
+        print(f"  Failed to download rotated image: {e}")
+        return None, None
+
+
+# ============================================================================
 # PUBLIC API: fetch_genius_lyrics
 # ============================================================================
 def fetch_genius_lyrics(song_title):

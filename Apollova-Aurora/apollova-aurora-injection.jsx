@@ -242,6 +242,8 @@ function main() {
                 $.writeln("AUTO_RENDER: Render failed — " + renderErr.toString());
                 writeErrorLog("Render failed: " + renderErr.toString());
             }
+            // Save again after render so AE doesn't prompt "Save before closing?"
+            try { app.project.save(); } catch (e) {}
         } else {
             $.writeln("AUTO_RENDER: No items in render queue.");
             writeErrorLog("No items in render queue");

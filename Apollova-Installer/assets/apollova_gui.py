@@ -41,7 +41,7 @@ if hasattr(sys.stderr, "reconfigure"):
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton,
+    QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton, QCheckBox,
     QTabWidget, QGroupBox, QTextEdit, QProgressBar, QListWidget,
     QScrollArea, QFileDialog, QMessageBox, QButtonGroup, QFrame,
 )
@@ -1609,11 +1609,10 @@ class AppolovaApp(QMainWindow):
             if err_log.exists():
                 err_log.unlink()
 
-            # Launch AE with -s (keep AE open + visible) so user sees
-            # render progress.  renderQueue.render() runs inside JSX in
-            # interactive mode — this is reliable unlike headless -r mode.
+            # Launch AE with -r (run script file).  renderQueue.render()
+            # runs inside JSX in interactive mode.
             flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            p = subprocess.Popen([ae, "-s", str(dst)], creationflags=flags)
+            p = subprocess.Popen([ae, "-r", str(dst)], creationflags=flags)
             while p.poll() is None:
                 if self.batch_render_cancelled:
                     p.terminate()
@@ -2314,10 +2313,14 @@ class AppolovaApp(QMainWindow):
             elif not mono_path.exists():
                 self.signals.log.emit(f"  Transcribing mono ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                self._run_with_ticker(
+                mono_result = self._run_with_ticker(
                     self._run_step, job_number, "Whisper transcription (Mono)",
                     transcribe_audio_mono, str(job_folder), song_title)
                 elapsed = time.time() - t0
+                # transcribe_audio_mono returns data but doesn't write to disk
+                if mono_result:
+                    with open(mono_path, 'w', encoding='utf-8') as f:
+                        json.dump(mono_result, f, indent=4, ensure_ascii=False)
                 self.signals.log.emit(
                     f"  ✓ Transcribed mono ({elapsed:.0f}s)")
                 lyrics_was_transcribed = True
@@ -2339,10 +2342,14 @@ class AppolovaApp(QMainWindow):
             elif not onyx_path.exists():
                 self.signals.log.emit(f"  Transcribing onyx ({Config.WHISPER_MODEL})…")
                 t0 = time.time()
-                self._run_with_ticker(
+                onyx_result = self._run_with_ticker(
                     self._run_step, job_number, "Whisper transcription (Onyx)",
                     transcribe_audio_onyx, str(job_folder), song_title)
                 elapsed = time.time() - t0
+                # transcribe_audio_onyx returns data but doesn't write to disk
+                if onyx_result:
+                    with open(onyx_path, 'w', encoding='utf-8') as f:
+                        json.dump(onyx_result, f, indent=4, ensure_ascii=False)
                 self.signals.log.emit(
                     f"  ✓ Transcribed onyx ({elapsed:.0f}s)")
                 lyrics_was_transcribed = True

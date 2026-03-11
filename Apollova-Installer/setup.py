@@ -801,15 +801,7 @@ class SetupWizard(QMainWindow):
             if "==" in pkg_line:
                 self._uninstall_if_wrong_version(python, flags, pkg_line)
 
-            # openai-whisper and stable-ts need --no-build-isolation
-            # because their setup.py imports pkg_resources without
-            # declaring setuptools as a PEP 517 build dependency
-            extra = None
-            if pkg_name in ("openai-whisper", "stable-ts"):
-                extra = ["--no-build-isolation"]
-
             ok = self._pip_install(python, flags, pkg_line,
-                                   extra_args=extra,
                                    retries=3, timeout=300)
             log.pkg_install(pkg_name, ok)
             if not ok:
@@ -964,8 +956,10 @@ class SetupWizard(QMainWindow):
         flags  = self._flags()
 
         pkgs = [
-            ("openai-whisper==20231117", ["--no-build-isolation", "--no-deps"]),
-            ("stable-ts==2.17.4",        ["--no-build-isolation", "--no-deps"]),
+            ("openai-whisper==20231117", ["--no-build-isolation", "--no-deps",
+                                          "--prefer-binary"]),
+            ("stable-ts==2.17.4",        ["--no-build-isolation", "--no-deps",
+                                          "--prefer-binary"]),
         ]
 
         failed = []
@@ -975,25 +969,114 @@ class SetupWizard(QMainWindow):
             self.sig.nudge.emit()
             if "==" in pkg_line:
                 self._uninstall_if_wrong_version(python, flags, pkg_line)
+
+            # Primary attempt: --no-build-isolation --no-deps --prefer-binary
             ok = self._pip_install(python, flags, pkg_line,
                                    extra_args=extra,
-                                   retries=3, timeout=300)
+                                   retries=5, timeout=600)
+
+            # Fallback: drop --no-build-isolation in case pip's isolated
+            # build environment works better on this machine
+            if not ok:
+                log.warning(f"{pkg_name}: primary install failed, "
+                            f"trying fallback without --no-build-isolation")
+                self.sig.detail.emit(
+                    f"  Retrying {pkg_name} with fallback strategy...")
+                fallback_extra = ["--no-deps", "--prefer-binary"]
+                ok = self._pip_install(python, flags, pkg_line,
+                                       extra_args=fallback_extra,
+                                       retries=2, timeout=600)
+
             log.pkg_install(pkg_name, ok)
             if not ok:
                 failed.append(pkg_name)
 
         if failed:
+            self._whisper_install_diagnostic(python, flags, failed)
             self.sig.failed.emit(
                 "Whisper Install Failed",
                 "The following packages could not be installed:\n\n"
-                + "\n".join(f"  • {p}" for p in failed),
-                f"Please check your internet connection and try again.\n"
-                f"If this continues, contact {SUPPORT_EMAIL}"
+                + "\n".join(f"  • {p}" for p in failed)
+                + "\n\nA diagnostic report has been saved to the setup log.",
+                f"Log file: assets/logs/setup.log\n\n"
+                f"Common fixes:\n"
+                f"  • Check your internet connection\n"
+                f"  • Temporarily disable antivirus/firewall\n"
+                f"  • Run Setup again (it will resume where it left off)\n\n"
+                f"If this continues, send setup.log to {SUPPORT_EMAIL}"
             )
             return False
 
         self.sig.detail.emit("✓ Whisper packages installed.")
         return True
+
+    def _whisper_install_diagnostic(self, python, flags, failed_pkgs):
+        """Write a comprehensive diagnostic snapshot to setup.log.
+
+        Called when Whisper package installation fails so support can
+        diagnose the root cause from the log file alone.
+        """
+        log.section("WHISPER INSTALL DIAGNOSTIC")
+        log.error(f"Failed packages: {', '.join(failed_pkgs)}")
+
+        # Python version
+        try:
+            r = subprocess.run(
+                [python, "--version"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=flags)
+            log.info(f"Python: {r.stdout.strip()} {r.stderr.strip()}")
+        except Exception as e:
+            log.error(f"Could not get Python version: {e}")
+
+        # pip version
+        try:
+            r = subprocess.run(
+                [python, "-m", "pip", "--version"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=flags)
+            log.info(f"pip: {r.stdout.strip()}")
+        except Exception as e:
+            log.error(f"Could not get pip version: {e}")
+
+        # setuptools version (critical for --no-build-isolation)
+        try:
+            r = subprocess.run(
+                [python, "-c",
+                 "import setuptools; print(setuptools.__version__)"],
+                capture_output=True, text=True, timeout=10,
+                creationflags=flags)
+            log.info(f"setuptools: {r.stdout.strip()}")
+        except Exception as e:
+            log.error(f"Could not get setuptools version: {e}")
+
+        # Currently installed packages
+        try:
+            r = subprocess.run(
+                [python, "-m", "pip", "list", "--format=columns"],
+                capture_output=True, text=True, timeout=30,
+                creationflags=flags)
+            log.info(f"Installed packages:\n{r.stdout}")
+        except Exception as e:
+            log.error(f"Could not list installed packages: {e}")
+
+        # Network connectivity to PyPI
+        try:
+            s = socket.create_connection(("pypi.org", 443), timeout=5)
+            s.close()
+            log.info("Network: PyPI reachable (pypi.org:443)")
+        except Exception as e:
+            log.error(f"Network: PyPI UNREACHABLE — {e}")
+
+        # Disk space
+        try:
+            usage = shutil.disk_usage(str(self.root))
+            free_gb = usage.free / (1024 ** 3)
+            log.info(f"Disk: {free_gb:.1f} GB free on {self.root.drive or '/'}")
+        except Exception as e:
+            log.error(f"Could not check disk space: {e}")
+
+        log.section("END WHISPER DIAGNOSTIC")
 
     def _step_install_gpu(self):
         req = self.req_dir / "requirements-gpu.txt"
@@ -1549,9 +1632,10 @@ class SetupWizard(QMainWindow):
                 if proc.returncode == 0:
                     return True
                 if attempt < retries - 1:
+                    wait = min(3 * (2 ** attempt), 30)
                     self.sig.detail.emit(
-                        f"  Attempt {attempt + 1} failed, retrying...")
-                    time.sleep(3)
+                        f"  Attempt {attempt + 1} failed, retrying in {wait}s...")
+                    time.sleep(wait)
                 else:
                     # Final attempt failed — log the error detail
                     detail = stderr_out.strip() or full_stdout[-500:]

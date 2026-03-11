@@ -645,7 +645,7 @@ def extract_word_timings(segment, seg_start, seg_end, seg_text):
                 continue
             ws = float(word.start)
             we = float(word.end)
-            if we - ws > 5:
+            if we - ws > 3:
                 we = ws + 1.0
             words.append({
                 "word": word_text,
@@ -657,7 +657,7 @@ def extract_word_timings(segment, seg_start, seg_end, seg_text):
         word_list = seg_text.split()
         if word_list:
             dur = seg_end - seg_start
-            wd = dur / len(word_list)
+            wd = min(dur / len(word_list), 3.0)
             for i, w in enumerate(word_list):
                 words.append({
                     "word": w,
@@ -766,6 +766,120 @@ def fix_marker_gaps(markers):
             if gap > 4.0:
                 compression = min(gap * 0.1, 0.5)
                 words[i]["start"] = words[i - 1]["end"] + compression
+
+
+# ============================================================================
+# MERGE SHORT MARKERS (#19: Combine lonely single-word markers)
+# ============================================================================
+
+def merge_short_markers(markers, max_words=2, max_gap=1.5):
+    """
+    Merge single-word (or very short) markers with their nearest neighbour.
+    Single-word markers like "yeah", "oh", "Spotlight," look bad in lyric
+    videos. If the gap to the next marker is small enough, absorb into it.
+    """
+    if len(markers) < 2:
+        return markers
+
+    merged = []
+    skip_next = False
+
+    for i, m in enumerate(markers):
+        if skip_next:
+            skip_next = False
+            continue
+
+        word_count = len(m.get("text", "").split())
+
+        if word_count <= max_words and i + 1 < len(markers):
+            nxt = markers[i + 1]
+            gap = nxt["time"] - m.get("end_time", m["time"])
+
+            if gap <= max_gap:
+                # Absorb current marker into the next one
+                combined_text = m["text"].rstrip(",. ") + " " + nxt["text"]
+                combined_words = m.get("words", []) + nxt.get("words", [])
+                new_marker = {
+                    "time": m["time"],
+                    "text": combined_text,
+                    "words": combined_words,
+                    "color": nxt.get("color", ""),
+                    "end_time": nxt.get("end_time", nxt["time"]),
+                }
+                merged.append(new_marker)
+                skip_next = True
+                print(f"   🔗 Merged short marker '{m['text'][:30]}' with next")
+                continue
+
+        merged.append(m)
+
+    if len(merged) < len(markers):
+        print(f"   Merged {len(markers) - len(merged)} short marker(s)")
+    return merged
+
+
+# ============================================================================
+# QUALITY GATE (#20: Reject low-coverage transcriptions)
+# ============================================================================
+
+def quality_gate(markers, clip_duration):
+    """
+    Check if transcription markers adequately cover the clip.
+    Returns (passed, issues) where issues is a list of warning strings.
+    Callers can decide whether to save or discard.
+    """
+    issues = []
+
+    if not markers:
+        issues.append("No markers produced")
+        return False, issues
+
+    if clip_duration is None or clip_duration <= 0:
+        return True, issues
+
+    # Total time covered by markers
+    covered = sum(
+        m.get("end_time", m["time"]) - m["time"]
+        for m in markers
+    )
+    coverage_pct = covered / clip_duration
+
+    # Total dead space (gaps between markers)
+    gaps = []
+    if markers[0]["time"] > 3.0:
+        gaps.append(markers[0]["time"])
+    for i in range(1, len(markers)):
+        gap = markers[i]["time"] - markers[i - 1].get("end_time", markers[i - 1]["time"])
+        if gap > 3.0:
+            gaps.append(gap)
+    end_gap = clip_duration - markers[-1].get("end_time", markers[-1]["time"])
+    if end_gap > 3.0:
+        gaps.append(end_gap)
+    total_dead = sum(gaps)
+    dead_pct = total_dead / clip_duration
+
+    # Check for non-Latin script in majority of text
+    all_text = " ".join(m.get("text", "") for m in markers)
+    latin_chars = sum(1 for c in all_text if c.isalpha() and ord(c) < 0x0250)
+    non_latin = sum(1 for c in all_text if c.isalpha() and ord(c) >= 0x0250)
+    total_alpha = latin_chars + non_latin
+    if total_alpha > 0 and non_latin / total_alpha > 0.5:
+        issues.append(f"Non-Latin script dominates ({non_latin}/{total_alpha} chars)")
+
+    if coverage_pct < 0.25:
+        issues.append(f"Coverage too low: {coverage_pct:.0%} of clip")
+
+    if dead_pct > 0.5:
+        issues.append(f"Dead space: {dead_pct:.0%} of clip ({len(gaps)} gap(s) > 3s)")
+
+    if len(markers) == 1 and clip_duration > 10:
+        issues.append(f"Single marker for {clip_duration:.0f}s clip")
+
+    passed = len(issues) == 0
+    if not passed:
+        for iss in issues:
+            print(f"   ⚠ Quality gate: {iss}")
+    return passed, issues
 
 
 # ============================================================================

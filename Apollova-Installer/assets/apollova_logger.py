@@ -24,7 +24,6 @@ import logging.handlers
 import os
 import sys
 import platform
-import traceback
 from datetime import datetime
 from pathlib import Path
 

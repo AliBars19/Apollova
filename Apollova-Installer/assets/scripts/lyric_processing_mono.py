@@ -130,13 +130,14 @@ def transcribe_audio_mono(job_folder, song_title=None):
         # ============================================================
         markers = [m for m in markers if m["text"].strip()]
         markers = whisper_common.remove_non_target_script(markers, "text", song_title)
+        markers = whisper_common.merge_short_markers(markers)
         whisper_common.assign_colors(markers)
         whisper_common.fix_marker_gaps(markers)
 
-        if markers and audio_duration and audio_duration > 0:
-            ratio = len(markers) / audio_duration * 10
-            if ratio < 1.0:
-                print(f"  \u26a0 LOW QUALITY: only {len(markers)} markers for {audio_duration:.0f}s")
+        # Quality gate — warn (but still return) if transcription is poor
+        passed, issues = whisper_common.quality_gate(markers, audio_duration)
+        if not passed:
+            print(f"  \u26a0 QUALITY WARNING: {'; '.join(issues)}")
 
         print(f"\u2713 Mono transcription complete: {len(markers)} markers")
 

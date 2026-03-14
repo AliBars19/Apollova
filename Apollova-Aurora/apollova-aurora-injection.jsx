@@ -230,6 +230,9 @@ function main() {
     
     // Auto-render if flag is set
     if (AUTO_RENDER === "true") {
+        // Suppress "missing file" dialogs during headless automation
+        try { app.beginSuppressDialogs(); } catch (e) {}
+
         if (app.project.renderQueue.numItems > 0) {
             try { app.project.save(); } catch (e) {
                 $.writeln("Could not save project: " + e.toString());
@@ -248,6 +251,8 @@ function main() {
             $.writeln("AUTO_RENDER: No items in render queue.");
             writeErrorLog("No items in render queue");
         }
+
+        try { app.endSuppressDialogs(false); } catch (e) {}
     } else {
         $.writeln("All jobs queued. Review in Render Queue, then click Render.");
     }

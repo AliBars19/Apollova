@@ -28,6 +28,10 @@ class Config:
     # API Settings
     GENIUS_API_TOKEN = os.getenv("GENIUS_API_TOKEN", "")
     GENIUS_BASE_URL = "https://api.genius.com"
+
+    # Cloudflare Browser Rendering (optional — fallback for lyrics extraction)
+    CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
+    CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
     
     # Whisper Settings
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")

@@ -2,10 +2,11 @@
 Genius Processing - Bulletproof lyrics and image fetching from Genius API
 Shared across Aurora, Mono, and Onyx templates
 
-Extraction strategy (triple-layer):
+Extraction strategy (quad-layer):
   1. __PRELOADED_STATE__ JSON (fastest, most reliable when available)
   2. BeautifulSoup HTML parsing (data-lyrics-container divs)
-  3. Regex fallback (last resort for unusual page structures)
+  3. Regex fallback (for unusual page structures)
+  4. Cloudflare Browser Rendering /scrape (optional, for JS-rendered pages)
 """
 import random
 import time
@@ -250,7 +251,7 @@ def fetch_genius_lyrics(song_title):
         print(f"  Failed to fetch Genius page: {e}")
         return None
     
-    # Triple-layer extraction
+    # Quad-layer extraction
     lyrics = _extract_from_preloaded_state(html)
     
     if not lyrics:
@@ -261,6 +262,10 @@ def fetch_genius_lyrics(song_title):
         print("  Method 2 (BS4) failed, trying regex fallback...")
         lyrics = _extract_with_regex(html)
     
+    if not lyrics and _has_cloudflare_config():
+        print("  Method 3 (regex) failed, trying Cloudflare /scrape...")
+        lyrics = _extract_with_cloudflare(url)
+
     if not lyrics:
         print("  ❌ All extraction methods failed")
         return None
@@ -459,6 +464,98 @@ def _extract_with_regex(html):
         return None
     
     return "\n".join(cleaned)
+
+
+# ============================================================================
+# EXTRACTION METHOD 4: Cloudflare Browser Rendering /scrape
+# ============================================================================
+def _has_cloudflare_config():
+    """Check if Cloudflare Browser Rendering credentials are configured."""
+    return bool(Config.CLOUDFLARE_ACCOUNT_ID and Config.CLOUDFLARE_API_TOKEN)
+
+
+def _extract_with_cloudflare(url):
+    """
+    Use Cloudflare Browser Rendering /scrape to extract lyrics from a
+    fully JS-rendered Genius page.
+
+    Only called when methods 1-3 fail AND Cloudflare credentials are set.
+    The /scrape endpoint is synchronous — it renders the page in a headless
+    browser and returns the content of matched CSS selectors.
+    """
+    if not _has_cloudflare_config():
+        return None
+
+    scrape_url = (
+        f"https://api.cloudflare.com/client/v4/accounts/"
+        f"{Config.CLOUDFLARE_ACCOUNT_ID}/browser-rendering/scrape"
+    )
+
+    payload = {
+        "url": url,
+        "elements": [
+            {
+                "selector": "[data-lyrics-container='true']",
+            }
+        ],
+        "wait_for": {
+            "selector": "[data-lyrics-container='true']",
+            "timeout": 10000,
+        },
+    }
+
+    headers = {
+        "Authorization": f"Bearer {Config.CLOUDFLARE_API_TOKEN}",
+        "Content-Type": "application/json",
+    }
+
+    try:
+        resp = requests.post(scrape_url, json=payload, headers=headers, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        print(f"  Cloudflare /scrape request failed: {e}")
+        return None
+
+    if not data.get("success"):
+        errors = data.get("errors", [])
+        print(f"  Cloudflare /scrape API error: {errors}")
+        return None
+
+    # Extract text from each matched element
+    result = data.get("result", {})
+    elements = result.get("elements", [])
+    if not elements:
+        print("  Cloudflare /scrape: no lyrics containers found")
+        return None
+
+    lyrics_parts = []
+    for element_group in elements:
+        results_list = element_group.get("results", [])
+        for item in results_list:
+            # Prefer rendered text; fall back to parsing the HTML
+            text = item.get("text", "")
+            if not text and item.get("html"):
+                text = _cloudflare_html_to_text(item["html"])
+            if text and text.strip():
+                lyrics_parts.append(text.strip())
+
+    if not lyrics_parts:
+        print("  Cloudflare /scrape: elements matched but no text extracted")
+        return None
+
+    return "\n".join(lyrics_parts)
+
+
+def _cloudflare_html_to_text(html_fragment):
+    """Convert an HTML fragment from Cloudflare into plain text with newlines."""
+    # Replace <br> with newlines
+    text = re.sub(r'<br\s*/?>', '\n', html_fragment)
+    # Remove all remaining HTML tags
+    text = re.sub(r'<.*?>', '', text, flags=re.DOTALL)
+    # Unescape HTML entities
+    text = unescape(text)
+    return text
 
 
 # ============================================================================

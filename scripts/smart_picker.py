@@ -139,6 +139,18 @@ class SmartSongPicker:
         conn.commit()
         conn.close()
     
+    def check_all_songs_used_once(self):
+        """Check if all songs have been used (full rotation complete)"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1")
+        unused_count = cursor.fetchone()[0]
+
+        conn.close()
+
+        return unused_count == 0
+
     def reset_all_use_counts(self):
         """Reset all songs to unused (use_count = 1, last_used = NULL)"""
         conn = sqlite3.connect(self.db_path)
@@ -168,24 +180,3 @@ class SmartSongPicker:
         conn.close()
         
         return [(row[0], row[1], row[2]) for row in rows]
-
-
-def demo_smart_picker():
-    """Demo/test the smart picker"""
-    picker = SmartSongPicker()
-    
-    stats = picker.get_database_stats()
-    print("📊 Database Stats:")
-    print(f"   Total songs: {stats['total_songs']}")
-    print(f"   Unused songs: {stats['unused_songs']}")
-    print(f"   Use range: {stats['min_uses']}-{stats['max_uses']} (avg {stats['avg_uses']})")
-    print()
-    
-    print("🎵 Next 12 songs:")
-    songs = picker.get_available_songs(num_songs=12)
-    for i, song in enumerate(songs, 1):
-        print(f"   {i}. {song['song_title']} (used {song['use_count']}x)")
-
-
-if __name__ == "__main__":
-    demo_smart_picker()

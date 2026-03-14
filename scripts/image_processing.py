@@ -24,12 +24,12 @@ def download_image(job_folder, url, max_retries=3):
             img = resize_and_crop(img, target_size=700)
             img.save(image_path, format="PNG", optimize=True)
             
-            print(f"✓ Image downloaded and processed")
+            print(f"✓ Image downloaded")
             return image_path
             
         except Exception as e:
             if attempt < max_retries - 1:
-                print(f"  Image download failed (attempt {attempt + 1}/{max_retries}), retrying...")
+                print(f"  Retry {attempt + 1}/{max_retries}...")
             else:
                 print(f"❌ Image download failed: {e}")
                 raise
@@ -60,8 +60,8 @@ def extract_colors(job_folder, color_count=2):
     image_path = os.path.join(job_folder, 'cover.png')
     
     if not os.path.exists(image_path):
-        print(f"Cover image not found: {image_path}")
-        return []
+        print(f"❌ Cover image not found")
+        return ['#ff5733', '#33ff57']
     
     try:
         color_thief = ColorThief(image_path)
@@ -72,9 +72,9 @@ def extract_colors(job_folder, color_count=2):
             for r, g, b in palette
         ]
         
-        print(f"✓ Extracted {len(colors_hex)} colors: {', '.join(colors_hex)}")
+        print(f"✓ Colors: {', '.join(colors_hex)}")
         return colors_hex
         
     except Exception as e:
-        print(f"❌ Color extraction failed: {e}")
+        print(f"⚠️ Color extraction failed: {e}")
         return ['#ff5733', '#33ff57']

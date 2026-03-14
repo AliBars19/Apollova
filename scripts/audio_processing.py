@@ -86,6 +86,12 @@ def download_audio(url, job_folder, max_retries=3, use_oauth=True):
         except Exception as e:
             error_msg = str(e).lower()
 
+            if "music premium" in error_msg or "premium members" in error_msg:
+                raise ValueError(
+                    f"This song requires a YouTube Music Premium subscription and cannot be downloaded.\n\n"
+                    f"How to fix: Replace the YouTube URL with a free (non-Music Premium) upload of the same song."
+                ) from None
+
             if "429" in error_msg or "rate" in error_msg:
                 print(f"⚠️  Rate limited, waiting 15s...")
                 time.sleep(15)

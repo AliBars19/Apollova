@@ -123,6 +123,8 @@ REQUIRED_FILES = [
     "assets/apollova_gui.py",
     "assets/apollova_license.py",
     "assets/apollova_activation_dialog.py",
+    "assets/apollova_server.py",
+    "assets/apollova_tunnel.py",
     "assets/scripts/config.py",
     "assets/scripts/audio_processing.py",
     "assets/scripts/image_processing.py",
@@ -136,6 +138,9 @@ REQUIRED_FILES = [
     "assets/scripts/smart_picker.py",
     "assets/requirements/requirements-base.txt",
 ]
+
+# Parse --minimised flag (used by launch-on-startup to start in system tray)
+START_MINIMISED = "--minimised" in sys.argv
 
 REQUIRED_DIRS = [
     "Apollova-Aurora/jobs",
@@ -343,6 +348,7 @@ class LoadingScreen(QMainWindow):
             ("NumPy compatibility", self._check_numpy),
             ("FFmpeg",              self._check_ffmpeg),
             ("Write permissions",   self._check_writable),
+            ("Mobile Connect",      self._check_cloudflared),
         ]
         total = len(checks)
         warnings = []
@@ -559,6 +565,13 @@ class LoadingScreen(QMainWindow):
                 return False, f"Cannot write to {d.name}: {e}"
         return True, "Folders writable"
 
+    def _check_cloudflared(self):
+        cloudflared = self.root / "assets" / "cloudflared.exe"
+        if cloudflared.exists():
+            return True, "cloudflared.exe found"
+        # Not fatal — Mobile Connect is optional
+        return True, "Not installed — re-run Setup.exe to enable"
+
     # ─────────────────────────────────────────────────────────────────────────
     #  Launch main app
     # ─────────────────────────────────────────────────────────────────────────
@@ -573,9 +586,12 @@ class LoadingScreen(QMainWindow):
             env["PATH"] = str(app_ffmpeg) + os.pathsep + env.get("PATH", "")
 
         try:
-            log.info(f"Launching: {self.python} {gui}")
+            cmd = [self.python, str(gui)]
+            if START_MINIMISED:
+                cmd.append("--minimised")
+            log.info(f"Launching: {' '.join(cmd)}")
             proc = subprocess.Popen(
-                [self.python, str(gui)],
+                cmd,
                 cwd=str(self.root / "assets"),
                 env=env,
                 creationflags=flags)

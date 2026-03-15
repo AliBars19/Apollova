@@ -2743,7 +2743,11 @@ def main():
     app.setApplicationName("Apollova")
     app.setStyleSheet(APP_STYLE)
     win = AppolovaApp()
-    win.show()
+    if "--minimised" in sys.argv:
+        # Start hidden in system tray (launch-on-startup mode)
+        win.hide()
+    else:
+        win.show()
     sys.exit(app.exec())
 
 

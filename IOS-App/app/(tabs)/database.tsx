@@ -22,7 +22,9 @@ export default function DatabaseScreen(): React.JSX.Element {
   const [refreshing, setRefreshing] = useState(false);
   const [isAddModalVisible, setIsAddModalVisible] = useState(false);
   const [newTitle, setNewTitle] = useState('');
-  const [newArtist, setNewArtist] = useState('');
+  const [newUrl, setNewUrl] = useState('');
+  const [newStart, setNewStart] = useState('0:00');
+  const [newEnd, setNewEnd] = useState('0:30');
   const [isAdding, setIsAdding] = useState(false);
 
   const fetchSongs = useCallback(async () => {
@@ -64,20 +66,27 @@ export default function DatabaseScreen(): React.JSX.Element {
 
   const handleAddSong = async (): Promise<void> => {
     const trimmedTitle = newTitle.trim();
-    const trimmedArtist = newArtist.trim();
+    const trimmedUrl = newUrl.trim();
 
-    if (!trimmedTitle || !trimmedArtist) {
-      Alert.alert('Missing Info', 'Please enter both a title and artist.');
+    if (!trimmedTitle || !trimmedUrl) {
+      Alert.alert('Missing Info', 'Please enter both a title and YouTube URL.');
       return;
     }
 
     setIsAdding(true);
     try {
-      const newSong = await addSong(trimmedTitle, trimmedArtist);
-      setSongs((prev) => [...prev, newSong]);
+      await addSong({
+        title: trimmedTitle,
+        url: trimmedUrl,
+        start: newStart.trim() || '0:00',
+        end: newEnd.trim() || '0:30',
+      });
       setNewTitle('');
-      setNewArtist('');
+      setNewUrl('');
+      setNewStart('0:00');
+      setNewEnd('0:30');
       setIsAddModalVisible(false);
+      await fetchSongs();
     } catch {
       Alert.alert('Error', 'Failed to add song.');
     } finally {
@@ -86,19 +95,17 @@ export default function DatabaseScreen(): React.JSX.Element {
   };
 
   const filteredSongs = searchQuery.trim()
-    ? songs.filter(
-        (song) =>
-          song.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          song.artist.toLowerCase().includes(searchQuery.toLowerCase()),
+    ? songs.filter((song) =>
+        song.song_title.toLowerCase().includes(searchQuery.toLowerCase()),
       )
     : songs;
 
   const renderItem = ({ item }: { item: Song }) => (
     <SongRow
-      title={item.title}
-      artist={item.artist}
+      songTitle={item.song_title}
       useCount={item.use_count}
-      onDelete={() => handleDelete(item.id, item.title)}
+      lastUsed={item.last_used}
+      onDelete={() => handleDelete(item.id, item.song_title)}
     />
   );
 
@@ -159,24 +166,51 @@ export default function DatabaseScreen(): React.JSX.Element {
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Add Song</Text>
 
-            <Text style={styles.inputLabel}>Title</Text>
+            <Text style={styles.inputLabel}>Song Title</Text>
             <TextInput
               style={styles.textInput}
               value={newTitle}
               onChangeText={setNewTitle}
-              placeholder="Song title"
+              placeholder="Artist - Song Title"
               placeholderTextColor={Colors.text.disabled}
               autoFocus
             />
 
-            <Text style={styles.inputLabel}>Artist</Text>
+            <Text style={styles.inputLabel}>YouTube URL</Text>
             <TextInput
               style={styles.textInput}
-              value={newArtist}
-              onChangeText={setNewArtist}
-              placeholder="Artist name"
+              value={newUrl}
+              onChangeText={setNewUrl}
+              placeholder="https://youtube.com/watch?v=..."
               placeholderTextColor={Colors.text.disabled}
+              autoCapitalize="none"
+              keyboardType="url"
             />
+
+            <View style={styles.timeRow}>
+              <View style={styles.timeField}>
+                <Text style={styles.inputLabel}>Start (M:SS)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newStart}
+                  onChangeText={setNewStart}
+                  placeholder="0:00"
+                  placeholderTextColor={Colors.text.disabled}
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+              <View style={styles.timeField}>
+                <Text style={styles.inputLabel}>End (M:SS)</Text>
+                <TextInput
+                  style={styles.textInput}
+                  value={newEnd}
+                  onChangeText={setNewEnd}
+                  placeholder="0:30"
+                  placeholderTextColor={Colors.text.disabled}
+                  keyboardType="numbers-and-punctuation"
+                />
+              </View>
+            </View>
 
             <View style={styles.modalActions}>
               <Pressable
@@ -184,7 +218,9 @@ export default function DatabaseScreen(): React.JSX.Element {
                 onPress={() => {
                   setIsAddModalVisible(false);
                   setNewTitle('');
-                  setNewArtist('');
+                  setNewUrl('');
+                  setNewStart('0:00');
+                  setNewEnd('0:30');
                 }}
               >
                 <Text style={styles.modalCancelText}>Cancel</Text>
@@ -300,6 +336,13 @@ const styles = StyleSheet.create({
     color: Colors.text.primary,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  timeRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  timeField: {
+    flex: 1,
   },
   modalActions: {
     flexDirection: 'row',

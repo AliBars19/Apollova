@@ -4,23 +4,27 @@ import { Colors } from '../constants/colors';
 import StatusBadge from './StatusBadge';
 
 interface JobCardProps {
-  readonly jobNumber: number;
+  readonly folder: string;
   readonly songTitle: string;
   readonly template: string;
-  readonly status: 'pending' | 'running' | 'complete' | 'failed';
+  readonly status: 'complete' | 'incomplete';
 }
 
 export default function JobCard({
-  jobNumber,
+  folder,
   songTitle,
   template,
   status,
 }: JobCardProps): React.JSX.Element {
+  const badgeStatus = status === 'complete' ? 'complete' : 'pending';
+
   return (
     <View style={styles.card}>
       <View style={styles.header}>
-        <Text style={styles.jobNumber}>#{jobNumber}</Text>
-        <StatusBadge status={status} />
+        <Text style={styles.folderName} numberOfLines={1}>
+          {folder}
+        </Text>
+        <StatusBadge status={badgeStatus} />
       </View>
 
       <Text style={styles.songTitle} numberOfLines={1}>
@@ -51,10 +55,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
   },
-  jobNumber: {
+  folderName: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.text.secondary,
+    flex: 1,
+    marginRight: 8,
   },
   songTitle: {
     fontSize: 16,

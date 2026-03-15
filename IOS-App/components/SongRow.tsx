@@ -17,18 +17,18 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 
 interface SongRowProps {
-  readonly title: string;
-  readonly artist: string;
+  readonly songTitle: string;
   readonly useCount: number;
+  readonly lastUsed: string | null;
   readonly onDelete: () => void;
 }
 
 const SWIPE_THRESHOLD = -80;
 
 export default function SongRow({
-  title,
-  artist,
+  songTitle,
   useCount,
+  lastUsed,
   onDelete,
 }: SongRowProps): React.JSX.Element {
   const translateX = useRef(new Animated.Value(0)).current;
@@ -79,11 +79,13 @@ export default function SongRow({
       >
         <View style={styles.info}>
           <Text style={styles.title} numberOfLines={1}>
-            {title}
+            {songTitle}
           </Text>
-          <Text style={styles.artist} numberOfLines={1}>
-            {artist}
-          </Text>
+          {lastUsed !== null && (
+            <Text style={styles.subtitle} numberOfLines={1}>
+              Last used: {lastUsed}
+            </Text>
+          )}
         </View>
 
         <View style={styles.countBadge}>
@@ -140,7 +142,7 @@ const styles = StyleSheet.create({
     color: Colors.text.primary,
     marginBottom: 2,
   },
-  artist: {
+  subtitle: {
     fontSize: 13,
     color: Colors.text.secondary,
   },

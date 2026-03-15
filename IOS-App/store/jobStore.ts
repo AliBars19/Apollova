@@ -1,19 +1,12 @@
 import { create } from 'zustand';
-
-export interface Job {
-  readonly id: number;
-  readonly songTitle: string;
-  readonly template: string;
-  readonly status: 'pending' | 'running' | 'complete' | 'failed';
-  readonly createdAt: string;
-}
+import { JobEntry } from '../api/endpoints';
 
 interface JobState {
-  readonly jobs: readonly Job[];
+  readonly jobs: readonly JobEntry[];
   readonly isProcessing: boolean;
   readonly batchProgress: number;
 
-  setJobs: (jobs: readonly Job[]) => void;
+  setJobs: (jobs: readonly JobEntry[]) => void;
   setProcessing: (processing: boolean) => void;
   setBatchProgress: (progress: number) => void;
   clearJobs: () => void;
@@ -24,7 +17,7 @@ export const useJobStore = create<JobState>((set) => ({
   isProcessing: false,
   batchProgress: 0,
 
-  setJobs: (jobs: readonly Job[]) =>
+  setJobs: (jobs: readonly JobEntry[]) =>
     set((state) => ({
       ...state,
       jobs,

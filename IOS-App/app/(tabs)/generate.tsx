@@ -40,14 +40,14 @@ export default function GenerateScreen(): React.JSX.Element {
 
     setIsLoading(true);
     try {
-      const preview = await getSmartPickerPreview(template);
+      const preview = await getSmartPickerPreview();
       setPreviewSongs(preview.songs);
     } catch {
       setPreviewSongs([]);
     } finally {
       setIsLoading(false);
     }
-  }, [template, mode]);
+  }, [mode]);
 
   useEffect(() => {
     fetchPreview();
@@ -56,7 +56,7 @@ export default function GenerateScreen(): React.JSX.Element {
   const handleReshuffle = async (): Promise<void> => {
     setIsLoading(true);
     try {
-      const preview = await reshuffleSmartPicker(template);
+      const preview = await reshuffleSmartPicker();
       setPreviewSongs(preview.songs);
     } catch {
       Alert.alert('Error', 'Failed to reshuffle songs.');
@@ -161,10 +161,7 @@ export default function GenerateScreen(): React.JSX.Element {
                   <Text style={styles.previewIndex}>{index + 1}</Text>
                   <View style={styles.previewInfo}>
                     <Text style={styles.previewTitle} numberOfLines={1}>
-                      {song.title}
-                    </Text>
-                    <Text style={styles.previewArtist} numberOfLines={1}>
-                      {song.artist}
+                      {song.song_title}
                     </Text>
                   </View>
                   <View style={styles.previewCount}>
@@ -284,11 +281,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: Colors.text.primary,
-  },
-  previewArtist: {
-    fontSize: 12,
-    color: Colors.text.secondary,
-    marginTop: 1,
   },
   previewCount: {
     backgroundColor: Colors.bg.elevated,

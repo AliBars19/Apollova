@@ -16,7 +16,6 @@ import {
   getRenderStatus,
   RenderStatusResponse,
 } from '../../api/endpoints';
-import ProgressBar from '../../components/ProgressBar';
 import StatusBadge from '../../components/StatusBadge';
 
 type Template = 'Aurora' | 'Mono' | 'Onyx';
@@ -67,7 +66,7 @@ export default function RenderScreen(): React.JSX.Element {
   const handleTripleRender = async (): Promise<void> => {
     Alert.alert(
       'Triple Render',
-      `This will render 3 videos using the ${selectedTemplate} template. Continue?`,
+      'This will render 3 videos across all templates. Continue?',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -75,8 +74,8 @@ export default function RenderScreen(): React.JSX.Element {
           onPress: async () => {
             setIsTripling(true);
             try {
-              await tripleRender(selectedTemplate);
-              Alert.alert('Triple Render Started', `Rendering 3 videos with ${selectedTemplate}.`);
+              await tripleRender();
+              Alert.alert('Triple Render Started', 'Rendering 3 videos across all templates.');
               await fetchStatus();
             } catch {
               Alert.alert('Error', 'Failed to start triple render.');
@@ -89,9 +88,8 @@ export default function RenderScreen(): React.JSX.Element {
     );
   };
 
-  const slotEntries = renderStatus?.slots
-    ? Object.entries(renderStatus.slots)
-    : [];
+  const isRendering = renderStatus?.status === 'rendering';
+  const queueLength = renderStatus?.queue.length ?? 0;
 
   return (
     <ScrollView
@@ -160,43 +158,15 @@ export default function RenderScreen(): React.JSX.Element {
 
           <View style={styles.statusRow}>
             <Text style={styles.statusLabel}>Status</Text>
-            <StatusBadge status={renderStatus.isRendering ? 'running' : 'pending'} />
-          </View>
-
-          {renderStatus.currentJob !== null && (
-            <View style={styles.statusRow}>
-              <Text style={styles.statusLabel}>Current Job</Text>
-              <Text style={styles.statusValue} numberOfLines={1}>
-                {renderStatus.currentJob}
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.progressSection}>
-            <Text style={styles.statusLabel}>Progress</Text>
-            <ProgressBar percent={renderStatus.progress} height={8} />
-            <Text style={styles.progressPercent}>{Math.round(renderStatus.progress)}%</Text>
+            <StatusBadge status={isRendering ? 'running' : 'pending'} />
           </View>
 
           <View style={styles.statusRow}>
-            <Text style={styles.statusLabel}>Render Watcher</Text>
-            <StatusBadge status={renderStatus.renderWatcherRunning ? 'running' : 'pending'} />
+            <Text style={styles.statusLabel}>Queue</Text>
+            <Text style={styles.statusValue}>
+              {queueLength} {queueLength === 1 ? 'video' : 'videos'}
+            </Text>
           </View>
-        </View>
-      )}
-
-      {/* Account Slots */}
-      {slotEntries.length > 0 && (
-        <View style={styles.statusCard}>
-          <Text style={styles.cardTitle}>Account Slots</Text>
-          {slotEntries.map(([account, count]) => (
-            <View key={account} style={styles.slotRow}>
-              <Text style={styles.slotAccount}>{account}</Text>
-              <View style={styles.slotCountBadge}>
-                <Text style={styles.slotCountText}>{count}</Text>
-              </View>
-            </View>
-          ))}
         </View>
       )}
     </ScrollView>
@@ -319,42 +289,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: Colors.text.primary,
-    maxWidth: 200,
-    textAlign: 'right',
-  },
-  progressSection: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-    gap: 8,
-  },
-  progressPercent: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.accent.blue,
-  },
-  slotRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
-  },
-  slotAccount: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text.primary,
-  },
-  slotCountBadge: {
-    backgroundColor: Colors.bg.elevated,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-    borderRadius: 10,
-  },
-  slotCountText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.accent.blue,
   },
 });

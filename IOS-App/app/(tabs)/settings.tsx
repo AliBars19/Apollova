@@ -1,81 +1,119 @@
-import React, { useCallback } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, Alert } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, Pressable, ScrollView, Switch, StyleSheet, Alert } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
+import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/colors';
 import { useConnectionStore } from '../../store/connectionStore';
-import * as SecureStore from 'expo-secure-store';
+import StatusBadge from '../../components/StatusBadge';
 
 const APP_VERSION = '1.0.0';
+const SECURE_STORE_URL_KEY = 'apollova_tunnel_url';
+const SECURE_STORE_TOKEN_KEY = 'apollova_session_token';
 
 export default function SettingsScreen(): React.JSX.Element {
-  const { isOnline, tunnelUrl, disconnect } = useConnectionStore();
+  const router = useRouter();
+  const isOnline = useConnectionStore((s) => s.isOnline);
+  const tunnelUrl = useConnectionStore((s) => s.tunnelUrl);
+  const disconnect = useConnectionStore((s) => s.disconnect);
 
-  const handleDisconnect = useCallback(() => {
+  const [batchNotifications, setBatchNotifications] = useState(true);
+  const [renderNotifications, setRenderNotifications] = useState(true);
+  const [errorNotifications, setErrorNotifications] = useState(true);
+
+  const handleDisconnect = (): void => {
     Alert.alert(
       'Disconnect',
-      'This will unpair your phone. You will need to scan the QR code again.',
+      'This will unpair your phone from the PC. You will need to scan the QR code again to reconnect.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Disconnect',
           style: 'destructive',
           onPress: async () => {
-            await SecureStore.deleteItemAsync('tunnelUrl');
-            await SecureStore.deleteItemAsync('sessionToken');
+            try {
+              await SecureStore.deleteItemAsync(SECURE_STORE_URL_KEY);
+              await SecureStore.deleteItemAsync(SECURE_STORE_TOKEN_KEY);
+            } catch {
+              // Best-effort cleanup
+            }
             disconnect();
+            router.replace('/pair');
           },
         },
       ],
     );
-  }, [disconnect]);
-
-  const handleReconnect = useCallback(async () => {
-    // Clear stored credentials and redirect to pair screen
-    await SecureStore.deleteItemAsync('tunnelUrl');
-    await SecureStore.deleteItemAsync('sessionToken');
-    disconnect();
-  }, [disconnect]);
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.sectionTitle}>PC Connection</Text>
+      {/* Connection Card */}
       <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={styles.label}>Status</Text>
-          <View style={[styles.badge, isOnline ? styles.badgeOnline : styles.badgeOffline]}>
-            <Text style={[styles.badgeText, isOnline ? styles.badgeTextOnline : styles.badgeTextOffline]}>
-              {isOnline ? 'Connected' : 'Offline'}
-            </Text>
-          </View>
+        <Text style={styles.cardTitle}>PC Connection</Text>
+
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Status</Text>
+          <StatusBadge status={isOnline ? 'complete' : 'failed'} />
         </View>
 
-        {tunnelUrl && (
-          <View style={styles.row}>
-            <Text style={styles.label}>Tunnel</Text>
-            <Text style={styles.value} numberOfLines={1}>
-              {tunnelUrl.length > 35 ? tunnelUrl.slice(0, 35) + '...' : tunnelUrl}
-            </Text>
-          </View>
-        )}
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Server</Text>
+          <Text style={styles.infoValue} numberOfLines={1}>
+            {tunnelUrl ?? 'Not connected'}
+          </Text>
+        </View>
 
-        <View style={styles.buttonRow}>
-          <TouchableOpacity style={styles.reconnectButton} onPress={handleReconnect}>
-            <Text style={styles.reconnectText}>Reconnect via QR</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.disconnectButton} onPress={handleDisconnect}>
-            <Text style={styles.disconnectText}>Disconnect</Text>
-          </TouchableOpacity>
+        <Pressable style={styles.disconnectButton} onPress={handleDisconnect}>
+          <Text style={styles.disconnectText}>Disconnect</Text>
+        </Pressable>
+      </View>
+
+      {/* Notifications Card */}
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Notifications</Text>
+
+        <View style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Batch Complete</Text>
+          <Switch
+            value={batchNotifications}
+            onValueChange={setBatchNotifications}
+            trackColor={{ false: Colors.bg.elevated, true: Colors.accent.blue }}
+            thumbColor={Colors.text.primary}
+          />
+        </View>
+
+        <View style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Render Complete</Text>
+          <Switch
+            value={renderNotifications}
+            onValueChange={setRenderNotifications}
+            trackColor={{ false: Colors.bg.elevated, true: Colors.accent.blue }}
+            thumbColor={Colors.text.primary}
+          />
+        </View>
+
+        <View style={styles.toggleRow}>
+          <Text style={styles.toggleLabel}>Error Alerts</Text>
+          <Switch
+            value={errorNotifications}
+            onValueChange={setErrorNotifications}
+            trackColor={{ false: Colors.bg.elevated, true: Colors.accent.blue }}
+            thumbColor={Colors.text.primary}
+          />
         </View>
       </View>
 
-      <Text style={styles.sectionTitle}>App Info</Text>
+      {/* About Card */}
       <View style={styles.card}>
-        <View style={styles.row}>
-          <Text style={styles.label}>Version</Text>
-          <Text style={styles.value}>{APP_VERSION}</Text>
+        <Text style={styles.cardTitle}>About</Text>
+
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>App Version</Text>
+          <Text style={styles.infoValue}>{APP_VERSION}</Text>
         </View>
-        <View style={styles.row}>
-          <Text style={styles.label}>Build</Text>
-          <Text style={styles.value}>1</Text>
+
+        <View style={styles.infoRow}>
+          <Text style={styles.infoLabel}>Platform</Text>
+          <Text style={styles.infoValue}>iOS</Text>
         </View>
       </View>
     </ScrollView>
@@ -83,26 +121,29 @@ export default function SettingsScreen(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.bg.primary },
-  content: { padding: 16, paddingBottom: 40 },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.text.secondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 12,
-    marginTop: 8,
+  container: {
+    flex: 1,
+    backgroundColor: Colors.bg.primary,
+  },
+  content: {
+    padding: 16,
+    paddingBottom: 40,
   },
   card: {
     backgroundColor: Colors.bg.surface,
-    borderRadius: 12,
-    padding: 16,
+    borderRadius: 14,
+    padding: 18,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 24,
   },
-  row: {
+  cardTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.text.primary,
+    marginBottom: 14,
+  },
+  infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -110,33 +151,39 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  label: { fontSize: 15, color: Colors.text.secondary },
-  value: { fontSize: 15, color: Colors.text.primary, flexShrink: 1 },
-  badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
-  badgeOnline: { backgroundColor: 'rgba(166,227,161,0.15)' },
-  badgeOffline: { backgroundColor: 'rgba(243,139,168,0.15)' },
-  badgeText: { fontSize: 13, fontWeight: '600' },
-  badgeTextOnline: { color: Colors.status.green },
-  badgeTextOffline: { color: Colors.status.danger },
-  buttonRow: { flexDirection: 'row', gap: 12, marginTop: 16 },
-  reconnectButton: {
-    flex: 1,
-    padding: 12,
-    borderRadius: 10,
-    backgroundColor: Colors.accent.blueDark,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.accent.blue,
+  infoLabel: {
+    fontSize: 14,
+    color: Colors.text.secondary,
   },
-  reconnectText: { color: Colors.accent.blue, fontSize: 14, fontWeight: '600' },
+  infoValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    maxWidth: 200,
+    textAlign: 'right',
+  },
   disconnectButton: {
-    flex: 1,
-    padding: 12,
+    marginTop: 16,
+    backgroundColor: Colors.status.danger + '22',
+    paddingVertical: 12,
     borderRadius: 10,
-    backgroundColor: 'rgba(243,139,168,0.1)',
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: Colors.status.danger,
   },
-  disconnectText: { color: Colors.status.danger, fontSize: 14, fontWeight: '600' },
+  disconnectText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.status.danger,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  toggleLabel: {
+    fontSize: 14,
+    color: Colors.text.primary,
+  },
 });

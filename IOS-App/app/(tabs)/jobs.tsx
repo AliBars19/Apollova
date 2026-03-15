@@ -2,28 +2,24 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { View, Text, FlatList, Pressable, StyleSheet, RefreshControl } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/colors';
-import { useJobStore, Job } from '../../store/jobStore';
-import { getJobs } from '../../api/endpoints';
+import { useJobStore } from '../../store/jobStore';
+import { getJobs, JobEntry } from '../../api/endpoints';
 import JobCard from '../../components/JobCard';
 
 export default function JobsScreen(): React.JSX.Element {
   const router = useRouter();
   const jobs = useJobStore((s) => s.jobs);
   const setJobs = useJobStore((s) => s.setJobs);
-  const setProcessing = useJobStore((s) => s.setProcessing);
-  const setBatchProgress = useJobStore((s) => s.setBatchProgress);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchJobs = useCallback(async () => {
     try {
       const response = await getJobs();
       setJobs(response.jobs);
-      setProcessing(response.isProcessing);
-      setBatchProgress(response.batchProgress);
     } catch {
       // Handled by connection hook
     }
-  }, [setJobs, setProcessing, setBatchProgress]);
+  }, [setJobs]);
 
   useEffect(() => {
     fetchJobs();
@@ -35,16 +31,10 @@ export default function JobsScreen(): React.JSX.Element {
     setRefreshing(false);
   }, [fetchJobs]);
 
-  const sortedJobs = [...jobs].sort((a, b) => {
-    const dateA = new Date(a.createdAt).getTime();
-    const dateB = new Date(b.createdAt).getTime();
-    return dateB - dateA;
-  });
-
-  const renderItem = ({ item, index }: { item: Job; index: number }) => (
+  const renderItem = ({ item }: { item: JobEntry }) => (
     <JobCard
-      jobNumber={sortedJobs.length - index}
-      songTitle={item.songTitle}
+      folder={item.folder}
+      songTitle={item.song_title ?? item.folder}
       template={item.template}
       status={item.status}
     />
@@ -60,9 +50,9 @@ export default function JobsScreen(): React.JSX.Element {
   return (
     <View style={styles.container}>
       <FlatList
-        data={sortedJobs}
+        data={[...jobs]}
         renderItem={renderItem}
-        keyExtractor={(item) => String(item.id)}
+        keyExtractor={(item) => item.folder}
         contentContainerStyle={styles.listContent}
         ListEmptyComponent={renderEmpty}
         refreshControl={

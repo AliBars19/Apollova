@@ -4,16 +4,9 @@ import { useRouter } from 'expo-router';
 import { Colors } from '../../constants/colors';
 import { useProgressStore } from '../../store/progressStore';
 import { useJobStore } from '../../store/jobStore';
-import { getStatus, getJobs, cancelJobs } from '../../api/endpoints';
+import { getStatus, getJobs, cancelJobs, StatusResponse } from '../../api/endpoints';
 import ProgressBar from '../../components/ProgressBar';
 import StatusBadge from '../../components/StatusBadge';
-
-interface AppStatus {
-  readonly isRendering: boolean;
-  readonly activeTemplate: string;
-  readonly queueLength: number;
-  readonly renderWatcherRunning: boolean;
-}
 
 export default function DashboardScreen(): React.JSX.Element {
   const router = useRouter();
@@ -21,7 +14,7 @@ export default function DashboardScreen(): React.JSX.Element {
   const message = useProgressStore((s) => s.message);
   const batchResult = useProgressStore((s) => s.batchResult);
   const isProcessing = useJobStore((s) => s.isProcessing);
-  const [status, setStatus] = useState<AppStatus | null>(null);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -29,8 +22,7 @@ export default function DashboardScreen(): React.JSX.Element {
       const [statusRes, jobsRes] = await Promise.all([getStatus(), getJobs()]);
       setStatus(statusRes);
       useJobStore.getState().setJobs(jobsRes.jobs);
-      useJobStore.getState().setProcessing(jobsRes.isProcessing);
-      useJobStore.getState().setBatchProgress(jobsRes.batchProgress);
+      useJobStore.getState().setProcessing(statusRes.is_processing);
     } catch {
       // Will be handled by connection hook
     }
@@ -140,19 +132,21 @@ export default function DashboardScreen(): React.JSX.Element {
           <Text style={styles.statusLabel}>Active Template</Text>
           {status !== null && (
             <View style={styles.templatePill}>
-              <Text style={styles.templatePillText}>{status.activeTemplate}</Text>
+              <Text style={styles.templatePillText}>{status.template}</Text>
             </View>
           )}
         </View>
         <View style={styles.statusRow}>
-          <Text style={styles.statusLabel}>Render Watcher</Text>
+          <Text style={styles.statusLabel}>Processing</Text>
           {status !== null && (
-            <StatusBadge status={status.renderWatcherRunning ? 'running' : 'pending'} />
+            <StatusBadge status={status.is_processing ? 'running' : 'pending'} />
           )}
         </View>
         <View style={styles.statusRow}>
-          <Text style={styles.statusLabel}>Queue</Text>
-          <Text style={styles.queueCount}>{status?.queueLength ?? 0} jobs</Text>
+          <Text style={styles.statusLabel}>Batch Render</Text>
+          {status !== null && (
+            <StatusBadge status={status.batch_render_active ? 'running' : 'pending'} />
+          )}
         </View>
       </View>
     </ScrollView>
@@ -272,10 +266,5 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: Colors.accent.blue,
-  },
-  queueCount: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: Colors.text.primary,
   },
 });

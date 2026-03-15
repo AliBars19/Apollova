@@ -35,3 +35,9 @@ python-dotenv==1.0.1
 
 # GUI
 PyQt6==6.7.1
+
+# Mobile remote control server
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+websockets==13.1
+qrcode[pil]==7.4.2

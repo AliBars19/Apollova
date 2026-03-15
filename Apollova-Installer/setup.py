@@ -608,6 +608,7 @@ class SetupWizard(QMainWindow):
             if self.ffmpeg_chk.isChecked() or not (
                     self._ffmpeg_in_path() or self._ffmpeg_in_app()):
                 steps.append(("install_ffmpeg", 88, "Installing FFmpeg..."))
+            steps.append(("install_cloudflared", 91, "Installing cloudflared..."))
             steps += [
                 ("verify_all",     93, "Verifying all packages..."),
                 ("verify_files",   96, "Verifying file integrity..."),
@@ -684,6 +685,7 @@ class SetupWizard(QMainWindow):
             "install_gpu":     self._step_install_gpu,
             "install_whisper": self._step_install_whisper,
             "install_ffmpeg":  self._step_install_ffmpeg,
+            "install_cloudflared": self._step_install_cloudflared,
             "verify_all":    self._step_verify_all,
             "verify_files":  self._step_verify_files,
             "create_files":  self._step_create_files,
@@ -1222,6 +1224,33 @@ class SetupWizard(QMainWindow):
             self.sig.detail.emit(
                 f"⚠ FFmpeg download failed: {e}\n"
                 "  Please install manually from https://ffmpeg.org/download.html")
+        return True  # non-fatal
+
+    def _step_install_cloudflared(self):
+        """Download cloudflared.exe for Mobile Connect (non-fatal)."""
+        dest = self.assets_dir / "cloudflared.exe"
+        if dest.exists():
+            self.sig.detail.emit("cloudflared.exe already present — skipping")
+            return True
+
+        url = (
+            "https://github.com/cloudflare/cloudflared/releases/latest/"
+            "download/cloudflared-windows-amd64.exe"
+        )
+        self.sig.detail.emit("Downloading cloudflared for Mobile Connect (~35MB)...")
+        try:
+            def hook(block, bsize, total):
+                if total > 0:
+                    pct = min(100, block * bsize * 100 // total)
+                    self.sig.detail.emit(f"Downloading cloudflared: {pct}%")
+                    self.sig.nudge.emit()
+
+            urllib.request.urlretrieve(url, dest, hook)
+            self.sig.detail.emit("cloudflared installed")
+        except Exception as e:
+            self.sig.detail.emit(
+                f"WARNING: cloudflared download failed: {e}\n"
+                "  Mobile Connect will be unavailable. Re-run Setup to retry.")
         return True  # non-fatal
 
     def _step_verify_all(self):

@@ -44,9 +44,10 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton, QCheckBox,
     QTabWidget, QGroupBox, QTextEdit, QProgressBar, QListWidget,
     QScrollArea, QFileDialog, QMessageBox, QButtonGroup, QFrame,
+    QSystemTrayIcon, QMenu,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtGui import QFont, QIcon, QAction
 
 # ── Path resolution ───────────────────────────────────────────────────────────
 if getattr(sys, "frozen", False):
@@ -443,6 +444,7 @@ class AppolovaApp(QMainWindow):
         self.signals = WorkerSignals()
         self.signals.log.connect(self._append_log)
         self.signals.progress.connect(lambda v: self.progress_bar.setValue(int(v)))
+        self.signals.progress.connect(self._broadcast_progress)
         self.signals.finished.connect(self._on_generation_finished)
         self.signals.error.connect(self._on_generation_error)
         self.signals.stats_refresh.connect(self._refresh_stats_label)
@@ -471,6 +473,12 @@ class AppolovaApp(QMainWindow):
                 self._save_settings()
                 self.ae_path_edit.setText(detected)
                 self._update_ae_status()
+
+        # ── Mobile server + tunnel ────────────────────────────────────────────
+        self._tunnel_manager = None
+        self._server_thread = None
+        self._start_mobile_server()
+        self._setup_system_tray()
 
     # ── Dirs / Settings ───────────────────────────────────────────────────────
 
@@ -942,6 +950,40 @@ class AppolovaApp(QMainWindow):
         ffmpeg_lay.addWidget(self.ffmpeg_status_label)
         self._check_ffmpeg()
         layout.addWidget(ffmpeg_grp)
+
+        # Mobile & Remote
+        mobile_grp = QGroupBox("Mobile & Remote")
+        mobile_lay = QVBoxLayout(mobile_grp)
+
+        # Launch on startup
+        self.startup_chk = QCheckBox("Launch Apollova on Windows startup (minimised to tray)")
+        self.startup_chk.setChecked(self.settings.get("launch_on_startup", False))
+        self.startup_chk.toggled.connect(self._toggle_launch_on_startup)
+        mobile_lay.addWidget(self.startup_chk)
+
+        # Tunnel status
+        tunnel_row = QHBoxLayout()
+        tunnel_row.addWidget(QLabel("Tunnel:"))
+        self.tunnel_status_label = QLabel("Checking...")
+        tunnel_row.addWidget(self.tunnel_status_label)
+        tunnel_row.addStretch()
+        mobile_lay.addLayout(tunnel_row)
+
+        # QR Code buttons
+        qr_row = QHBoxLayout()
+        show_qr_btn = QPushButton("Show QR Code")
+        show_qr_btn.setObjectName("accent")
+        show_qr_btn.clicked.connect(self._show_mobile_qr)
+        qr_row.addWidget(show_qr_btn)
+        regen_qr_btn = QPushButton("Regenerate QR")
+        regen_qr_btn.setObjectName("danger")
+        regen_qr_btn.clicked.connect(self._regenerate_qr)
+        qr_row.addWidget(regen_qr_btn)
+        qr_row.addStretch()
+        mobile_lay.addLayout(qr_row)
+        mobile_lay.addWidget(_label(
+            "    Scan the QR code with the Apollova iOS app to connect your phone.", "muted"))
+        layout.addWidget(mobile_grp)
 
         save_btn = QPushButton("Save Settings")
         save_btn.setObjectName("primary")
@@ -1443,6 +1485,44 @@ class AppolovaApp(QMainWindow):
         QMessageBox.information(self, "Saved", "Settings saved successfully!")
         self._update_inject_status()
 
+    def _toggle_launch_on_startup(self, enabled: bool):
+        """Register/unregister Apollova in the Windows startup registry."""
+        self.settings["launch_on_startup"] = enabled
+        self._save_settings()
+        try:
+            import winreg
+            key = winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Run",
+                0, winreg.KEY_SET_VALUE,
+            )
+            if enabled:
+                exe_path = str(Path(sys.executable))
+                winreg.SetValueEx(key, "Apollova", 0, winreg.REG_SZ,
+                                  f'"{exe_path}" --minimised')
+            else:
+                try:
+                    winreg.DeleteValue(key, "Apollova")
+                except FileNotFoundError:
+                    pass
+            winreg.CloseKey(key)
+        except Exception as e:
+            self._append_log(f"Startup registry update failed: {e}")
+
+    def _regenerate_qr(self):
+        """Regenerate the session token — invalidates all connected phones."""
+        reply = QMessageBox.question(
+            self, "Regenerate QR Code",
+            "This will disconnect all currently paired phones.\n\n"
+            "You will need to re-scan the QR code on your phone.\n\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            import secrets
+            self.settings["session_token"] = secrets.token_hex(32)
+            self._save_settings()
+            self._show_mobile_qr()
+
     # ── JSX Injection ─────────────────────────────────────────────────────────
 
     def _run_injection(self):
@@ -1720,12 +1800,188 @@ class AppolovaApp(QMainWindow):
         self.remove_job_btn.setEnabled(False)
         self.clear_queue_btn.setEnabled(not lock and bool(self._job_queue))
 
-    # ── Window close cleanup ──────────────────────────────────────────────────
+    # ── Mobile Server + Tunnel ───────────────────────────────────────────────
+
+    def _start_mobile_server(self):
+        """Start the FastAPI server and Cloudflare Tunnel in background threads."""
+        if not self.settings.get("mobile_enabled", True):
+            return
+
+        try:
+            import uvicorn
+            from apollova_server import app as fastapi_app, set_gui_ref, emit_progress
+
+            set_gui_ref(self, settings_path=str(SETTINGS_FILE))
+
+            # Bridge GUI progress signals to WebSocket broadcast
+            self._ws_emit_progress = emit_progress
+
+            port = self.settings.get("server_port", 7823)
+            self._server_thread = threading.Thread(
+                target=uvicorn.run,
+                args=(fastapi_app,),
+                kwargs={"host": "127.0.0.1", "port": port, "log_level": "error"},
+                daemon=True,
+            )
+            self._server_thread.start()
+            self._append_log(f"Mobile server started on port {port}")
+
+            # Start tunnel
+            self._start_tunnel(port)
+        except ImportError as e:
+            self._append_log(f"Mobile server unavailable: {e}")
+        except Exception as e:
+            self._append_log(f"Mobile server failed to start: {e}")
+
+    def _start_tunnel(self, port: int = 7823):
+        """Start cloudflared tunnel if available."""
+        try:
+            from apollova_tunnel import TunnelManager
+            self._tunnel_manager = TunnelManager(port=port, assets_dir=ASSETS_DIR)
+
+            if not self._tunnel_manager.is_available():
+                self._append_log("Mobile Connect: cloudflared not installed")
+                self._update_tray_tunnel_status(False)
+                return
+
+            def _tunnel_thread():
+                url = self._tunnel_manager.start()
+                if url:
+                    self.settings["tunnel_url"] = url
+                    self._save_settings()
+                    self._append_log(f"Tunnel active: {url}")
+                    self._update_tray_tunnel_status(True)
+                    # Update Mobile Connect panel if it exists
+                    try:
+                        self.tunnel_status_label.setText(
+                            f"Connected — {url[:50]}...")
+                        from apollova_gui import _set_label_style
+                        _set_label_style(self.tunnel_status_label, "success")
+                    except Exception:
+                        pass
+                else:
+                    self._append_log("Tunnel failed to start")
+                    self._update_tray_tunnel_status(False)
+
+            threading.Thread(target=_tunnel_thread, daemon=True).start()
+        except ImportError:
+            self._append_log("Mobile Connect: tunnel module not available")
+        except Exception as e:
+            self._append_log(f"Tunnel error: {e}")
+
+    def _update_tray_tunnel_status(self, connected: bool):
+        """Update the system tray icon tooltip with tunnel status."""
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            status = "Connected" if connected else "Offline"
+            self.tray_icon.setToolTip(f"Apollova — Mobile {status}")
+
+    # ── System Tray ──────────────────────────────────────────────────────────
+
+    def _setup_system_tray(self):
+        """Create the system tray icon with context menu."""
+        icon_path = INSTALL_DIR / "assets" / "icon.ico"
+        if not icon_path.exists():
+            icon_path = INSTALL_DIR / "icon.ico"
+
+        icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
+        self.tray_icon = QSystemTrayIcon(icon, self)
+
+        tray_menu = QMenu()
+        open_action = tray_menu.addAction("Open Apollova")
+        open_action.triggered.connect(self._tray_show_window)
+        mobile_action = tray_menu.addAction("Mobile Connect")
+        mobile_action.triggered.connect(self._show_mobile_qr)
+        tray_menu.addSeparator()
+        quit_action = tray_menu.addAction("Quit")
+        quit_action.triggered.connect(self._tray_quit)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.activated.connect(self._tray_activated)
+        self.tray_icon.setToolTip("Apollova")
+        self.tray_icon.show()
+
+    def _tray_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self._tray_show_window()
+
+    def _tray_show_window(self):
+        self.showNormal()
+        self.activateWindow()
+
+    def _tray_quit(self):
+        """Actually quit the application (from tray menu)."""
+        self._force_quit = True
+        self._cleanup_and_quit()
+        QApplication.quit()
+
+    def _show_mobile_qr(self):
+        """Show the QR code for mobile pairing in a dialog."""
+        token = self.settings.get("session_token", "")
+        url = self.settings.get("tunnel_url", "")
+        if not token or not url:
+            QMessageBox.warning(self, "Not Ready",
+                "Mobile server is not running or tunnel is not connected.\n\n"
+                "Make sure Apollova is running and has internet access.")
+            return
+
+        qr_data = json.dumps({"url": url, "token": token})
+        try:
+            import qrcode
+            from io import BytesIO
+            from PyQt6.QtGui import QPixmap
+            qr = qrcode.QRCode(version=1, box_size=8, border=4)
+            qr.add_data(qr_data)
+            qr.make(fit=True)
+            img = qr.make_image(fill_color="white", back_color="#0D0A18")
+            buf = BytesIO()
+            img.save(buf, format="PNG")
+            pixmap = QPixmap()
+            pixmap.loadFromData(buf.getvalue())
+
+            dlg = QMessageBox(self)
+            dlg.setWindowTitle("Mobile Connect — Scan QR Code")
+            dlg.setIconPixmap(pixmap)
+            dlg.setText("Scan this QR code with the Apollova iOS app")
+            dlg.setInformativeText(f"Tunnel: {url[:50]}...")
+            dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
+            dlg.exec()
+        except ImportError:
+            QMessageBox.information(self, "QR Data",
+                f"Install qrcode package for QR display.\n\nManual data:\n{qr_data}")
+
+    # ── Window close — minimize to tray ──────────────────────────────────────
 
     def closeEvent(self, event):
-        """Cancel running operations and free GPU memory on window close."""
+        """Minimize to system tray instead of quitting. Use tray Quit to exit."""
+        if getattr(self, '_force_quit', False):
+            self._cleanup_and_quit()
+            event.accept()
+            return
+
+        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
+            self.hide()
+            self.tray_icon.showMessage(
+                "Apollova",
+                "Running in the background. Right-click the tray icon to quit.",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
+            event.ignore()
+        else:
+            self._cleanup_and_quit()
+            event.accept()
+
+    def _cleanup_and_quit(self):
+        """Shared cleanup for both tray-quit and window-close."""
         self.cancel_requested = True
         self.batch_render_cancelled = True
+        # Stop tunnel
+        if self._tunnel_manager:
+            try:
+                self._tunnel_manager.stop()
+            except Exception:
+                pass
+        # Unload Whisper model
         try:
             from scripts.whisper_common import unload_model
             unload_model()
@@ -1741,7 +1997,6 @@ class AppolovaApp(QMainWindow):
         if self._log:
             self._log.session_end("Apollova GUI",
                                   success=not self.is_processing)
-        event.accept()
 
     def _start_generation(self):
         if not self._validate_inputs():
@@ -2033,6 +2288,12 @@ class AppolovaApp(QMainWindow):
             fix = "\n\nFix: A required package is missing. Re-run Setup.exe to reinstall."
 
         QMessageBox.critical(self, "Error", msg + fix)
+
+    def _broadcast_progress(self, percent: float):
+        """Forward progress updates to connected WebSocket clients."""
+        if hasattr(self, '_ws_emit_progress') and self._ws_emit_progress:
+            msg = self.status_label.text() if hasattr(self, 'status_label') else ""
+            self._ws_emit_progress(percent, msg)
 
     def _append_log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")

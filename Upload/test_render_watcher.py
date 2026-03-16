@@ -37,8 +37,8 @@ class TestConfig(unittest.TestCase):
     def test_folder_account_mapping(self):
         config = Config(gate_password="test")
         self.assertEqual(config.folder_account_map["Apollova-Aurora"], "aurora")
-        self.assertEqual(config.folder_account_map["Apollova-Mono"], "nova")
-        self.assertEqual(config.folder_account_map["Apollova-Onyx"], "nova")
+        self.assertEqual(config.folder_account_map["Apollova-Mono"], "mono")
+        self.assertEqual(config.folder_account_map["Apollova-Onyx"], "onyx")
 
     def test_get_template_from_path(self):
         config = Config()
@@ -57,18 +57,19 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(len(paths), 3)
         accounts = set(acct for _, acct in paths.values())
         self.assertIn("aurora", accounts)
-        self.assertIn("nova", accounts)
+        self.assertIn("mono", accounts)
+        self.assertIn("onyx", accounts)
         # Verify keys are the folder names
         self.assertIn("Apollova-Aurora", paths)
         self.assertIn("Apollova-Mono", paths)
         self.assertIn("Apollova-Onyx", paths)
         shutil.rmtree(tmp)
 
-    def test_onyx_account_easy_change(self):
-        """Verify changing Onyx to its own account is a one-line change."""
+    def test_each_template_has_own_account(self):
+        """Verify each template maps to its own account."""
         config = Config(gate_password="test")
-        config.folder_account_map["Apollova-Onyx"] = "onyx"
-        self.assertEqual(config.folder_account_map["Apollova-Onyx"], "onyx")
+        accounts = set(config.folder_account_map.values())
+        self.assertEqual(accounts, {"aurora", "mono", "onyx"})
 
 
 class TestStateManager(unittest.TestCase):
@@ -174,12 +175,16 @@ class TestSmartScheduler(unittest.TestCase):
         shutil.rmtree(self.tmp)
 
     def test_first_slot_is_start_hour(self):
-        """First video of the day starts at 11 AM (or 10 min from now if later)."""
+        """First video of the day starts at 11 AM (or rolls to next day if window closed)."""
         slot = self.scheduler.get_next_slot("aurora")
         now = datetime.now()
-        # Should be today at start hour or a bit into the future
-        self.assertEqual(slot.date(), now.date())
-        self.assertGreaterEqual(slot.hour, self.config.schedule_day_start_hour)
+        # If past the end hour, slot rolls to tomorrow at start hour
+        if now.hour >= self.config.schedule_day_end_hour:
+            self.assertEqual(slot.date(), (now + timedelta(days=1)).date())
+            self.assertEqual(slot.hour, self.config.schedule_day_start_hour)
+        else:
+            self.assertEqual(slot.date(), now.date())
+            self.assertGreaterEqual(slot.hour, self.config.schedule_day_start_hour)
 
     def test_slots_are_spaced_correctly(self):
         """Each subsequent video is 1 hour after the previous."""
@@ -212,18 +217,21 @@ class TestSmartScheduler(unittest.TestCase):
         self.assertEqual(slot.hour, self.config.schedule_day_start_hour)
 
     def test_different_accounts_independent(self):
-        """Aurora and Nova have separate 12/day limits."""
-        today = datetime.now()
+        """Aurora and mono have separate 12/day limits."""
+        # Use tomorrow to avoid late-night edge case
+        tomorrow = (datetime.now() + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
 
-        # Fill aurora
+        # Fill aurora for tomorrow
         for i in range(12):
             rid = self.state.add_upload(f"/a{i}.mp4", "aurora", "aurora")
             self.state.mark_uploaded(rid, f"a_vid_{i}")
-            self.state.mark_scheduled(rid, today.replace(hour=11 + i).isoformat())
+            self.state.mark_scheduled(rid, tomorrow.replace(hour=11 + i).isoformat())
 
-        # Nova should still have today slots
-        slot = self.scheduler.get_next_slot("nova")
-        self.assertEqual(slot.date(), today.date())
+        # Mono should still have tomorrow slots
+        slot = self.scheduler.get_next_slot("mono")
+        self.assertEqual(slot.date(), tomorrow.date())
 
     def test_overflow_multiple_days(self):
         """If today AND tomorrow are full, goes to day after."""
@@ -252,7 +260,8 @@ class TestVideoUploaderTestMode(unittest.TestCase):
         self.assertTrue(self.uploader.authenticate())
 
     def test_upload_returns_fake_id(self):
-        result = self.uploader.upload_video("/fake.mp4", "aurora")
+        result, error = self.uploader.upload_video("/fake.mp4", "aurora")
+        self.assertEqual(error, "")
         self.assertIn("id", result)
         self.assertTrue(result["id"].startswith("test_"))
 
@@ -294,6 +303,8 @@ class TestIntegration(unittest.TestCase):
             videos_per_day_per_account=12,
             schedule_interval_minutes=60,
             schedule_day_start_hour=11,
+            file_stable_wait=0,
+            file_stable_extra_wait=0,
         )
         self.config.ensure_dirs()
 
@@ -331,20 +342,20 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(record.account, "aurora")
         self.assertEqual(record.upload_status, "uploaded")
 
-    def test_mono_folder_assigns_nova_account(self):
-        """Videos in Apollova-Mono go to nova account."""
+    def test_mono_folder_assigns_mono_account(self):
+        """Videos in Apollova-Mono go to mono account."""
         from render_watcher import FolderWatcher
         video = self._create_video("Apollova-Mono", "Track - Producer.mp4")
         watch_path = video.parent
 
         watcher = FolderWatcher(
-            watch_path, "nova", "mono",
+            watch_path, "mono", "mono",
             self.uploader, self.state, self.scheduler, self.notifications, self.config,
         )
         watcher._process_video(video)
 
         record = self.state.get_by_path(str(video))
-        self.assertEqual(record.account, "nova")
+        self.assertEqual(record.account, "mono")
 
     def test_no_duplicate_processing(self):
         """Same video can't be processed twice."""

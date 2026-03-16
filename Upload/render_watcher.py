@@ -49,7 +49,7 @@ import requests
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
-from upload_state import StateManager, UploadStatus, ScheduleStatus, compute_file_hash
+from upload_state import StateManager, UploadStatus, compute_file_hash
 from config import Config
 from notification import NotificationService
 
@@ -541,9 +541,11 @@ class FolderWatcher(FileSystemEventHandler):
                         time.sleep(wait)
                         continue
 
-                    # File is stable and unlocked — wait 30s for AE to fully move on
-                    logger.info(f"File stable, waiting 30s before upload: {file_path.name}")
-                    time.sleep(30)
+                    # File is stable and unlocked — wait for AE to fully move on
+                    extra = self.config.file_stable_extra_wait
+                    if extra > 0:
+                        logger.info(f"File stable, waiting {extra:.0f}s before upload: {file_path.name}")
+                        time.sleep(extra)
 
                     # Final check: file still exists and size unchanged
                     try:
@@ -847,7 +849,6 @@ if __name__ == "__main__":
         logging.getLogger("apollova").exception(f"Fatal crash: {e}")
         # Also write to a crash file in case logging isn't set up yet
         try:
-            from pathlib import Path
             crash_file = Path(__file__).parent / "logs" / "crash.log"
             crash_file.parent.mkdir(parents=True, exist_ok=True)
             with open(crash_file, "a", encoding="utf-8") as f:

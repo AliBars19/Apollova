@@ -76,7 +76,7 @@ class Config:
     # ── File Handling ─────────────────────────────────────────────
     file_stable_wait: float = 3.0             # seconds between size checks
     file_stable_checks: int = 3
-    debounce_seconds: float = 30.0
+    file_stable_extra_wait: float = 30.0     # extra wait after file is stable
     video_extensions: list[str] = field(default_factory=lambda: [".mp4", ".mov"])
 
     # ── Notifications ─────────────────────────────────────────────

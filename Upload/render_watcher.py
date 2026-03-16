@@ -272,12 +272,15 @@ class VideoUploader:
             logger.error(f"Status check failed: {e}")
             return None
 
-    def upload_video(self, file_path: str, account: str) -> Optional[dict]:
-        """Upload with exponential backoff retries (2s → 4s → 8s)."""
+    def upload_video(self, file_path: str, account: str) -> tuple[Optional[dict], str]:
+        """Upload with exponential backoff retries (2s -> 4s -> 8s).
+
+        Returns (video_data, error_message). On success error_message is empty.
+        """
         if self.test_mode:
             fake_id = f"test_{uuid.uuid4().hex[:8]}"
             logger.info(f"TEST: Would upload {Path(file_path).name} → {account}")
-            return {"id": fake_id, "filename": Path(file_path).name}
+            return {"id": fake_id, "filename": Path(file_path).name}, ""
 
         filename = Path(file_path).name
         last_error = ""
@@ -307,7 +310,7 @@ class VideoUploader:
                     video_data = result.get("video", result)
                     vid = video_data.get("id", "?")
                     logger.info(f"Uploaded {filename} → {account} (id={vid})")
-                    return video_data
+                    return video_data, ""
 
                 if resp.status_code == 401:
                     self._authenticated = False
@@ -329,7 +332,7 @@ class VideoUploader:
                 break  # Don't retry file I/O errors
 
         logger.error(f"All attempts exhausted for {filename}: {last_error}")
-        return None
+        return None, last_error
 
     def schedule_video(self, video_id: str, scheduled_at: str) -> bool:
         if self.test_mode:
@@ -475,12 +478,12 @@ class FolderWatcher(FileSystemEventHandler):
         logger.info(f"New video: {file_path.name} ({self.template} → {self.account})")
 
         # ── Upload ───────────────────────────────────────────────
-        result = self.uploader.upload_video(str(file_path), self.account)
+        result, upload_error = self.uploader.upload_video(str(file_path), self.account)
 
         if not result or "id" not in result:
-            error = "Upload returned no result"
+            error = upload_error or "Upload returned no result"
             self.state.mark_upload_failed(record_id, error)
-            console.print(f"  [red]✗ Upload failed[/red]")
+            console.print(f"  [red]✗ Upload failed: {error}[/red]")
             self.notifications.video_failed(file_path.name, error)
             return
 

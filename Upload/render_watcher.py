@@ -505,11 +505,14 @@ class FolderWatcher(FileSystemEventHandler):
             self.notifications.video_uploaded(file_path.name, self.account, slot.strftime("%H:%M %d/%m"))
 
             # ── Auto-delete local file after successful upload + schedule ──
-            try:
-                file_path.unlink()
-                logger.info(f"Deleted local file: {file_path.name}")
-            except OSError as e:
-                logger.warning(f"Could not delete {file_path.name}: {e}")
+            if not self.uploader.test_mode:
+                try:
+                    file_path.unlink()
+                    logger.info(f"Deleted local file: {file_path.name}")
+                except OSError as e:
+                    logger.warning(f"Could not delete {file_path.name}: {e}")
+            else:
+                logger.info(f"TEST: Would delete {file_path.name}")
         else:
             self.state.mark_schedule_failed(record_id, "Schedule API failed")
             console.print(f"  [yellow]⚠ Uploaded but scheduling failed[/yellow]")

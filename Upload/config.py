@@ -49,8 +49,8 @@ class Config:
     # When Onyx gets its own account, just change "nova" → "onyx" below.
     folder_account_map: dict[str, str] = field(default_factory=lambda: {
         "Apollova-Aurora": "aurora",
-        "Apollova-Mono":   "nova",
-        "Apollova-Onyx":   "nova",      # ← change to "onyx" when ready
+        "Apollova-Mono":   "mono",
+        "Apollova-Onyx":   "onyx",
     })
 
     # ── Paths ─────────────────────────────────────────────────────

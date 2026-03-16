@@ -461,7 +461,15 @@ class FolderWatcher(FileSystemEventHandler):
         )
 
         if not self.state.try_claim(record_id):
-            return  # Already claimed (shouldn't happen with single worker, but safe)
+            # Record exists but may be stuck in 'failed' — reset and retry
+            record = self.state.get_record(record_id)
+            if record and record.upload_status == UploadStatus.FAILED.value:
+                logger.info(f"Resetting failed record for retry: {file_path.name}")
+                self.state.reset_failed(record_id)
+                if not self.state.try_claim(record_id):
+                    return
+            else:
+                return  # Already uploading or uploaded
 
         console.print(f"[cyan]📹 {file_path.name}[/cyan] [dim]({self.template} → {self.account})[/dim]")
         logger.info(f"New video: {file_path.name} ({self.template} → {self.account})")

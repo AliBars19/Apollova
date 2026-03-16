@@ -696,22 +696,11 @@ def watch_mode(
             total_unprocessed += len(unprocessed)
 
     if total_unprocessed > 0:
-        logger.info(f"Found {total_unprocessed} unprocessed videos")
-        should_upload = True
-        if not IS_HEADLESS:
-            try:
-                console.print(f"\n[yellow]Found {total_unprocessed} unprocessed videos across all folders[/yellow]")
-                resp = input("Upload them now? (y/N): ").strip().lower()
-                should_upload = resp == "y"
-            except (EOFError, KeyboardInterrupt, OSError):
-                should_upload = False
-        else:
-            logger.info(f"Headless mode: auto-uploading {total_unprocessed} existing videos")
-
-        if should_upload:
-            for w in watchers:
-                for video in w.scan_unprocessed():
-                    w._process_video(video)
+        logger.info(f"Found {total_unprocessed} unprocessed videos — uploading automatically")
+        console.print(f"\n[yellow]Found {total_unprocessed} unprocessed videos — uploading now...[/yellow]")
+        for w in watchers:
+            for video in w.scan_unprocessed():
+                w._process_video(video)
 
     # Start watching
     observer.start()

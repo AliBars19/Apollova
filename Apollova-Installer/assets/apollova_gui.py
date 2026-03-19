@@ -44,7 +44,7 @@ from PyQt6.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton, QCheckBox,
     QTabWidget, QGroupBox, QTextEdit, QProgressBar, QListWidget,
     QScrollArea, QFileDialog, QMessageBox, QButtonGroup, QFrame,
-    QSystemTrayIcon, QMenu,
+    QSystemTrayIcon, QMenu, QTableWidget, QTableWidgetItem, QHeaderView,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QObject
 from PyQt6.QtGui import QFont, QIcon, QAction
@@ -359,6 +359,19 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
 _VALID_YT   = re.compile(r'(?:youtube\.com/watch\?.*v=|youtu\.be/)([A-Za-z0-9_-]{11})')
 _VALID_TIME = re.compile(r'^\d{1,2}:\d{2}$')
 
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class DiscoveryResult:
+    track: object              # LastFMTrack from lastfm_discovery.py
+    youtube_url: Optional[str]
+    youtube_confidence: str    # "high", "medium", "low", "none"
+    start_mmss: str
+    end_mmss: str
+    chorus_confidence: float   # 0.0-1.0
+    status: str                # "ready", "no_youtube", "no_chorus"
+
 # ── Worker signals (thread → UI) ──────────────────────────────────────────────
 class WorkerSignals(QObject):
     log                   = pyqtSignal(str)
@@ -369,6 +382,9 @@ class WorkerSignals(QObject):
     batch_progress        = pyqtSignal(str, float, str)
     batch_template_status = pyqtSignal(str, str)
     batch_finished        = pyqtSignal(dict)
+    discovery_progress    = pyqtSignal(str, int, int, str)
+    discovery_results     = pyqtSignal(list)
+    discovery_error       = pyqtSignal(str)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -440,6 +456,9 @@ class AppolovaApp(QMainWindow):
         self.batch_render_active    = False
         self.batch_render_cancelled = False
         self.batch_results          = {}
+        self._discover_cancel_event     = threading.Event()
+        self._discovery_in_progress    = False
+        self._discovery_results        = []
 
         self.signals = WorkerSignals()
         self.signals.log.connect(self._append_log)
@@ -451,6 +470,9 @@ class AppolovaApp(QMainWindow):
         self.signals.batch_progress.connect(self._batch_update_progress)
         self.signals.batch_template_status.connect(self._batch_update_template_status_slot)
         self.signals.batch_finished.connect(self._batch_render_complete)
+        self.signals.discovery_progress.connect(self._on_discovery_progress)
+        self.signals.discovery_results.connect(self._on_discovery_results)
+        self.signals.discovery_error.connect(self._on_discovery_error)
 
         # Initialise file logger
         try:
@@ -713,6 +735,123 @@ class AppolovaApp(QMainWindow):
         sl.addWidget(self.smart_warning_label)
         sl.addStretch()
         self.song_tabs.addTab(smart_w, "  🤖 Smart Picker  ")
+
+        # ── Discover sub-tab ─────────────────────────────────────────────────
+        discover_w = QWidget()
+        dl = QVBoxLayout(discover_w)
+        dl.setSpacing(6)
+
+        # Not-configured warning (shown when Last.fm API key missing)
+        self.discover_not_configured = _label(
+            "Last.fm not configured — add your API key in Settings tab", "warning")
+        self.discover_not_configured.setWordWrap(True)
+        self.discover_not_configured.setVisible(False)
+        dl.addWidget(self.discover_not_configured)
+
+        # Row 1: source + limit + skip existing
+        d_row1 = QHBoxLayout()
+        d_row1.addWidget(QLabel("Source:"))
+        self.discover_source_combo = QComboBox()
+        from scripts.lastfm_discovery import CHART_SOURCES as _LFM_SOURCES
+        for name in _LFM_SOURCES:
+            self.discover_source_combo.addItem(name)
+        d_row1.addWidget(self.discover_source_combo)
+        d_row1.addSpacing(10)
+        d_row1.addWidget(QLabel("Limit:"))
+        self.discover_limit_combo = QComboBox()
+        for v in ["25", "50", "100"]:
+            self.discover_limit_combo.addItem(v)
+        self.discover_limit_combo.setCurrentIndex(1)  # default 50
+        d_row1.addWidget(self.discover_limit_combo)
+        d_row1.addSpacing(10)
+        self.discover_skip_existing = QCheckBox("Skip songs already in DB")
+        self.discover_skip_existing.setChecked(True)
+        d_row1.addWidget(self.discover_skip_existing)
+        d_row1.addStretch()
+        dl.addLayout(d_row1)
+
+        # Row 2: fetch + cancel buttons
+        d_row2 = QHBoxLayout()
+        self.discover_fetch_btn = QPushButton("Fetch Songs")
+        self.discover_fetch_btn.setObjectName("primary")
+        self.discover_fetch_btn.clicked.connect(self._start_discovery)
+        d_row2.addWidget(self.discover_fetch_btn)
+        self.discover_cancel_btn = QPushButton("Cancel")
+        self.discover_cancel_btn.setObjectName("muted")
+        self.discover_cancel_btn.setEnabled(False)
+        self.discover_cancel_btn.clicked.connect(self._cancel_discovery)
+        d_row2.addWidget(self.discover_cancel_btn)
+        d_row2.addStretch()
+        dl.addLayout(d_row2)
+
+        # Progress section (hidden by default)
+        self.discover_progress_bar = QProgressBar()
+        self.discover_progress_bar.setVisible(False)
+        dl.addWidget(self.discover_progress_bar)
+        self.discover_phase_label = _label("", "muted")
+        self.discover_phase_label.setVisible(False)
+        dl.addWidget(self.discover_phase_label)
+
+        # Results table
+        self.discover_table = QTableWidget()
+        self.discover_table.setColumnCount(8)
+        self.discover_table.setHorizontalHeaderLabels(
+            ["#", "", "Title", "Artist", "Start", "End", "YouTube", "Confidence"])
+        self.discover_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeMode.Stretch)
+        self.discover_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeMode.Stretch)
+        self.discover_table.setColumnWidth(0, 35)
+        self.discover_table.setColumnWidth(1, 30)
+        self.discover_table.setColumnWidth(4, 60)
+        self.discover_table.setColumnWidth(5, 60)
+        self.discover_table.setColumnWidth(6, 180)
+        self.discover_table.setColumnWidth(7, 90)
+        self.discover_table.setStyleSheet(
+            "QTableWidget { background: #181825; border: 1px solid #313244; "
+            "border-radius: 4px; color: #cdd6f4; gridline-color: #313244; }"
+            "QTableWidget::item { padding: 3px; }"
+            "QHeaderView::section { background: #313244; color: #cdd6f4; "
+            "padding: 4px; border: 1px solid #45475a; }")
+        self.discover_table.setMinimumHeight(200)
+        self.discover_table.itemChanged.connect(self._update_discover_add_btn)
+        self.discover_table.setVisible(False)
+        dl.addWidget(self.discover_table)
+
+        # Action row
+        d_action = QHBoxLayout()
+        d_sel_all = QPushButton("Select All")
+        d_sel_all.setObjectName("muted")
+        d_sel_all.clicked.connect(self._discover_select_all)
+        d_action.addWidget(d_sel_all)
+        d_desel_all = QPushButton("Deselect All")
+        d_desel_all.setObjectName("muted")
+        d_desel_all.clicked.connect(self._discover_deselect_all)
+        d_action.addWidget(d_desel_all)
+        d_desel_low = QPushButton("Deselect Low")
+        d_desel_low.setObjectName("muted")
+        d_desel_low.clicked.connect(self._discover_deselect_low)
+        d_action.addWidget(d_desel_low)
+        d_action.addStretch()
+        self.discover_add_btn = QPushButton("Add Selected Songs")
+        self.discover_add_btn.setObjectName("primary")
+        self.discover_add_btn.setEnabled(False)
+        self.discover_add_btn.clicked.connect(self._discover_add_selected)
+        d_action.addWidget(self.discover_add_btn)
+        self.discover_action_row = QWidget()
+        self.discover_action_row.setLayout(d_action)
+        self.discover_action_row.setVisible(False)
+        dl.addWidget(self.discover_action_row)
+
+        # Summary label
+        self.discover_summary_label = _label("", "success")
+        self.discover_summary_label.setWordWrap(True)
+        self.discover_summary_label.setVisible(False)
+        dl.addWidget(self.discover_summary_label)
+
+        dl.addStretch()
+        self.song_tabs.addTab(discover_w, "  🔍 Discover  ")
+
         self.song_tabs.currentChanged.connect(self._on_song_mode_changed)
         self._refresh_smart_picker_stats()
 
@@ -930,6 +1069,28 @@ class AppolovaApp(QMainWindow):
         genius_lay.addWidget(_label("Get your token at: https://genius.com/api-clients", "muted"))
         layout.addWidget(genius_grp)
 
+        # Last.fm Integration
+        lastfm_grp = QGroupBox("Last.fm Integration")
+        lastfm_lay = QVBoxLayout(lastfm_grp)
+        lastfm_lay.addWidget(QLabel("API Key:"))
+        self.lastfm_key_edit = QLineEdit(self.settings.get('lastfm_api_key', '') or '')
+        self.lastfm_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.lastfm_key_edit.setPlaceholderText("Enter Last.fm API Key")
+        lastfm_lay.addWidget(self.lastfm_key_edit)
+        lfm_test_row = QHBoxLayout()
+        lfm_test_btn = QPushButton("Test Connection")
+        lfm_test_btn.setObjectName("accent")
+        lfm_test_btn.clicked.connect(self._test_lastfm_connection)
+        lfm_test_row.addWidget(lfm_test_btn)
+        self.lastfm_status_label = _label("", "muted")
+        lfm_test_row.addWidget(self.lastfm_status_label)
+        lfm_test_row.addStretch()
+        lastfm_lay.addLayout(lfm_test_row)
+        lastfm_lay.addWidget(_label(
+            "Get a free API key at: https://www.last.fm/api/account/create\n"
+            "No subscription required. Enables the Discover tab.", "muted"))
+        layout.addWidget(lastfm_grp)
+
         # Image Rotation
         img_grp = QGroupBox("Cover Image")
         img_lay = QVBoxLayout(img_grp)
@@ -1023,8 +1184,10 @@ class AppolovaApp(QMainWindow):
 
     def _on_song_mode_changed(self, index):
         self.use_smart_picker = (index == 1)
-        if self.use_smart_picker:
+        if index == 1:
             self._refresh_smart_picker_stats()
+        elif index == 2:
+            self._check_lastfm_configured()
         self._update_generate_btn_state()
 
     def _on_jobs_count_changed(self, _index):
@@ -1213,6 +1376,354 @@ class AppolovaApp(QMainWindow):
         except Exception as e:
             _set_label_style(self.smart_stats_label, "error")
             self.smart_stats_label.setText(f"❌ Error: {e}")
+
+    # ── Discover ──────────────────────────────────────────────────────────────
+
+    def _check_lastfm_configured(self):
+        """Show/hide the not-configured label based on env vars."""
+        key = os.getenv("LASTFM_API_KEY", "").strip() or self.settings.get('lastfm_api_key', '')
+        configured = bool(key)
+        self.discover_not_configured.setVisible(not configured)
+        self.discover_fetch_btn.setEnabled(configured and not self._discovery_in_progress)
+
+    def _start_discovery(self):
+        """Validate inputs, disable controls, start background discovery thread."""
+        if self._discovery_in_progress:
+            return
+
+        source_name = self.discover_source_combo.currentText()
+        limit = int(self.discover_limit_combo.currentText())
+        skip_existing = self.discover_skip_existing.isChecked()
+
+        self._discover_cancel_event.clear()
+        self._discovery_in_progress = True
+        self.discover_fetch_btn.setEnabled(False)
+        self.discover_cancel_btn.setEnabled(True)
+        self.discover_progress_bar.setVisible(True)
+        self.discover_progress_bar.setValue(0)
+        self.discover_phase_label.setVisible(True)
+        self.discover_phase_label.setText("Starting...")
+        self.discover_table.setVisible(False)
+        self.discover_action_row.setVisible(False)
+        self.discover_summary_label.setVisible(False)
+
+        t = threading.Thread(
+            target=self._run_discovery_pipeline,
+            args=(source_name, limit, skip_existing),
+            daemon=True)
+        t.start()
+
+    def _cancel_discovery(self):
+        """Set cancel flag — thread checks this between each song."""
+        self._discover_cancel_event.set()
+        self.discover_cancel_btn.setEnabled(False)
+        self.discover_phase_label.setText("Cancelling...")
+
+    def _run_discovery_pipeline(self, source_name, limit, skip_existing):
+        """Background thread: fetch Last.fm tracks -> find YouTube URLs -> detect chorus."""
+        from scripts.lastfm_discovery import fetch_tracks
+        from scripts.youtube_finder import find_youtube_url
+        from scripts.chorus_detector import detect_chorus, _heuristic_fallback
+
+        # Ensure env vars reflect current settings (user may not have saved yet)
+        key = self.settings.get('lastfm_api_key', '').strip()
+        if key:
+            os.environ["LASTFM_API_KEY"] = key
+
+        results = []
+
+        # Step 1: Fetch Last.fm tracks
+        self.signals.discovery_progress.emit("lastfm", 0, limit, "Fetching chart data...")
+        try:
+            tracks = fetch_tracks(
+                source_name=source_name,
+                limit=limit,
+                fetch_durations=True,
+                progress_cb=lambda cur, tot, title: self.signals.discovery_progress.emit(
+                    "lastfm", cur, tot, title)
+            )
+        except Exception as e:
+            self.signals.discovery_error.emit(str(e))
+            return
+
+        # Filter songs already in DB
+        if skip_existing:
+            existing = {s[0].lower() for s in self.song_db.list_all_songs()}
+            tracks = [t for t in tracks
+                      if t.db_title.lower() not in existing
+                      and t.title.lower() not in existing]
+
+        total = len(tracks)
+        if total == 0:
+            self.signals.discovery_error.emit(
+                "No new songs found. All tracks are already in your database."
+                if skip_existing else "No tracks found for this source.")
+            return
+
+        for i, track in enumerate(tracks):
+            if self._discover_cancel_event.is_set():
+                break
+
+            song_label = track.db_title
+            self.signals.discovery_progress.emit("youtube", i + 1, total, song_label)
+
+            # Step 2: Find YouTube URL
+            try:
+                yt_result = find_youtube_url(
+                    title=track.title,
+                    artist=track.artist,
+                    duration_sec=track.duration_sec_safe
+                )
+            except Exception:
+                yt_result = None
+
+            if not yt_result:
+                results.append(DiscoveryResult(
+                    track=track,
+                    youtube_url=None,
+                    youtube_confidence="none",
+                    start_mmss="00:00",
+                    end_mmss="01:00",
+                    chorus_confidence=0.0,
+                    status="no_youtube",
+                ))
+                continue
+
+            # Step 3: Download audio + detect chorus
+            self.signals.discovery_progress.emit("chorus", i + 1, total, song_label)
+            chorus = None
+            try:
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    audio_path = download_audio(yt_result.url, tmpdir)
+                    chorus = detect_chorus(audio_path)
+            except Exception:
+                chorus = _heuristic_fallback(track.duration_sec_safe, 60, "download_failed")
+
+            results.append(DiscoveryResult(
+                track=track,
+                youtube_url=yt_result.url,
+                youtube_confidence=yt_result.confidence,
+                start_mmss=chorus.start_mmss,
+                end_mmss=chorus.end_mmss,
+                chorus_confidence=chorus.confidence,
+                status="ready",
+            ))
+
+        self.signals.discovery_results.emit(results)
+
+    def _on_discovery_progress(self, step, current, total, title):
+        """Update progress bar and phase label from signal."""
+        if total > 0:
+            if step == "lastfm":
+                pct = int(current / total * 30)
+            elif step == "youtube":
+                pct = 30 + int(current / total * 35)
+            else:
+                pct = 65 + int(current / total * 35)
+            self.discover_progress_bar.setValue(pct)
+
+        phase_map = {
+            "lastfm":  "Fetching chart data",
+            "youtube": "Finding YouTube URLs",
+            "chorus":  "Detecting choruses",
+        }
+        phase = phase_map.get(step, step)
+        self.discover_phase_label.setText(
+            f"{phase}: {title[:50]} ({current}/{total})")
+
+    def _on_discovery_results(self, results):
+        """Populate table and re-enable controls."""
+        self._discovery_in_progress = False
+        self._discovery_results = results
+        self.discover_fetch_btn.setEnabled(True)
+        self.discover_cancel_btn.setEnabled(False)
+        self.discover_progress_bar.setVisible(False)
+        self.discover_phase_label.setVisible(False)
+
+        if not results:
+            self.discover_phase_label.setText("No results found.")
+            self.discover_phase_label.setVisible(True)
+            return
+
+        self._populate_discover_table(results)
+        self.discover_table.setVisible(True)
+        self.discover_action_row.setVisible(True)
+        self._update_discover_add_btn()
+
+    def _on_discovery_error(self, error_msg):
+        """Show error message, re-enable controls."""
+        self._discovery_in_progress = False
+        self.discover_fetch_btn.setEnabled(True)
+        self.discover_cancel_btn.setEnabled(False)
+        self.discover_progress_bar.setVisible(False)
+        _set_label_style(self.discover_phase_label, "error")
+        self.discover_phase_label.setText(f"Error: {error_msg}")
+        self.discover_phase_label.setVisible(True)
+
+    def _populate_discover_table(self, results):
+        """Fill QTableWidget rows with results."""
+        self.discover_table.setRowCount(len(results))
+        for row, r in enumerate(results):
+            # #
+            num_item = QTableWidgetItem(str(row + 1))
+            num_item.setFlags(num_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.discover_table.setItem(row, 0, num_item)
+
+            # Checkbox
+            chk_item = QTableWidgetItem()
+            if r.status == "no_youtube":
+                chk_item.setFlags(chk_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+            else:
+                chk_item.setFlags(chk_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                if r.youtube_confidence == "low":
+                    chk_item.setCheckState(Qt.CheckState.Unchecked)
+                else:
+                    chk_item.setCheckState(Qt.CheckState.Checked)
+            self.discover_table.setItem(row, 1, chk_item)
+
+            # Title
+            title_item = QTableWidgetItem(r.track.title)
+            title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.discover_table.setItem(row, 2, title_item)
+
+            # Artist
+            artist_item = QTableWidgetItem(r.track.artist)
+            artist_item.setFlags(artist_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            self.discover_table.setItem(row, 3, artist_item)
+
+            # Start (editable)
+            start_item = QTableWidgetItem(r.start_mmss)
+            self.discover_table.setItem(row, 4, start_item)
+
+            # End (editable)
+            end_item = QTableWidgetItem(r.end_mmss)
+            self.discover_table.setItem(row, 5, end_item)
+
+            # YouTube URL
+            if r.youtube_url:
+                url_display = r.youtube_url[:35] + "..." if len(r.youtube_url) > 35 else r.youtube_url
+            else:
+                url_display = "Not found"
+            url_item = QTableWidgetItem(url_display)
+            url_item.setFlags(url_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if r.youtube_url:
+                url_item.setToolTip(r.youtube_url)
+            self.discover_table.setItem(row, 6, url_item)
+
+            # Confidence badge
+            conf = r.youtube_confidence
+            conf_item = QTableWidgetItem(conf.capitalize() if conf != "none" else "None")
+            conf_item.setFlags(conf_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+            if conf == "high":
+                conf_item.setForeground(Qt.GlobalColor.green)
+            elif conf == "medium":
+                conf_item.setForeground(Qt.GlobalColor.yellow)
+            elif conf == "low":
+                conf_item.setForeground(Qt.GlobalColor.red)
+            else:
+                conf_item.setForeground(Qt.GlobalColor.gray)
+            self.discover_table.setItem(row, 7, conf_item)
+
+
+    def _discover_select_all(self):
+        for row in range(self.discover_table.rowCount()):
+            item = self.discover_table.item(row, 1)
+            if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                item.setCheckState(Qt.CheckState.Checked)
+        self._update_discover_add_btn()
+
+    def _discover_deselect_all(self):
+        for row in range(self.discover_table.rowCount()):
+            item = self.discover_table.item(row, 1)
+            if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                item.setCheckState(Qt.CheckState.Unchecked)
+        self._update_discover_add_btn()
+
+    def _discover_deselect_low(self):
+        for row, r in enumerate(self._discovery_results):
+            if r.youtube_confidence == "low":
+                item = self.discover_table.item(row, 1)
+                if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
+                    item.setCheckState(Qt.CheckState.Unchecked)
+        self._update_discover_add_btn()
+
+    def _update_discover_add_btn(self, *_args):
+        """Update the add button text with count of selected songs."""
+        count = 0
+        for row in range(self.discover_table.rowCount()):
+            item = self.discover_table.item(row, 1)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                count += 1
+        self.discover_add_btn.setText(f"Add {count} Selected Songs" if count else "Add Selected Songs")
+        self.discover_add_btn.setEnabled(count > 0)
+
+    def _discover_add_selected(self):
+        """Add all checked rows to the song database."""
+        added = 0
+        skipped = 0
+        for row in range(self.discover_table.rowCount()):
+            chk = self.discover_table.item(row, 1)
+            if not chk or chk.checkState() != Qt.CheckState.Checked:
+                continue
+
+            r = self._discovery_results[row]
+            if not r.youtube_url:
+                skipped += 1
+                continue
+
+            title = r.track.db_title
+            start = self.discover_table.item(row, 4).text().strip()
+            end   = self.discover_table.item(row, 5).text().strip()
+
+            # Validate time format
+            if not _VALID_TIME.match(start):
+                start = r.start_mmss
+            if not _VALID_TIME.match(end):
+                end = r.end_mmss
+
+            self.song_db.add_song(
+                song_title=title,
+                youtube_url=r.youtube_url,
+                start_time=start,
+                end_time=end,
+            )
+            added += 1
+
+        # Show summary
+        self.discover_summary_label.setText(
+            f"{added} songs added to database."
+            + (f" {skipped} skipped (no YouTube URL)." if skipped else ""))
+        self.discover_summary_label.setVisible(True)
+
+        # Clear table
+        self.discover_table.setRowCount(0)
+        self.discover_table.setVisible(False)
+        self.discover_action_row.setVisible(False)
+        self._discovery_results = []
+
+        # Refresh Smart Picker if visible
+        if self.song_tabs.currentIndex() == 1:
+            self._refresh_smart_picker_stats()
+
+    def _test_lastfm_connection(self):
+        """Test Last.fm API connection from Settings tab."""
+        key = self.lastfm_key_edit.text().strip()
+        if not key:
+            _set_label_style(self.lastfm_status_label, "warning")
+            self.lastfm_status_label.setText("Enter your Last.fm API Key first")
+            return
+        try:
+            os.environ["LASTFM_API_KEY"] = key
+            from scripts.lastfm_discovery import test_connection
+            ok, msg = test_connection()
+            if ok:
+                _set_label_style(self.lastfm_status_label, "success")
+            else:
+                _set_label_style(self.lastfm_status_label, "error")
+            self.lastfm_status_label.setText(msg)
+        except Exception as e:
+            _set_label_style(self.lastfm_status_label, "error")
+            self.lastfm_status_label.setText(f"Failed: {e}")
 
     # ── Field validation helpers ──────────────────────────────────────────────
 
@@ -1475,6 +1986,7 @@ class AppolovaApp(QMainWindow):
         self.settings['genius_api_token']   = self.genius_edit.text()
         self.settings['whisper_model']      = self.whisper_combo.currentText()
         self.settings['image_rotation']     = self.image_rotation_chk.isChecked()
+        self.settings['lastfm_api_key'] = self.lastfm_key_edit.text()
         Config.GENIUS_API_TOKEN = self.genius_edit.text()
         Config.WHISPER_MODEL    = self.whisper_combo.currentText()
         self._save_settings()
@@ -1482,6 +1994,7 @@ class AppolovaApp(QMainWindow):
         with open(env, 'w', encoding='utf-8') as f:
             f.write(f"GENIUS_API_TOKEN={self.genius_edit.text()}\n")
             f.write(f"WHISPER_MODEL={self.whisper_combo.currentText()}\n")
+            f.write(f"LASTFM_API_KEY={self.lastfm_key_edit.text()}\n")
         QMessageBox.information(self, "Saved", "Settings saved successfully!")
         self._update_inject_status()
 

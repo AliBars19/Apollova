@@ -1274,6 +1274,7 @@ class SetupWizard(QMainWindow):
             ("requests",       "requests"),
             ("numpy",          "numpy"),
             ("dotenv",         "python-dotenv"),
+            ("pytubefix",      "pytubefix"),
         ]
 
         failed = []
@@ -1328,6 +1329,9 @@ class SetupWizard(QMainWindow):
             self.assets_dir / "scripts" / "song_database.py",
             self.assets_dir / "scripts" / "genius_processing.py",
             self.assets_dir / "scripts" / "smart_picker.py",
+            self.assets_dir / "scripts" / "lastfm_discovery.py",
+            self.assets_dir / "scripts" / "youtube_finder.py",
+            self.assets_dir / "scripts" / "chorus_detector.py",
             self.req_dir    / "requirements-base.txt",
         ]
         missing = [str(p) for p in required if not p.exists()]

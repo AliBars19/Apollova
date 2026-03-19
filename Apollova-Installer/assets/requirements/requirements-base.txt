@@ -33,6 +33,9 @@ numpy==1.26.4
 # Environment / config
 python-dotenv==1.0.1
 
+# Song discovery (YouTube search)
+pytubefix
+
 # GUI
 PyQt6==6.7.1
 

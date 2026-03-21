@@ -88,23 +88,13 @@ def get_device_info():
 
 
 def _try_load_faster_whisper(force_cpu):
-    """Attempt to load faster-whisper via stable-ts bridge. Returns model or None."""
-    try:
-        from stable_whisper import load_faster_whisper
-        has_cuda = not force_cpu and HAS_TORCH and torch.cuda.is_available()
-        dev = "cuda" if has_cuda else "cpu"
-        compute_type = "float16" if has_cuda else "int8"
-        model = load_faster_whisper(
-            Config.WHISPER_MODEL, device=dev, compute_type=compute_type,
-            download_root=Config.WHISPER_CACHE_DIR,
-        )
-        print(f"  Loaded faster-whisper ({Config.WHISPER_MODEL}) on {dev} [{compute_type}]")
-        return model
-    except ImportError:
-        return None
-    except Exception as e:
-        print(f"  faster-whisper failed ({e}), falling back to standard whisper")
-        return None
+    """Attempt to load faster-whisper via stable-ts bridge. Returns model or None.
+    Currently disabled: faster-whisper's transcribe() API is incompatible with
+    stable-ts parameters (vad, suppress_silence, only_voice_freq, regroup, etc.)
+    that our multi-pass pipeline relies on. Re-enable once parameter compatibility
+    is verified or an adapter is added."""
+    # TODO: faster-whisper integration needs parameter adapter
+    return None
 
 
 def load_whisper_model(force_cpu=False):

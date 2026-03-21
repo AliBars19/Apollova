@@ -31,6 +31,7 @@ import os
 import json
 import re
 import gc
+import time as _time
 
 from pydub import AudioSegment
 from stable_whisper import load_model
@@ -61,12 +62,13 @@ def get_device_info():
     return "CPU"
 
 
-def _try_load_faster_whisper(device, force_cpu):
+def _try_load_faster_whisper(force_cpu):
     """Attempt to load faster-whisper via stable-ts bridge. Returns model or None."""
     try:
         from stable_whisper import load_faster_whisper
-        compute_type = "int8" if (force_cpu or device == "CPU") else "float16"
-        dev = "cpu" if force_cpu else ("cuda" if HAS_TORCH and torch.cuda.is_available() else "cpu")
+        has_cuda = not force_cpu and HAS_TORCH and torch.cuda.is_available()
+        dev = "cuda" if has_cuda else "cpu"
+        compute_type = "float16" if has_cuda else "int8"
         model = load_faster_whisper(
             Config.WHISPER_MODEL, device=dev, compute_type=compute_type,
             download_root=Config.WHISPER_CACHE_DIR,
@@ -98,7 +100,7 @@ def load_whisper_model(force_cpu=False):
     device = get_device_info()
 
     # Try faster-whisper first (CTranslate2 backend, much faster)
-    faster = _try_load_faster_whisper(device, force_cpu)
+    faster = _try_load_faster_whisper(force_cpu)
     if faster is not None:
         _cached_model = faster
         _cached_on_cpu = force_cpu
@@ -148,6 +150,23 @@ def clear_vram():
     if HAS_TORCH and torch.cuda.is_available():
         torch.cuda.empty_cache()
         torch.cuda.synchronize()
+
+
+def _refine_result(result):
+    """Apply min word duration and word-level repetition removal to a transcription result."""
+    try:
+        result.apply_min_dur(0.02)
+        result.remove_repetition(max_words=1)
+    except Exception as e:
+        print(f"  Warning: post-transcription refinement failed: {e}")
+
+
+def _snap_to_silence(result, audio_path):
+    """Snap word timestamps to speech boundaries using VAD."""
+    try:
+        result.adjust_by_silence(audio_path, vad=True)
+    except Exception as e:
+        print(f"  Warning: silence adjustment failed: {e}")
 
 
 # ============================================================================
@@ -216,7 +235,8 @@ def normalize_audio(audio_path):
     Normalize audio to -20 dBFS for consistent Whisper input levels.
     Caches result as *_norm.wav to avoid re-processing.
     """
-    norm_path = audio_path.replace('.wav', '_norm.wav')
+    base, _ = os.path.splitext(audio_path)
+    norm_path = base + '_norm.wav'
     if os.path.exists(norm_path):
         return norm_path
     try:
@@ -238,7 +258,8 @@ def reduce_noise(audio_path):
     Apply stationary noise reduction to remove reverb tails and recording noise.
     Caches result as *_clean.wav. Falls back to original if noisereduce unavailable.
     """
-    clean_path = audio_path.replace('.wav', '_clean.wav')
+    base, _ = os.path.splitext(audio_path)
+    clean_path = base + '_clean.wav'
     if os.path.exists(clean_path):
         return clean_path
     try:
@@ -309,7 +330,8 @@ def detect_language(song_title, genius_text=None):
     if "ckay" in title_lower and "nwantiti" in title_lower:
         return "ig"
 
-    return "en"
+    # No match — let Whisper auto-detect
+    return None
 
 
 # ============================================================================
@@ -626,7 +648,6 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
     best_pass_idx = -1
     model = None
     used_cpu_fallback = False
-    import time as _time
 
     try:
         model = load_whisper_model()
@@ -639,10 +660,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
             elapsed_total = _time.time() - batch_start
             if best_result is not None and elapsed_total > 180:
                 print(f"  ⏱ Time cap reached ({elapsed_total:.0f}s) — using best result from pass {best_pass_idx + 1}")
-                try:
-                    best_result.adjust_by_silence(audio_path, vad=True)
-                except Exception:
-                    pass
+                _snap_to_silence(best_result, audio_path)
                 return best_result, best_pass_idx
 
             try:
@@ -657,11 +675,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                     continue
 
                 # Post-transcription refinement
-                try:
-                    result.apply_min_dur(0.02)
-                    result.remove_repetition(max_words=1)
-                except Exception:
-                    pass
+                _refine_result(result)
 
                 count = sum(
                     1 for s in result.segments
@@ -679,11 +693,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 # Accept early only if we have genuinely good results
                 if count >= min_expected:
                     print(f"    \u2713 Sufficient ({count} \u2265 {min_expected} expected)")
-                    # Snap word timestamps to speech boundaries
-                    try:
-                        result.adjust_by_silence(audio_path, vad=True)
-                    except Exception:
-                        pass
+                    _snap_to_silence(result, audio_path)
                     return result, idx
 
             except RuntimeError as e:
@@ -695,11 +705,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                     try:
                         result = model.transcribe(audio_path, **p["params"])
                         if result and result.segments:
-                            try:
-                                result.apply_min_dur(0.02)
-                                result.remove_repetition(max_words=1)
-                            except Exception:
-                                pass
+                            _refine_result(result)
                             count = sum(
                                 1 for s in result.segments
                                 if s.text.strip() and len(s.text.strip()) > 1
@@ -712,10 +718,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                                 best_pass_idx = idx
                             threshold = int(min_expected * 0.7) if idx == 0 else min_expected
                             if count >= threshold:
-                                try:
-                                    result.adjust_by_silence(audio_path, vad=True)
-                                except Exception:
-                                    pass
+                                _snap_to_silence(result, audio_path)
                                 return result, idx
                     except Exception as cpu_e:
                         print(f"    \u2192 CPU fallback failed: {cpu_e}")
@@ -729,11 +732,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
 
         if best_result:
             print(f"  \u26a0 Best: weighted {best_score:.1f} (wanted {min_expected}+)")
-            # Snap word timestamps to speech boundaries
-            try:
-                best_result.adjust_by_silence(audio_path, vad=True)
-            except Exception:
-                pass
+            _snap_to_silence(best_result, audio_path)
 
         return best_result, best_pass_idx
 
@@ -917,10 +916,7 @@ def align_genius_to_audio(audio_path, genius_text, language=None):
             **lang_params,
         )
         if result and result.segments:
-            try:
-                result.adjust_by_silence(audio_path, vad=True)
-            except Exception:
-                pass
+            _snap_to_silence(result, audio_path)
             print(f"  Forced alignment: {len(result.segments)} segments")
             return result
         return None

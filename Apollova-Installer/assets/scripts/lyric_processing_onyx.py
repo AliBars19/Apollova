@@ -6,7 +6,6 @@ Uses the shared whisper_common module.
 Output: markers with {time, text, words[], color, end_time}
 """
 import os
-import json
 import copy
 
 from scripts.config import Config

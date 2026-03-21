@@ -31,7 +31,12 @@ import os
 import json
 import re
 import gc
+import copy
 import time as _time
+import subprocess
+import sys
+import tempfile
+import shutil
 
 from pydub import AudioSegment
 from stable_whisper import load_model
@@ -63,6 +68,7 @@ HALLUCINATION_SIMILARITY = 85
 STUTTER_SIMILARITY = 90
 REPETITION_SIMILARITY = 85
 MARKER_GAP_THRESHOLD_SEC = 4.0
+QUALITY_GATE_NON_LATIN_THRESHOLD = 0.5
 
 
 # ============================================================================
@@ -216,9 +222,7 @@ def separate_vocals(audio_path, job_folder):
         return vocals_path
 
     try:
-        import subprocess, sys
         print("  Separating vocals (Demucs)...")
-        import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             r = subprocess.run(
                 [sys.executable, "-m", "demucs", "-n", "htdemucs",
@@ -233,7 +237,6 @@ def separate_vocals(audio_path, job_folder):
             stem = os.path.splitext(os.path.basename(audio_path))[0]
             src = os.path.join(tmpdir, "htdemucs", stem, "vocals.wav")
             if os.path.exists(src):
-                import shutil
                 shutil.copy2(src, vocals_path)
                 print("  Vocals separated successfully")
                 return vocals_path
@@ -1019,7 +1022,7 @@ def quality_gate(markers, clip_duration):
     latin_chars = sum(1 for c in all_text if c.isalpha() and ord(c) < 0x0250)
     non_latin = sum(1 for c in all_text if c.isalpha() and ord(c) >= 0x0250)
     total_alpha = latin_chars + non_latin
-    if total_alpha > 0 and non_latin / total_alpha > 0.5:
+    if total_alpha > 0 and non_latin / total_alpha > QUALITY_GATE_NON_LATIN_THRESHOLD:
         issues.append(f"Non-Latin script dominates ({non_latin}/{total_alpha} chars)")
 
     if coverage_pct < 0.25:
@@ -1179,7 +1182,7 @@ def transcribe_word_level(job_folder, song_title, template_name,
         post_transcribe_fn: Optional callback(result) for template-specific
                            post-processing (e.g. Onyx regrouping)
     """
-    import copy
+    # Deferred to avoid circular import (these modules import whisper_common)
     from scripts.genius_processing import fetch_genius_lyrics
     from scripts.lyric_alignment import align_genius_to_whisper
 

@@ -12,7 +12,7 @@ import os
 import re
 import time
 import subprocess
-import yt_dlp
+import wave
 from pydub import AudioSegment
 
 _YT_ID_RE = re.compile(r'(?:youtube\.com/watch\?.*v=|youtu\.be/)([A-Za-z0-9_-]{11})')
@@ -46,6 +46,8 @@ def _validate_youtube_url(url):
 
 def download_audio(url, job_folder, max_retries=3, use_oauth=True):
     """Download audio from YouTube URL using yt-dlp"""
+    import yt_dlp  # Deferred: slow import, only needed on actual download
+
     mp3_path = os.path.join(job_folder, 'audio_source.mp3')
 
     if os.path.exists(mp3_path):
@@ -204,10 +206,12 @@ def normalize_audio(audio_path):
     norm_path = base + '_norm.wav'
     if os.path.exists(norm_path):
         try:
-            cached = AudioSegment.from_file(norm_path)
-            return norm_path, len(cached) / 1000.0
+            with wave.open(norm_path, 'rb') as wf:
+                duration = wf.getnframes() / wf.getframerate()
+            return norm_path, duration
         except Exception:
-            return norm_path, None
+            # Corrupt cache — delete and re-normalize
+            os.remove(norm_path)
     try:
         audio = AudioSegment.from_file(audio_path)
         duration = len(audio) / 1000.0
@@ -242,6 +246,7 @@ def reduce_noise(audio_path):
         print("  Noise reduction applied")
         return clean_path
     except ImportError:
+        print("  noisereduce not installed, skipping noise reduction")
         return audio_path
     except Exception as e:
         print(f"  Noise reduction failed: {e}")

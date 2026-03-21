@@ -11,12 +11,14 @@ from scripts import whisper_common
 
 def _onyx_regroup(result):
     """Post-transcription regrouping — Onyx benefits from shorter segments."""
+    original = result
     try:
         result = result.split_by_gap(0.5)
         result = result.split_by_punctuation(['.', '?', '!', ','])
         result = result.split_by_length(max_chars=50)
     except Exception as e:
         print(f"  \u26a0 Regrouping failed (using defaults): {e}")
+        return original
     return result
 
 

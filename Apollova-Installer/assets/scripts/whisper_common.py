@@ -47,6 +47,24 @@ from scripts.config import Config
 
 
 # ============================================================================
+# CONSTANTS
+# ============================================================================
+
+MIN_WORD_DUR = 0.02
+NONSPEECH_SKIP_SEC = 5.0
+NO_SPEECH_PROB_THRESHOLD = 0.7
+SILENCE_RATIO_THRESHOLD = 0.7
+SILENCE_ENERGY_RATIO = 0.1
+PASS_TIME_CAP_SEC = 180
+MAX_SEGMENT_DURATION_SEC = 30
+NON_LATIN_RATIO_THRESHOLD = 0.4
+HALLUCINATION_SIMILARITY = 85
+STUTTER_SIMILARITY = 90
+REPETITION_SIMILARITY = 85
+MARKER_GAP_THRESHOLD_SEC = 4.0
+
+
+# ============================================================================
 # MODEL CACHING (#2)
 # ============================================================================
 
@@ -155,7 +173,7 @@ def clear_vram():
 def _refine_result(result):
     """Apply min word duration and word-level repetition removal to a transcription result."""
     try:
-        result.apply_min_dur(0.02)
+        result.apply_min_dur(MIN_WORD_DUR)
         result.remove_repetition(max_words=1)
     except Exception as e:
         print(f"  Warning: post-transcription refinement failed: {e}")
@@ -365,7 +383,7 @@ def remove_non_target_script(items, text_key, song_title=None):
                 else:
                     non_latin_count += 1
         total = latin_count + non_latin_count
-        if total > 0 and non_latin_count / total > 0.4:
+        if total > 0 and non_latin_count / total > NON_LATIN_RATIO_THRESHOLD:
             print(f"   \U0001f5d1 Non-Latin script: '{text[:50]}'")
             removed += 1
         else:
@@ -420,7 +438,7 @@ def remove_hallucinations(items, text_key, initial_prompt):
         if not is_hallucination and initial_prompt:
             prompt_clean = re.sub(r"[^a-zA-Z0-9\s]", "", initial_prompt).lower().strip()
             similarity = fuzz.ratio(text_clean, prompt_clean)
-            if similarity > 85 and len(text_clean.split()) <= len(prompt_clean.split()) + 2:
+            if similarity > HALLUCINATION_SIMILARITY and len(text_clean.split()) <= len(prompt_clean.split()) + 2:
                 is_hallucination = True
 
         if is_hallucination:
@@ -493,7 +511,7 @@ def remove_repetition_loops(items, text_key):
         curr = clean_re.sub("", item.get(text_key, "")).lower().strip()
         prev = clean_re.sub("", items[i - 1].get(text_key, "")).lower().strip() if i > 0 else ""
 
-        if curr and prev and fuzz.ratio(curr, prev) > 85:
+        if curr and prev and fuzz.ratio(curr, prev) > REPETITION_SIMILARITY:
             streak += 1
         else:
             streak = 1
@@ -515,35 +533,35 @@ def remove_repetition_loops(items, text_key):
 def remove_stutter_duplicates(items, text_key):
     """
     Remove consecutive duplicates with tiny gaps (Whisper stutters).
-    #8: Uses fuzz.ratio > 90 instead of exact match.
+    Returns a new list (does not mutate input).
     """
     if len(items) < 2:
-        return items
+        return list(items)
 
     clean_re = re.compile(r"[^a-zA-Z0-9\s]")
-    removed = 0
-
-    # Determine time key based on text_key
     time_key = "t" if text_key == "lyric_current" else "time"
 
-    i = len(items) - 1
-    while i > 0:
-        curr = clean_re.sub("", items[i].get(text_key, "")).lower().strip()
-        prev = clean_re.sub("", items[i - 1].get(text_key, "")).lower().strip()
+    filtered = [items[0]]
+    removed = 0
 
-        if curr and prev and fuzz.ratio(curr, prev) > 90:
+    for i in range(1, len(items)):
+        curr = clean_re.sub("", items[i].get(text_key, "")).lower().strip()
+        prev = clean_re.sub("", filtered[-1].get(text_key, "")).lower().strip()
+
+        if curr and prev and fuzz.ratio(curr, prev) > STUTTER_SIMILARITY:
             curr_time = items[i].get(time_key, 0)
-            prev_end = items[i - 1].get("end_time", items[i - 1].get(time_key, 0) + 2)
+            prev_end = filtered[-1].get("end_time", filtered[-1].get(time_key, 0) + 2)
             gap = curr_time - prev_end
 
             if gap < 0.5:
-                items.pop(i)
                 removed += 1
-        i -= 1
+                continue
+
+        filtered.append(items[i])
 
     if removed:
         print(f"   Removed {removed} stutter duplicate(s)")
-    return items
+    return filtered
 
 
 # ============================================================================
@@ -596,8 +614,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 suppress_silence=True, regroup=regroup_passes[0],
                 temperature=0, initial_prompt=prompt,
                 condition_on_previous_text=False,
-                only_voice_freq=True, min_word_dur=0.02,
-                nonspeech_skip=5.0,
+                only_voice_freq=True, min_word_dur=MIN_WORD_DUR,
+                nonspeech_skip=NONSPEECH_SKIP_SEC,
                 **wt_params, **lang_params,
             )
         },
@@ -609,8 +627,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 suppress_silence=False, regroup=regroup_passes[1],
                 temperature=0.2, initial_prompt=prompt,
                 condition_on_previous_text=False,
-                only_voice_freq=True, min_word_dur=0.02,
-                nonspeech_skip=5.0,
+                only_voice_freq=True, min_word_dur=MIN_WORD_DUR,
+                nonspeech_skip=NONSPEECH_SKIP_SEC,
                 **wt_params, **lang_params,
             )
         },
@@ -622,8 +640,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 regroup=regroup_passes[2], temperature=0.4,
                 initial_prompt=prompt,
                 condition_on_previous_text=False,
-                only_voice_freq=True, min_word_dur=0.02,
-                nonspeech_skip=5.0,
+                only_voice_freq=True, min_word_dur=MIN_WORD_DUR,
+                nonspeech_skip=NONSPEECH_SKIP_SEC,
                 **wt_params, **lang_params,
             )
         },
@@ -635,8 +653,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 regroup=regroup_passes[3], temperature=0.6,
                 initial_prompt=None,
                 condition_on_previous_text=True,
-                only_voice_freq=True, min_word_dur=0.02,
-                nonspeech_skip=5.0,
+                only_voice_freq=True, min_word_dur=MIN_WORD_DUR,
+                nonspeech_skip=NONSPEECH_SKIP_SEC,
                 **wt_params,
                 # No language hint on pass 4 — let Whisper auto-detect
             )
@@ -658,7 +676,7 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
         for idx, p in enumerate(passes):
             # Time cap: if we already have a result and spent > 180s, stop
             elapsed_total = _time.time() - batch_start
-            if best_result is not None and elapsed_total > 180:
+            if best_result is not None and elapsed_total > PASS_TIME_CAP_SEC:
                 print(f"  ⏱ Time cap reached ({elapsed_total:.0f}s) — using best result from pass {best_pass_idx + 1}")
                 _snap_to_silence(best_result, audio_path)
                 return best_result, best_pass_idx
@@ -757,7 +775,7 @@ def build_markers_from_segments(segments):
 
         if not seg_text or len(seg_text) < 2:
             continue
-        if seg_end - seg_start > 30:
+        if seg_end - seg_start > MAX_SEGMENT_DURATION_SEC:
             print(f"   \u26a0 Skipping overly long segment ({seg_end - seg_start:.1f}s): {seg_text[:30]}...")
             continue
 
@@ -912,7 +930,7 @@ def align_genius_to_audio(audio_path, genius_text, language=None):
         result = model.align(
             audio_path, genius_text,
             vad=True, suppress_silence=True,
-            min_word_dur=0.02, only_voice_freq=True,
+            min_word_dur=MIN_WORD_DUR, only_voice_freq=True,
             **lang_params,
         )
         if result and result.segments:
@@ -948,7 +966,7 @@ def fix_marker_gaps(markers):
         words = m.get("words", [])
         for i in range(1, len(words)):
             gap = words[i]["start"] - words[i - 1]["end"]
-            if gap > 4.0:
+            if gap > MARKER_GAP_THRESHOLD_SEC:
                 compression = min(gap * 0.1, 0.5)
                 words[i]["start"] = words[i - 1]["end"] + compression
 
@@ -1148,7 +1166,7 @@ def remove_instrumental_hallucinations(items, text_key, audio_path):
             rms_values = [chunk.rms for chunk in chunks]
             max_rms = max(rms_values) if rms_values else 1
             if max_rms > 0:
-                threshold = max_rms * 0.1
+                threshold = max_rms * SILENCE_ENERGY_RATIO
                 for i, rms in enumerate(rms_values):
                     if rms < threshold:
                         silence_map.add(i)
@@ -1164,7 +1182,7 @@ def remove_instrumental_hallucinations(items, text_key, audio_path):
 
         # Check 1: high no_speech_prob from Whisper confidence metrics
         no_speech = item.get("no_speech_prob", 0)
-        if no_speech and no_speech > 0.7:
+        if no_speech and no_speech > NO_SPEECH_PROB_THRESHOLD:
             print(f"   \U0001f5d1 High no_speech_prob ({no_speech:.2f}): '{item.get(text_key, '')[:50]}' @ {start:.1f}s")
             removed += 1
             continue
@@ -1177,7 +1195,7 @@ def remove_instrumental_hallucinations(items, text_key, audio_path):
             if span_chunks:
                 silent_count = sum(1 for c in span_chunks if c in silence_map)
                 silent_ratio = silent_count / len(span_chunks)
-                if silent_ratio > 0.7:
+                if silent_ratio > SILENCE_RATIO_THRESHOLD:
                     print(f"   \U0001f5d1 Instrumental hallucination ({silent_ratio:.0%} silent): "
                           f"'{item.get(text_key, '')[:50]}' @ {start:.1f}s")
                     removed += 1

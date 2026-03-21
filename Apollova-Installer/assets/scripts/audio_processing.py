@@ -1,10 +1,12 @@
 """
-Audio Processing - Download, trim, and beat detection
+Audio Processing - Download, trim, beat detection, and audio preprocessing
 Shared across Aurora, Mono, and Onyx templates
 
 - download_audio: YouTube download via yt-dlp
 - trim_audio: Clip extraction based on MM:SS timestamps
 - detect_beats: Beat detection via librosa (Aurora only)
+- normalize_audio: Normalize to -20 dBFS for consistent Whisper input
+- reduce_noise: Stationary noise reduction (optional, requires noisereduce)
 """
 import os
 import re
@@ -190,3 +192,57 @@ def detect_beats(job_folder):
     except Exception as e:
         print(f"⚠️  Beat detection failed: {e}")
         return []
+
+
+def normalize_audio(audio_path):
+    """
+    Normalize audio to -20 dBFS for consistent Whisper input levels.
+    Caches result as *_norm.wav to avoid re-processing.
+    Returns (normalized_path, duration_seconds).
+    """
+    base, _ = os.path.splitext(audio_path)
+    norm_path = base + '_norm.wav'
+    if os.path.exists(norm_path):
+        try:
+            cached = AudioSegment.from_file(norm_path)
+            return norm_path, len(cached) / 1000.0
+        except Exception:
+            return norm_path, None
+    try:
+        audio = AudioSegment.from_file(audio_path)
+        duration = len(audio) / 1000.0
+        if audio.dBFS == float('-inf'):
+            return audio_path, duration
+        change = -20.0 - audio.dBFS
+        normalized = audio.apply_gain(change)
+        normalized.export(norm_path, format='wav')
+        print("  Audio normalized to -20 dBFS")
+        return norm_path, duration
+    except Exception as e:
+        print(f"  Normalization failed: {e}")
+        return audio_path, None
+
+
+def reduce_noise(audio_path):
+    """
+    Apply stationary noise reduction to remove reverb tails and recording noise.
+    Caches result as *_clean.wav. Falls back to original if noisereduce unavailable.
+    """
+    base, _ = os.path.splitext(audio_path)
+    clean_path = base + '_clean.wav'
+    if os.path.exists(clean_path):
+        return clean_path
+    try:
+        import noisereduce as nr
+        import librosa
+        import soundfile as sf
+        y, sr = librosa.load(audio_path, sr=16000)
+        y_clean = nr.reduce_noise(y=y, sr=sr, stationary=True, prop_decrease=0.75)
+        sf.write(clean_path, y_clean, sr)
+        print("  Noise reduction applied")
+        return clean_path
+    except ImportError:
+        return audio_path
+    except Exception as e:
+        print(f"  Noise reduction failed: {e}")
+        return audio_path

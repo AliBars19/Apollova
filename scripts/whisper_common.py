@@ -44,6 +44,7 @@ except ImportError:
     HAS_TORCH = False
 
 from scripts.config import Config
+from scripts.audio_processing import normalize_audio, reduce_noise
 
 
 # ============================================================================
@@ -245,54 +246,6 @@ def separate_vocals(audio_path, job_folder):
         return audio_path
     except Exception as e:
         print(f"  Vocal separation failed: {e}")
-        return audio_path
-
-
-def normalize_audio(audio_path):
-    """
-    Normalize audio to -20 dBFS for consistent Whisper input levels.
-    Caches result as *_norm.wav to avoid re-processing.
-    """
-    base, _ = os.path.splitext(audio_path)
-    norm_path = base + '_norm.wav'
-    if os.path.exists(norm_path):
-        return norm_path
-    try:
-        audio = AudioSegment.from_file(audio_path)
-        if audio.dBFS == float('-inf'):
-            return audio_path
-        change = -20.0 - audio.dBFS
-        normalized = audio.apply_gain(change)
-        normalized.export(norm_path, format='wav')
-        print("  Audio normalized to -20 dBFS")
-        return norm_path
-    except Exception as e:
-        print(f"  Normalization failed: {e}")
-        return audio_path
-
-
-def reduce_noise(audio_path):
-    """
-    Apply stationary noise reduction to remove reverb tails and recording noise.
-    Caches result as *_clean.wav. Falls back to original if noisereduce unavailable.
-    """
-    base, _ = os.path.splitext(audio_path)
-    clean_path = base + '_clean.wav'
-    if os.path.exists(clean_path):
-        return clean_path
-    try:
-        import noisereduce as nr
-        import librosa
-        import soundfile as sf
-        y, sr = librosa.load(audio_path, sr=16000)
-        y_clean = nr.reduce_noise(y=y, sr=sr, stationary=True, prop_decrease=0.75)
-        sf.write(clean_path, y_clean, sr)
-        print("  Noise reduction applied")
-        return clean_path
-    except ImportError:
-        return audio_path
-    except Exception as e:
-        print(f"  Noise reduction failed: {e}")
         return audio_path
 
 
@@ -581,16 +534,16 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
     if regroup_passes is None:
         regroup_passes = [True, True, True, True]
 
-    # Normalize audio levels for consistent Whisper input
-    audio_path = normalize_audio(audio_path)
+    # Normalize audio levels (also returns duration, avoiding a redundant decode)
+    audio_path, norm_dur = normalize_audio(audio_path)
 
     # Apply noise reduction (removes reverb tails, recording noise)
     audio_path = reduce_noise(audio_path)
 
-    # Verify the actual audio file duration matches what caller reported
-    actual_dur = get_audio_duration(audio_path)
+    # Use duration from normalization pass to avoid re-decoding the file
+    actual_dur = norm_dur if norm_dur is not None else get_audio_duration(audio_path)
     print(f"  🔍 Whisper input: {audio_path}")
-    print(f"  🔍 File duration: {actual_dur:.1f}s (caller reported: {duration}s)")
+    print(f"  🔍 File duration: {actual_dur:.1f}s (caller reported: {duration}s)" if actual_dur else f"  🔍 Whisper input: {audio_path}")
     if actual_dur is not None and duration is not None and actual_dur > duration + 10:
         print(f"  ⚠ WARNING: audio file ({actual_dur:.1f}s) much longer than expected ({duration}s)!")
 

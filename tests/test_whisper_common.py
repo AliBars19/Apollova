@@ -30,6 +30,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from scripts import whisper_common
+from scripts.audio_processing import normalize_audio, reduce_noise
 from scripts.whisper_common import (
     get_audio_duration,
     build_initial_prompt,
@@ -49,8 +50,6 @@ from scripts.whisper_common import (
     load_whisper_cache,
     assign_colors,
     rebuild_words_after_alignment,
-    normalize_audio,
-    reduce_noise,
     align_genius_to_audio,
     _refine_result,
     _snap_to_silence,
@@ -623,25 +622,29 @@ class TestNormalizeAudio:
 
     def test_normalizes_and_creates_file(self, tmp_dir: Path):
         wav = self._make_quiet_wav(tmp_dir)
-        result = normalize_audio(str(wav))
-        assert result.endswith("_norm.wav")
-        assert os.path.exists(result)
+        path, duration = normalize_audio(str(wav))
+        assert path.endswith("_norm.wav")
+        assert os.path.exists(path)
+        assert isinstance(duration, float)
+        assert duration > 0
 
     def test_caches_result(self, tmp_dir: Path):
         wav = self._make_quiet_wav(tmp_dir)
-        first = normalize_audio(str(wav))
-        second = normalize_audio(str(wav))
-        assert first == second
+        first_path, _ = normalize_audio(str(wav))
+        second_path, _ = normalize_audio(str(wav))
+        assert first_path == second_path
 
     def test_silent_audio_returns_original(self, silent_wav: Path):
-        # Truly silent audio (-inf dBFS) should return original
-        result = normalize_audio(str(silent_wav))
-        assert result == str(silent_wav)
+        # Truly silent audio (-inf dBFS) should return original path
+        path, duration = normalize_audio(str(silent_wav))
+        assert path == str(silent_wav)
+        assert isinstance(duration, float)
 
     def test_failure_returns_original(self, tmp_dir: Path):
         bad_path = str(tmp_dir / "nonexistent.wav")
-        result = normalize_audio(bad_path)
-        assert result == bad_path
+        path, duration = normalize_audio(bad_path)
+        assert path == bad_path
+        assert duration is None
 
 
 # ===========================================================================

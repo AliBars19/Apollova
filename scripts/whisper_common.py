@@ -825,6 +825,40 @@ def rebuild_words_after_alignment(markers):
 
 
 # ============================================================================
+# FORCED ALIGNMENT (#28: Genius text → audio via model.align)
+# ============================================================================
+
+def align_genius_to_audio(audio_path, genius_text, language=None):
+    """
+    Use stable-ts forced alignment to get precise word timestamps for Genius text.
+    Falls back to None on failure — caller should use rebuild_words_after_alignment.
+    """
+    if not genius_text or not genius_text.strip():
+        return None
+
+    try:
+        model = load_whisper_model()
+        lang_params = {"language": language} if language else {}
+        result = model.align(
+            audio_path, genius_text,
+            vad=True, suppress_silence=True,
+            min_word_dur=0.02, only_voice_freq=True,
+            **lang_params,
+        )
+        if result and result.segments:
+            try:
+                result.adjust_by_silence(audio_path, vad=True)
+            except Exception:
+                pass
+            print(f"  Forced alignment: {len(result.segments)} segments")
+            return result
+        return None
+    except Exception as e:
+        print(f"  Forced alignment failed: {e}")
+        return None
+
+
+# ============================================================================
 # COLOR ASSIGNMENT (Mono/Onyx shared)
 # ============================================================================
 
@@ -1028,8 +1062,12 @@ def load_whisper_cache(job_folder):
 def remove_instrumental_hallucinations(items, text_key, audio_path):
     """
     Remove segments that fall over silent/instrumental sections.
-    #17: RMS energy analysis — remove segments whose midpoint is in a silent chunk.
+    #17: RMS energy analysis — full-span check instead of midpoint-only.
+    Also uses no_speech_prob from segment confidence metrics.
     """
+    if not items:
+        return items
+
     try:
         audio = AudioSegment.from_file(audio_path)
     except Exception:
@@ -1054,9 +1092,6 @@ def remove_instrumental_hallucinations(items, text_key, audio_path):
         if rms < threshold:
             silence_map.add(i)
 
-    if not silence_map:
-        return items
-
     # Determine time key
     time_key = "t" if text_key == "lyric_current" else "time"
 
@@ -1066,14 +1101,29 @@ def remove_instrumental_hallucinations(items, text_key, audio_path):
     for item in items:
         start = item.get(time_key, 0)
         end = item.get("end_time", start + 2)
-        midpoint = (start + end) / 2.0
-        chunk_idx = int(midpoint)  # 1s chunks, so seconds = index
 
-        if chunk_idx in silence_map:
-            print(f"   \U0001f5d1 Instrumental hallucination: '{item.get(text_key, '')[:50]}' @ {midpoint:.1f}s")
+        # Check 1: high no_speech_prob from Whisper confidence metrics
+        no_speech = item.get("no_speech_prob", 0)
+        if no_speech and no_speech > 0.7:
+            print(f"   \U0001f5d1 High no_speech_prob ({no_speech:.2f}): '{item.get(text_key, '')[:50]}' @ {start:.1f}s")
             removed += 1
-        else:
-            filtered.append(item)
+            continue
+
+        # Check 2: full-span silence analysis (>70% of span in silence)
+        if silence_map:
+            start_chunk = int(start)
+            end_chunk = int(end)
+            span_chunks = list(range(start_chunk, end_chunk + 1))
+            if span_chunks:
+                silent_count = sum(1 for c in span_chunks if c in silence_map)
+                silent_ratio = silent_count / len(span_chunks)
+                if silent_ratio > 0.7:
+                    print(f"   \U0001f5d1 Instrumental hallucination ({silent_ratio:.0%} silent): "
+                          f"'{item.get(text_key, '')[:50]}' @ {start:.1f}s")
+                    removed += 1
+                    continue
+
+        filtered.append(item)
 
     if removed:
         print(f"   Removed {removed} instrumental hallucination(s)")

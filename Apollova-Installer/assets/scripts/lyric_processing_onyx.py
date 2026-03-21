@@ -130,6 +130,15 @@ def transcribe_audio_onyx(job_folder, song_title=None):
                 if match_ratio < 0.3:
                     print(f"  \u26a0 Low match ratio ({match_ratio:.2f}) \u2014 reverting to Whisper text")
                     markers = markers_backup
+                elif match_ratio >= 0.5:
+                    # Try forced alignment for precise word timing
+                    aligned = whisper_common.align_genius_to_audio(
+                        audio_path, genius_text, language
+                    )
+                    if aligned and aligned.segments:
+                        markers = whisper_common.build_markers_from_segments(aligned.segments)
+                    else:
+                        markers = whisper_common.rebuild_words_after_alignment(markers)
                 else:
                     markers = whisper_common.rebuild_words_after_alignment(markers)
 

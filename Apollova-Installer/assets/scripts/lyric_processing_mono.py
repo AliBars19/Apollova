@@ -113,6 +113,9 @@ def transcribe_audio_mono(job_folder, song_title=None):
                 with open(genius_path, "w", encoding="utf-8") as f:
                     f.write(genius_text)
 
+                # Re-detect language with Genius text for better accuracy
+                language = whisper_common.detect_language(song_title, genius_text)
+
                 print("\u270e Aligning lyrics (sliding window)...")
                 markers_backup = copy.deepcopy(markers)
                 markers, match_ratio = align_genius_to_whisper(

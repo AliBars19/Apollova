@@ -17,6 +17,14 @@ tqdm
 # Vocal separation (improves Whisper accuracy on music)
 demucs==4.0.1
 
+# Audio preprocessing (noise reduction + language detection)
+noisereduce
+soundfile
+langdetect
+
+# Faster transcription backend (optional — graceful fallback to standard whisper)
+faster-whisper
+
 # Lyrics
 lyricsgenius==3.0.1
 rapidfuzz==3.9.7

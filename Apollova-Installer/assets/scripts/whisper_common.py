@@ -22,6 +22,10 @@ Improvements applied:
   #25: Audio normalization (-20 dBFS before Whisper)
   #26: Non-speech skip (skip instrumental sections >5s)
   #27: Built-in word-level repetition removal (remove_repetition)
+  #28: Forced Genius alignment via model.align() for precise word timestamps
+  #29: Automatic language detection via langdetect on Genius text
+  #30: Noise reduction via noisereduce (stationary noise removal)
+  #31: faster-whisper backend support (4-10x speedup, graceful fallback)
 """
 import os
 import json
@@ -57,8 +61,28 @@ def get_device_info():
     return "CPU"
 
 
+def _try_load_faster_whisper(device, force_cpu):
+    """Attempt to load faster-whisper via stable-ts bridge. Returns model or None."""
+    try:
+        from stable_whisper import load_faster_whisper
+        compute_type = "int8" if (force_cpu or device == "CPU") else "float16"
+        dev = "cpu" if force_cpu else ("cuda" if HAS_TORCH and torch.cuda.is_available() else "cpu")
+        model = load_faster_whisper(
+            Config.WHISPER_MODEL, device=dev, compute_type=compute_type,
+            download_root=Config.WHISPER_CACHE_DIR,
+        )
+        print(f"  Loaded faster-whisper ({Config.WHISPER_MODEL}) on {dev} [{compute_type}]")
+        return model
+    except ImportError:
+        return None
+    except Exception as e:
+        print(f"  faster-whisper failed ({e}), falling back to standard whisper")
+        return None
+
+
 def load_whisper_model(force_cpu=False):
-    """Load Whisper model with caching — skip reload if same config."""
+    """Load Whisper model with caching — skip reload if same config.
+    Tries faster-whisper first (4-10x speedup), falls back to standard whisper."""
     global _cached_model, _cached_on_cpu
 
     if _cached_model is not None and _cached_on_cpu == force_cpu:
@@ -72,6 +96,15 @@ def load_whisper_model(force_cpu=False):
     os.makedirs(Config.WHISPER_CACHE_DIR, exist_ok=True)
 
     device = get_device_info()
+
+    # Try faster-whisper first (CTranslate2 backend, much faster)
+    faster = _try_load_faster_whisper(device, force_cpu)
+    if faster is not None:
+        _cached_model = faster
+        _cached_on_cpu = force_cpu
+        return _cached_model
+
+    # Fall back to standard whisper
     if force_cpu and HAS_TORCH:
         original_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
@@ -200,6 +233,30 @@ def normalize_audio(audio_path):
         return audio_path
 
 
+def reduce_noise(audio_path):
+    """
+    Apply stationary noise reduction to remove reverb tails and recording noise.
+    Caches result as *_clean.wav. Falls back to original if noisereduce unavailable.
+    """
+    clean_path = audio_path.replace('.wav', '_clean.wav')
+    if os.path.exists(clean_path):
+        return clean_path
+    try:
+        import noisereduce as nr
+        import librosa
+        import soundfile as sf
+        y, sr = librosa.load(audio_path, sr=16000)
+        y_clean = nr.reduce_noise(y=y, sr=sr, stationary=True, prop_decrease=0.75)
+        sf.write(clean_path, y_clean, sr)
+        print("  Noise reduction applied")
+        return clean_path
+    except ImportError:
+        return audio_path
+    except Exception as e:
+        print(f"  Noise reduction failed: {e}")
+        return audio_path
+
+
 def build_initial_prompt(song_title):
     """Build Whisper initial prompt from song title."""
     if not song_title:
@@ -210,11 +267,22 @@ def build_initial_prompt(song_title):
     return f"{song_title}."
 
 
-def detect_language(song_title):
+def detect_language(song_title, genius_text=None):
     """
-    Detect likely language from song title.
-    #7: Returns None for unknown songs — lets Whisper auto-detect.
+    Detect likely language from song title or Genius lyrics text.
+    #7:  Returns None for unknown songs — lets Whisper auto-detect.
+    #29: Uses langdetect on Genius text when available for automatic detection.
     """
+    # Try automatic detection on Genius lyrics first
+    if genius_text and len(genius_text) > 50:
+        try:
+            from langdetect import detect as _detect_lang
+            lang = _detect_lang(genius_text)
+            if lang:
+                return lang
+        except Exception:
+            pass
+
     if not song_title:
         return None
 
@@ -475,6 +543,9 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
 
     # Normalize audio levels for consistent Whisper input
     audio_path = normalize_audio(audio_path)
+
+    # Apply noise reduction (removes reverb tails, recording noise)
+    audio_path = reduce_noise(audio_path)
 
     # Verify the actual audio file duration matches what caller reported
     actual_dur = get_audio_duration(audio_path)

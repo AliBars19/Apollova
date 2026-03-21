@@ -117,6 +117,9 @@ REQUIRED_PACKAGES = [
     ("requests",       "requests",         True),
     ("numpy",          "numpy",            True),
     ("dotenv",         "python-dotenv",    True),
+    ("langdetect",     "langdetect",       False),
+    ("noisereduce",    "noisereduce",      False),
+    ("soundfile",      "soundfile",        False),
 ]
 
 REQUIRED_FILES = [

@@ -1159,3 +1159,152 @@ def remove_instrumental_hallucinations(items, text_key, audio_path):
     if removed:
         print(f"   Removed {removed} instrumental hallucination(s)")
     return filtered
+
+
+# ============================================================================
+# SHARED WORD-LEVEL TRANSCRIPTION (Mono/Onyx common pipeline)
+# ============================================================================
+
+def transcribe_word_level(job_folder, song_title, template_name,
+                          regroup_passes, post_transcribe_fn=None):
+    """
+    Shared transcription pipeline for word-level templates (Mono, Onyx).
+    Returns dict with markers list and total_markers count.
+
+    Args:
+        job_folder: Path to job directory
+        song_title: Song title for language detection and Genius lookup
+        template_name: Display name ("Mono" or "Onyx")
+        regroup_passes: List of 4 bools for stable-ts regrouping per pass
+        post_transcribe_fn: Optional callback(result) for template-specific
+                           post-processing (e.g. Onyx regrouping)
+    """
+    import copy
+    from scripts.genius_processing import fetch_genius_lyrics
+    from scripts.lyric_alignment import align_genius_to_whisper
+
+    print(f"\n\u270e {template_name} Transcription ({Config.WHISPER_MODEL})...")
+
+    audio_path = os.path.join(job_folder, "audio_trimmed.wav")
+
+    if not os.path.exists(audio_path):
+        print("\u274c Trimmed audio not found")
+        return {"markers": [], "total_markers": 0}
+
+    try:
+        audio_duration = get_audio_duration(audio_path)
+        if audio_duration is not None:
+            print(f"  Audio duration: {audio_duration:.1f}s")
+        else:
+            print("  \u26a0 Could not determine audio duration")
+
+        initial_prompt = build_initial_prompt(song_title)
+        language = detect_language(song_title)
+
+        # Check Whisper cache
+        cached = load_whisper_cache(job_folder)
+        if cached:
+            markers = []
+            for seg in cached:
+                text = seg.get("text", "").strip()
+                if not text:
+                    continue
+                markers.append({
+                    "time": float(seg["start"]),
+                    "text": text,
+                    "words": seg.get("words", []),
+                    "color": "",
+                    "end_time": float(seg["end"])
+                })
+        else:
+            # Vocal separation + multi-pass transcription
+            transcribe_path = separate_vocals(audio_path, job_folder)
+            result, pass_idx = multi_pass_transcribe(
+                transcribe_path, initial_prompt, audio_duration, language,
+                word_timestamps=True,
+                regroup_passes=regroup_passes,
+            )
+
+            if not result or not result.segments:
+                print("\u274c Whisper returned no segments after all attempts")
+                return {"markers": [], "total_markers": 0}
+
+            # Template-specific post-processing (e.g. Onyx regrouping)
+            if post_transcribe_fn is not None:
+                result = post_transcribe_fn(result)
+
+            markers = build_markers_from_segments(result.segments)
+
+            if markers:
+                save_whisper_cache(job_folder, markers)
+
+        if not markers:
+            print("\u274c No valid markers generated")
+            return {"markers": [], "total_markers": 0}
+
+        print(f"  Raw Whisper output: {len(markers)} markers")
+
+        # Cleanup pipeline
+        markers = remove_hallucinations(markers, "text", initial_prompt)
+        markers = remove_junk(markers, "text")
+        markers = remove_stutter_duplicates(markers, "text")
+        markers = remove_repetition_loops(markers, "text")
+        markers = remove_instrumental_hallucinations(markers, "text", audio_path)
+
+        if not markers:
+            print("\u274c No markers remain after cleanup")
+            return {"markers": [], "total_markers": 0}
+
+        print(f"  After cleanup: {len(markers)} markers")
+
+        # Genius alignment
+        if song_title and Config.GENIUS_API_TOKEN:
+            print("\u270e Fetching Genius lyrics for alignment...")
+            genius_text = fetch_genius_lyrics(song_title)
+
+            if genius_text:
+                genius_path = os.path.join(job_folder, "genius_lyrics.txt")
+                with open(genius_path, "w", encoding="utf-8") as f:
+                    f.write(genius_text)
+
+                language = detect_language(song_title, genius_text)
+
+                print("\u270e Aligning lyrics (sliding window)...")
+                markers_backup = copy.deepcopy(markers)
+                markers, match_ratio = align_genius_to_whisper(
+                    markers, genius_text, segment_text_key="text"
+                )
+
+                if match_ratio < 0.3:
+                    print(f"  \u26a0 Low match ratio ({match_ratio:.2f}) \u2014 reverting to Whisper text")
+                    markers = markers_backup
+                elif match_ratio >= 0.5:
+                    aligned = align_genius_to_audio(audio_path, genius_text, language)
+                    if aligned and aligned.segments:
+                        markers = build_markers_from_segments(aligned.segments)
+                    else:
+                        markers = rebuild_words_after_alignment(markers)
+                else:
+                    markers = rebuild_words_after_alignment(markers)
+
+        # Final cleanup
+        markers = [m for m in markers if m["text"].strip()]
+        markers = remove_non_target_script(markers, "text", song_title)
+        markers = merge_short_markers(markers)
+        assign_colors(markers)
+        fix_marker_gaps(markers)
+
+        passed, issues = quality_gate(markers, audio_duration)
+        if not passed:
+            print(f"  \u26a0 QUALITY WARNING: {'; '.join(issues)}")
+
+        print(f"\u2713 {template_name} transcription complete: {len(markers)} markers")
+
+        return {
+            "markers": markers,
+            "total_markers": len(markers)
+        }
+
+    except Exception as e:
+        print(f"\u274c {template_name} transcription failed: {e}")
+        raise

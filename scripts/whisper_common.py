@@ -343,8 +343,8 @@ def remove_non_target_script(items, text_key, song_title=None):
     if not items:
         return items
 
-    lang = detect_language(song_title) if song_title else "en"
-    latin_languages = {"en", "es", "fr", "pt", "it", "de", "so", "ig"}
+    lang = detect_language(song_title) if song_title else None
+    latin_languages = {"en", "es", "fr", "pt", "it", "de", "so", "ig", None}
     if lang not in latin_languages:
         return items
 
@@ -1135,32 +1135,25 @@ def remove_instrumental_hallucinations(items, text_key, audio_path):
     if not items:
         return items
 
-    try:
-        audio = AudioSegment.from_file(audio_path)
-    except Exception:
-        return items
-
-    # Build silence map: 1s chunks, energy < 10% of max
-    chunk_ms = 1000
-    chunks = [audio[i:i + chunk_ms] for i in range(0, len(audio), chunk_ms)]
-
-    if not chunks:
-        return items
-
-    rms_values = [chunk.rms for chunk in chunks]
-    max_rms = max(rms_values) if rms_values else 1
-
-    if max_rms == 0:
-        return items
-
-    silence_map = set()
-    threshold = max_rms * 0.1
-    for i, rms in enumerate(rms_values):
-        if rms < threshold:
-            silence_map.add(i)
-
     # Determine time key
     time_key = "t" if text_key == "lyric_current" else "time"
+
+    # Build silence map from audio RMS
+    silence_map = set()
+    try:
+        audio = AudioSegment.from_file(audio_path)
+        chunk_ms = 1000
+        chunks = [audio[i:i + chunk_ms] for i in range(0, len(audio), chunk_ms)]
+        if chunks:
+            rms_values = [chunk.rms for chunk in chunks]
+            max_rms = max(rms_values) if rms_values else 1
+            if max_rms > 0:
+                threshold = max_rms * 0.1
+                for i, rms in enumerate(rms_values):
+                    if rms < threshold:
+                        silence_map.add(i)
+    except Exception:
+        pass
 
     filtered = []
     removed = 0

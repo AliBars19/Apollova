@@ -15,6 +15,13 @@ Improvements applied:
   #13: get_audio_duration returns None on failure; min_expected=2 when unknown
   #14: fix_marker_gaps threshold 4.0s, proportional compression
   #17: Instrumental hallucination detection via RMS energy
+  #21: Voice freq filter (200-5000Hz bandpass via only_voice_freq)
+  #22: Zero-duration word fix (min_word_dur + apply_min_dur)
+  #23: Silence-adjusted word timestamps (adjust_by_silence)
+  #24: Confidence metrics (word probability + segment logprob/no_speech_prob)
+  #25: Audio normalization (-20 dBFS before Whisper)
+  #26: Non-speech skip (skip instrumental sections >5s)
+  #27: Built-in word-level repetition removal (remove_repetition)
 """
 import os
 import json
@@ -168,6 +175,28 @@ def separate_vocals(audio_path, job_folder):
         return audio_path
     except Exception as e:
         print(f"  Vocal separation failed: {e}")
+        return audio_path
+
+
+def normalize_audio(audio_path):
+    """
+    Normalize audio to -20 dBFS for consistent Whisper input levels.
+    Caches result as *_norm.wav to avoid re-processing.
+    """
+    norm_path = audio_path.replace('.wav', '_norm.wav')
+    if os.path.exists(norm_path):
+        return norm_path
+    try:
+        audio = AudioSegment.from_file(audio_path)
+        if audio.dBFS == float('-inf'):
+            return audio_path
+        change = -20.0 - audio.dBFS
+        normalized = audio.apply_gain(change)
+        normalized.export(norm_path, format='wav')
+        print("  Audio normalized to -20 dBFS")
+        return norm_path
+    except Exception as e:
+        print(f"  Normalization failed: {e}")
         return audio_path
 
 
@@ -444,6 +473,9 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
     if regroup_passes is None:
         regroup_passes = [True, True, True, True]
 
+    # Normalize audio levels for consistent Whisper input
+    audio_path = normalize_audio(audio_path)
+
     # Verify the actual audio file duration matches what caller reported
     actual_dur = get_audio_duration(audio_path)
     print(f"  🔍 Whisper input: {audio_path}")
@@ -471,6 +503,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 suppress_silence=True, regroup=regroup_passes[0],
                 temperature=0, initial_prompt=prompt,
                 condition_on_previous_text=False,
+                only_voice_freq=True, min_word_dur=0.02,
+                nonspeech_skip=5.0,
                 **wt_params, **lang_params,
             )
         },
@@ -482,6 +516,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 suppress_silence=False, regroup=regroup_passes[1],
                 temperature=0.2, initial_prompt=prompt,
                 condition_on_previous_text=False,
+                only_voice_freq=True, min_word_dur=0.02,
+                nonspeech_skip=5.0,
                 **wt_params, **lang_params,
             )
         },
@@ -493,6 +529,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 regroup=regroup_passes[2], temperature=0.4,
                 initial_prompt=prompt,
                 condition_on_previous_text=False,
+                only_voice_freq=True, min_word_dur=0.02,
+                nonspeech_skip=5.0,
                 **wt_params, **lang_params,
             )
         },
@@ -504,6 +542,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 regroup=regroup_passes[3], temperature=0.6,
                 initial_prompt=None,
                 condition_on_previous_text=True,
+                only_voice_freq=True, min_word_dur=0.02,
+                nonspeech_skip=5.0,
                 **wt_params,
                 # No language hint on pass 4 — let Whisper auto-detect
             )
@@ -528,6 +568,10 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
             elapsed_total = _time.time() - batch_start
             if best_result is not None and elapsed_total > 180:
                 print(f"  ⏱ Time cap reached ({elapsed_total:.0f}s) — using best result from pass {best_pass_idx + 1}")
+                try:
+                    best_result.adjust_by_silence(audio_path, vad=True)
+                except Exception:
+                    pass
                 return best_result, best_pass_idx
 
             try:
@@ -540,6 +584,13 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 if not result or not result.segments:
                     print(f"    \u2192 0 segments ({pass_time:.0f}s)")
                     continue
+
+                # Post-transcription refinement
+                try:
+                    result.apply_min_dur(0.02)
+                    result.remove_repetition(max_words=1)
+                except Exception:
+                    pass
 
                 count = sum(
                     1 for s in result.segments
@@ -557,6 +608,11 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                 # Accept early only if we have genuinely good results
                 if count >= min_expected:
                     print(f"    \u2713 Sufficient ({count} \u2265 {min_expected} expected)")
+                    # Snap word timestamps to speech boundaries
+                    try:
+                        result.adjust_by_silence(audio_path, vad=True)
+                    except Exception:
+                        pass
                     return result, idx
 
             except RuntimeError as e:
@@ -568,6 +624,11 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                     try:
                         result = model.transcribe(audio_path, **p["params"])
                         if result and result.segments:
+                            try:
+                                result.apply_min_dur(0.02)
+                                result.remove_repetition(max_words=1)
+                            except Exception:
+                                pass
                             count = sum(
                                 1 for s in result.segments
                                 if s.text.strip() and len(s.text.strip()) > 1
@@ -580,6 +641,10 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
                                 best_pass_idx = idx
                             threshold = int(min_expected * 0.7) if idx == 0 else min_expected
                             if count >= threshold:
+                                try:
+                                    result.adjust_by_silence(audio_path, vad=True)
+                                except Exception:
+                                    pass
                                 return result, idx
                     except Exception as cpu_e:
                         print(f"    \u2192 CPU fallback failed: {cpu_e}")
@@ -593,6 +658,11 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
 
         if best_result:
             print(f"  \u26a0 Best: weighted {best_score:.1f} (wanted {min_expected}+)")
+            # Snap word timestamps to speech boundaries
+            try:
+                best_result.adjust_by_silence(audio_path, vad=True)
+            except Exception:
+                pass
 
         return best_result, best_pass_idx
 
@@ -623,13 +693,23 @@ def build_markers_from_segments(segments):
 
         words = extract_word_timings(segment, seg_start, seg_end, seg_text)
 
-        markers.append({
+        marker = {
             "time": round(seg_start, 3),
             "text": seg_text,
             "words": words,
             "color": "",
-            "end_time": round(seg_end, 3)
-        })
+            "end_time": round(seg_end, 3),
+        }
+
+        # Save segment confidence metrics for diagnostics
+        avg_logprob = getattr(segment, 'avg_logprob', None)
+        no_speech_prob = getattr(segment, 'no_speech_prob', None)
+        if avg_logprob is not None:
+            marker["avg_logprob"] = round(float(avg_logprob), 4)
+        if no_speech_prob is not None:
+            marker["no_speech_prob"] = round(float(no_speech_prob), 4)
+
+        markers.append(marker)
 
     return markers
 
@@ -647,11 +727,15 @@ def extract_word_timings(segment, seg_start, seg_end, seg_text):
             we = float(word.end)
             if we - ws > 3:
                 we = ws + 1.0
-            words.append({
+            w_entry = {
                 "word": word_text,
                 "start": round(ws, 3),
-                "end": round(we, 3)
-            })
+                "end": round(we, 3),
+            }
+            prob = getattr(word, 'probability', None)
+            if prob is not None:
+                w_entry["probability"] = round(float(prob), 3)
+            words.append(w_entry)
 
     if not words:
         word_list = seg_text.split()

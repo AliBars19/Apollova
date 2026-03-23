@@ -1,30 +1,22 @@
-"""
-Shared Configuration - Used by Aurora, Mono, and Onyx templates
-Loads settings from .env file in the project root
-"""
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 
-# Load environment variables from project root
-# Walk up from this file's location to find .env
-_script_dir = Path(__file__).parent
-_project_root = _script_dir.parent  # One level up from scripts/
+# Resolve the base install directory (assets/../)
+# This file lives at: <install>/assets/scripts/config.py
+_SCRIPTS_DIR = Path(__file__).parent          # .../assets/scripts
+_ASSETS_DIR  = _SCRIPTS_DIR.parent            # .../assets
+_BASE_DIR    = _ASSETS_DIR.parent             # .../  (install root)
 
-# Try loading .env from project root, then from each template dir
-for env_path in [
-    _project_root / ".env",
-    _script_dir / ".env",
-]:
-    if env_path.exists():
-        load_dotenv(env_path)
-        break
-else:
-    load_dotenv()  # Try default locations
+# Load .env from install root so Genius API token etc. are picked up
+try:
+    from dotenv import load_dotenv
+    _env_file = _BASE_DIR / ".env"
+    load_dotenv(dotenv_path=str(_env_file))
+except ImportError:
+    pass
 
 
 class Config:
-    
     # API Settings
     GENIUS_API_TOKEN = os.getenv("GENIUS_API_TOKEN", "")
     GENIUS_BASE_URL = "https://api.genius.com"
@@ -32,10 +24,11 @@ class Config:
     # Cloudflare Browser Rendering (optional — fallback for lyrics extraction)
     CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID", "")
     CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
-    
+
     # Whisper Settings
     WHISPER_MODEL = os.getenv("WHISPER_MODEL", "small")
-    WHISPER_CACHE_DIR = os.getenv("WHISPER_CACHE_DIR", "whisper_models")
+    # Absolute path so models always land in the right place regardless of cwd
+    WHISPER_CACHE_DIR = str(_BASE_DIR / "whisper_models")
     
     # Job Settings
     TOTAL_JOBS = int(os.getenv("TOTAL_JOBS", "12"))
@@ -43,35 +36,37 @@ class Config:
     # Processing Settings
     MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
     
-    # File Paths
-    JOBS_DIR = "jobs"
-    
     # Audio Settings
     AUDIO_FORMAT = "mp3"
     TRIMMED_FORMAT = "wav"
     
-    # Image Settings (Aurora/Onyx)
+    # Image Settings
     IMAGE_TARGET_SIZE = 700
     IMAGE_FORMAT = "PNG"
     COLOR_COUNT = 2
     
     # Lyric Settings
-    MAX_LINE_LENGTH = int(os.getenv("MAX_LINE_LENGTH", "25"))
+    MAX_LINE_LENGTH = 25
     
-    @classmethod
-    def validate(cls):
-        """Validate configuration and print warnings for missing settings"""
-        if not cls.GENIUS_API_TOKEN:
-            print("  ⚠ GENIUS_API_TOKEN not set. Genius lyrics fetching disabled.")
-            print("    Set it in .env: GENIUS_API_TOKEN=your_token_here")
-        
-        valid_models = ['tiny', 'base', 'small', 'medium', 'large-v3']
-        if cls.WHISPER_MODEL not in valid_models:
-            print(f"  ⚠ Unknown WHISPER_MODEL '{cls.WHISPER_MODEL}'. Using 'small'.")
-            print(f"    Valid models: {', '.join(valid_models)}")
-            cls.WHISPER_MODEL = 'small'
-    
+    VALID_WHISPER_MODELS = [
+        'tiny', 'base', 'small', 'medium',
+        'large', 'large-v2', 'large-v3',
+    ]
+
     @classmethod
     def set_max_line_length(cls, length):
-        """Override max line length (Mono uses longer lines than Aurora)"""
+        """Override max line length (Mono uses longer lines than Aurora)."""
         cls.MAX_LINE_LENGTH = length
+
+    @classmethod
+    def validate(cls):
+        """Validate config and return list of warning strings (empty = all OK)."""
+        warnings = []
+        if not cls.GENIUS_API_TOKEN:
+            warnings.append("GENIUS_API_TOKEN not set — lyric fetching disabled.")
+
+        if cls.WHISPER_MODEL not in cls.VALID_WHISPER_MODELS:
+            warnings.append(
+                f"Unknown WHISPER_MODEL '{cls.WHISPER_MODEL}'. Falling back to 'small'.")
+            cls.WHISPER_MODEL = 'small'
+        return warnings

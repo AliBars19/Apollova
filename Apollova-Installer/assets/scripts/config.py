@@ -54,6 +54,11 @@ class Config:
     ]
 
     @classmethod
+    def set_max_line_length(cls, length):
+        """Override max line length (Mono uses longer lines than Aurora)."""
+        cls.MAX_LINE_LENGTH = length
+
+    @classmethod
     def validate(cls):
         """Validate config and return list of warning strings (empty = all OK)."""
         warnings = []

@@ -1278,10 +1278,29 @@ def transcribe_word_level(job_folder, song_title, template_name,
 
         print(f"  After cleanup: {len(markers)} markers")
 
-        # Genius alignment
+        # Genius alignment — check database cache first
         if song_title and Config.GENIUS_API_TOKEN:
-            print("\u270e Fetching Genius lyrics for alignment...")
-            genius_text = fetch_genius_lyrics(song_title)
+            genius_text = None
+            try:
+                from scripts.song_database import SongDatabase
+                _db = SongDatabase(db_path=os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(job_folder))),
+                    "database", "songs.db"))
+                genius_text = _db.get_genius_text(song_title)
+                if genius_text:
+                    print("\u270e Using cached Genius lyrics from database")
+            except Exception:
+                pass
+
+            if not genius_text:
+                print("\u270e Fetching Genius lyrics for alignment...")
+                genius_text = fetch_genius_lyrics(song_title)
+                # Cache to database for other templates
+                if genius_text:
+                    try:
+                        _db.update_genius_text(song_title, genius_text)
+                    except Exception:
+                        pass
 
             if genius_text:
                 genius_path = os.path.join(job_folder, "genius_lyrics.txt")

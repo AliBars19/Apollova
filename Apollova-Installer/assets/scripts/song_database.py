@@ -50,8 +50,8 @@ class SongDatabase:
             """)
 
             # Add columns if they don't exist (for existing databases)
-            _valid_new_columns = {"mono_lyrics", "onyx_lyrics"}
-            for col in ["mono_lyrics", "onyx_lyrics"]:
+            _valid_new_columns = {"mono_lyrics", "onyx_lyrics", "genius_text"}
+            for col in ["mono_lyrics", "onyx_lyrics", "genius_text"]:
                 if col not in _valid_new_columns:
                     continue
                 try:
@@ -319,6 +319,27 @@ class SongDatabase:
             deleted = cursor.rowcount > 0
             conn.commit()
             return deleted
+
+    def get_genius_text(self, song_title):
+        """Get cached Genius lyrics text for a song."""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT genius_text FROM songs WHERE LOWER(song_title) = LOWER(?)",
+                (song_title,))
+            row = cursor.fetchone()
+            return row[0] if row and row[0] else None
+        finally:
+            conn.close()
+
+    def update_genius_text(self, song_title, genius_text):
+        """Cache Genius lyrics text for cross-template reuse."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE songs SET genius_text = ? WHERE LOWER(song_title) = LOWER(?)",
+                (genius_text, song_title))
+            conn.commit()
 
     def get_stats(self):
         """Get database statistics"""

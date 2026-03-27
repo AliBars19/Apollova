@@ -391,7 +391,7 @@ function buildSegmentsArrayStringWithEnds(markers) {
         var wordStrings = [];
         for (var j = 0; j < words.length; j++) {
             var word = words[j];
-            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
             var s = Number(word.start) || 0;
             wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
         }

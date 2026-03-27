@@ -25,7 +25,6 @@ Improvements applied:
   #28: Forced Genius alignment via model.align() for precise word timestamps
   #29: Automatic language detection via langdetect on Genius text
   #30: Noise reduction via noisereduce (stationary noise removal)
-  #31: faster-whisper backend support (4-10x speedup, graceful fallback)
 """
 import os
 import json

@@ -13,6 +13,7 @@ import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Optional, Callable
+
 import requests
 from dotenv import load_dotenv
 

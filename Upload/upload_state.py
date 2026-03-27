@@ -43,7 +43,7 @@ class UploadRecord:
     file_hash: str = ""
     file_size: int = 0
     template: str = ""         # aurora / mono / onyx
-    account: str = ""          # aurora / nova (/ onyx in future)
+    account: str = ""          # aurora / nova
 
     upload_status: str = UploadStatus.PENDING
     video_id: str = ""
@@ -73,11 +73,7 @@ def _now() -> str:
 
 
 class StateManager:
-    """SQLite state manager with daily slot tracking per account.
-    
-    Key method: `get_next_schedule_slot(account)` finds the next available
-    time slot respecting the 12/day limit and rolling to the next day if full.
-    """
+    """SQLite state manager with daily slot tracking per account."""
 
     def __init__(self, db_path: str = "./data/upload_state.db"):
         self.db_path = Path(db_path)
@@ -316,15 +312,46 @@ class StateManager:
                 conn.close()
 
     def is_processed(self, file_path: str) -> bool:
-        """Check if file has been successfully uploaded (regardless of schedule status)."""
+        """Check if file has been successfully uploaded AND hasn't changed on disk.
+
+        If the file was re-rendered (different size than recorded), it's treated
+        as a new file that needs uploading — the old DB record is reset.
+        """
         with self._lock:
             conn = self._get_conn()
             try:
                 row = conn.execute(
-                    "SELECT upload_status FROM uploads WHERE file_path = ?",
+                    "SELECT id, upload_status, file_size FROM uploads WHERE file_path = ?",
                     (file_path,),
                 ).fetchone()
-                return row is not None and row["upload_status"] == UploadStatus.UPLOADED
+                if row is None:
+                    return False
+                if row["upload_status"] != UploadStatus.UPLOADED:
+                    return False
+
+                # Check if the file on disk has changed since last upload
+                try:
+                    current_size = Path(file_path).stat().st_size
+                except OSError:
+                    return True  # File gone — still counts as processed
+
+                recorded_size = row["file_size"] or 0
+                if current_size != recorded_size and current_size > 0:
+                    # File changed (re-rendered) — reset the record so it gets re-uploaded
+                    conn.execute(
+                        """UPDATE uploads SET upload_status = ?, upload_error = '',
+                           file_size = 0, file_hash = '', video_id = '',
+                           uploaded_at = NULL, schedule_status = 'pending',
+                           scheduled_at = NULL, updated_at = ?
+                           WHERE id = ?""",
+                        (UploadStatus.PENDING, _now(), row["id"]),
+                    )
+                    self._log(conn, row["id"], "re-render_detected", "pending",
+                              f"size changed: {recorded_size} → {current_size}")
+                    conn.commit()
+                    return False
+
+                return True
             finally:
                 conn.close()
 
@@ -355,7 +382,7 @@ class StateManager:
 
                 # Per-account scheduled today
                 today = datetime.now()
-                for account in ["aurora", "nova", "onyx"]:
+                for account in ["aurora", "nova"]:
                     cnt = self.count_scheduled_for_date(account, today)
                     if cnt > 0:
                         stats[f"{account}_today"] = cnt

@@ -14,7 +14,6 @@ import json
 import hmac
 import asyncio
 import secrets
-import threading
 from pathlib import Path
 from typing import Optional
 
@@ -186,7 +185,7 @@ async def database_list():
     if not gui or not gui.song_db:
         raise HTTPException(500, "Database not available")
 
-    songs = gui.song_db.get_all_songs()
+    songs = gui.song_db.list_all_songs()
     return {"songs": songs, "total": len(songs)}
 
 

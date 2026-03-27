@@ -1,3 +1,7 @@
+"""
+Image Processing - Download, resize, crop, and color extraction
+Shared across Aurora and Onyx templates (Mono doesn't use images)
+"""
 import os
 import requests
 from PIL import Image
@@ -6,6 +10,7 @@ from colorthief import ColorThief
 
 
 def download_image(job_folder, url, max_retries=3):
+    """Download and process cover image from URL"""
     image_path = os.path.join(job_folder, "cover.png")
     
     for attempt in range(max_retries):
@@ -33,6 +38,7 @@ def download_image(job_folder, url, max_retries=3):
 
 
 def resize_and_crop(img, target_size=700):
+    """Resize and center-crop image to target_size x target_size"""
     w, h = img.size
     
     scale = target_size / min(w, h)
@@ -50,6 +56,7 @@ def resize_and_crop(img, target_size=700):
 
 
 def extract_colors(job_folder, color_count=2):
+    """Extract dominant colors from cover image"""
     image_path = os.path.join(job_folder, 'cover.png')
     
     if not os.path.exists(image_path):

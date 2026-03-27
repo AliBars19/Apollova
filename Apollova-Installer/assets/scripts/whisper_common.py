@@ -706,8 +706,19 @@ def build_markers_from_segments(segments):
         if seg_end - seg_start > MAX_SEGMENT_DURATION_SEC:
             print(f"   \u26a0 Skipping overly long segment ({seg_end - seg_start:.1f}s): {seg_text[:30]}...")
             continue
+        if seg_start < 0:
+            print(f"   \u26a0 Negative start time {seg_start:.3f}, clamping to 0")
+            seg_start = 0
+        if seg_end <= seg_start:
+            print(f"   \u26a0 Segment end ({seg_end:.3f}) <= start ({seg_start:.3f}), skipping")
+            continue
 
         words = extract_word_timings(segment, seg_start, seg_end, seg_text)
+
+        # Clamp word times to segment bounds
+        for w in words:
+            w["start"] = max(round(w["start"], 3), round(seg_start, 3))
+            w["end"] = min(round(w["end"], 3), round(seg_end, 3))
 
         marker = {
             "time": round(seg_start, 3),

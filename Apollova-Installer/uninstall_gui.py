@@ -726,7 +726,7 @@ class UninstallWizard(QMainWindow):
                 elif ".exe" in cmd.lower():
                     cmd += " /quiet"
                 subprocess.run(
-                    cmd, shell=True, timeout=300, creationflags=flags)
+                    cmd, shell=False, timeout=300, creationflags=flags)
                 log.info("Python 3.11 uninstalled via registry uninstaller")
                 self.sig.detail.emit("✓ Python 3.11 uninstalled.")
             else:

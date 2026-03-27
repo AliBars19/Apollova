@@ -440,6 +440,7 @@ class AppolovaApp(QMainWindow):
 
         self._init_directories()
         self.song_db  = SongDatabase(db_path=str(DATABASE_DIR / "songs.db"))
+        self.smart_picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
         self.settings = self._load_settings()
 
         # Sync settings → Config and validate
@@ -1299,7 +1300,7 @@ class AppolovaApp(QMainWindow):
 
     def _refresh_smart_picker_stats(self):
         try:
-            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            picker = self.smart_picker
             stats  = picker.get_database_stats()
             if stats['total_songs'] == 0:
                 _set_label_style(self.smart_stats_label, "warning")
@@ -1340,7 +1341,7 @@ class AppolovaApp(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
         try:
-            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            picker = self.smart_picker
             affected = picker.reset_all_use_counts()
             self._refresh_smart_picker_stats()
             QMessageBox.information(self, "Done",
@@ -1351,7 +1352,7 @@ class AppolovaApp(QMainWindow):
     def _reshuffle_songs(self):
         """Re-pick songs with randomization within each use_count tier."""
         try:
-            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            picker = self.smart_picker
             stats  = picker.get_database_stats()
             if stats['total_songs'] == 0:
                 return
@@ -2263,7 +2264,7 @@ class AppolovaApp(QMainWindow):
     def _validate_inputs(self):
         errors = []
         if self.use_smart_picker:
-            picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+            picker = self.smart_picker
             stats  = picker.get_database_stats()
             if stats['total_songs'] == 0:
                 errors.append("Database empty. Add songs via Manual Entry first.")
@@ -2623,7 +2624,7 @@ class AppolovaApp(QMainWindow):
             if self.use_smart_picker:
                 songs = list(self._smart_songs)   # snapshot the pre-selected list
                 self.signals.log.emit(f"🤖 Smart Picker: {len(songs)} songs | {t.upper()}")
-                picker   = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
+                picker   = self.smart_picker
                 outd.mkdir(parents=True, exist_ok=True)
 
                 start_idx = 1
@@ -2699,6 +2700,14 @@ class AppolovaApp(QMainWindow):
                             f"  ⚠ Skipping song — {song_err}")
                         skipped.append(job['title'])
                     self.signals.progress.emit(idx / total * 100)
+                    # ETA display
+                    elapsed = time.time() - batch_t0
+                    avg_per_job = elapsed / idx
+                    remaining = avg_per_job * (total - idx)
+                    rem_min, rem_sec = divmod(int(remaining), 60)
+                    if idx < total:
+                        self.signals.log.emit(
+                            f"  ⏱ ETA: ~{rem_min}m {rem_sec}s remaining ({total - idx} jobs left)")
                 completed = total - len(skipped)
                 skip_note = (f"\n⚠ {len(skipped)} song(s) skipped: "
                              + ", ".join(skipped)) if skipped else ""

@@ -87,19 +87,8 @@ def get_device_info():
     return "CPU"
 
 
-def _try_load_faster_whisper(force_cpu):
-    """Attempt to load faster-whisper via stable-ts bridge. Returns model or None.
-    Currently disabled: faster-whisper's transcribe() API is incompatible with
-    stable-ts parameters (vad, suppress_silence, only_voice_freq, regroup, etc.)
-    that our multi-pass pipeline relies on. Re-enable once parameter compatibility
-    is verified or an adapter is added."""
-    # TODO: faster-whisper integration needs parameter adapter
-    return None
-
-
 def load_whisper_model(force_cpu=False):
-    """Load Whisper model with caching — skip reload if same config.
-    Tries faster-whisper first (4-10x speedup), falls back to standard whisper."""
+    """Load Whisper model with caching — skip reload if same config."""
     global _cached_model, _cached_on_cpu
 
     if _cached_model is not None and _cached_on_cpu == force_cpu:
@@ -114,14 +103,6 @@ def load_whisper_model(force_cpu=False):
 
     device = get_device_info()
 
-    # Try faster-whisper first (CTranslate2 backend, much faster)
-    faster = _try_load_faster_whisper(force_cpu)
-    if faster is not None:
-        _cached_model = faster
-        _cached_on_cpu = force_cpu
-        return _cached_model
-
-    # Fall back to standard whisper
     if force_cpu and HAS_TORCH:
         original_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
         os.environ["CUDA_VISIBLE_DEVICES"] = ""

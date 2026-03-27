@@ -12,8 +12,10 @@ import os
 import sys
 import json
 import hmac
+import time
 import asyncio
 import secrets
+from collections import defaultdict
 from pathlib import Path
 from typing import Optional
 
@@ -77,6 +79,31 @@ def _get_session_token() -> str:
 
 
 # ---------------------------------------------------------------------------
+#  Rate Limiting
+# ---------------------------------------------------------------------------
+class _RateLimiter:
+    """Simple in-memory rate limiter. No external deps."""
+
+    def __init__(self, max_calls: int = 10, window_sec: int = 60):
+        self._max_calls = max_calls
+        self._window_sec = window_sec
+        self._calls: dict[str, list[float]] = defaultdict(list)
+
+    def is_allowed(self, key: str) -> bool:
+        now = time.monotonic()
+        timestamps = self._calls[key]
+        # Evict expired entries
+        self._calls[key] = [t for t in timestamps if now - t < self._window_sec]
+        if len(self._calls[key]) >= self._max_calls:
+            return False
+        self._calls[key].append(now)
+        return True
+
+
+_rate_limiter = _RateLimiter(max_calls=10, window_sec=60)
+
+
+# ---------------------------------------------------------------------------
 #  Auth Middleware
 # ---------------------------------------------------------------------------
 class AuthMiddleware(BaseHTTPMiddleware):
@@ -106,9 +133,9 @@ app = FastAPI(title="Apollova Mobile API", version="1.0.0")
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["capacitor://localhost", "ionic://localhost", "http://localhost"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -250,6 +277,8 @@ async def jobs_list():
 
 @app.post("/jobs/generate")
 async def jobs_generate(request: Request):
+    if not _rate_limiter.is_allowed("/jobs/generate"):
+        raise HTTPException(429, "Too many requests — try again later")
     gui = _gui_ref
     if not gui:
         raise HTTPException(500, "GUI not available")
@@ -333,6 +362,8 @@ async def smart_picker_reshuffle():
 # ── Render ───────────────────────────────────────────────────────────────────
 @app.post("/render/trigger")
 async def render_trigger(request: Request):
+    if not _rate_limiter.is_allowed("/render/trigger"):
+        raise HTTPException(429, "Too many requests — try again later")
     gui = _gui_ref
     if not gui:
         raise HTTPException(500, "GUI not available")
@@ -354,6 +385,8 @@ async def render_trigger(request: Request):
 
 @app.post("/render/triple")
 async def render_triple():
+    if not _rate_limiter.is_allowed("/render/triple"):
+        raise HTTPException(429, "Too many requests — try again later")
     gui = _gui_ref
     if not gui:
         raise HTTPException(500, "GUI not available")

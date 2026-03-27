@@ -3,16 +3,36 @@ Image Processing - Download, resize, crop, and color extraction
 Shared across Aurora and Onyx templates (Mono doesn't use images)
 """
 import os
+from urllib.parse import urlparse
+
 import requests
 from PIL import Image
 from io import BytesIO
 from colorthief import ColorThief
 
+_ALLOWED_IMAGE_HOSTS = frozenset({
+    "images.genius.com",
+    "t2.genius.com",
+    "assets.genius.com",
+    "images.rapgenius.com",
+    "s3.amazonaws.com",
+})
+
+
+def _validate_image_url(url: str) -> None:
+    """Validate that the image URL is from a trusted host."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Image URL must use http/https: {url}")
+    if parsed.hostname and parsed.hostname not in _ALLOWED_IMAGE_HOSTS:
+        raise ValueError(f"Image URL host not allowed: {parsed.hostname}")
+
 
 def download_image(job_folder, url, max_retries=3):
     """Download and process cover image from URL"""
+    _validate_image_url(url)
     image_path = os.path.join(job_folder, "cover.png")
-    
+
     for attempt in range(max_retries):
         try:
             response = requests.get(url, timeout=10)

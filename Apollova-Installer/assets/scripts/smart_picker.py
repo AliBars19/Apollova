@@ -4,7 +4,6 @@ Ensures fair rotation: no song used twice until all used once
 """
 import sqlite3
 import random
-from datetime import datetime
 from itertools import groupby
 
 
@@ -144,18 +143,6 @@ class SmartSongPicker:
         conn.commit()
         conn.close()
     
-    def check_all_songs_used_once(self):
-        """Check if all songs have been used (full rotation complete)"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1")
-        unused_count = cursor.fetchone()[0]
-        
-        conn.close()
-        
-        return unused_count == 0
-    
     def reset_all_use_counts(self):
         """Reset all songs to unused (use_count = 1, last_used = NULL)"""
         conn = sqlite3.connect(self.db_path)
@@ -166,22 +153,3 @@ class SmartSongPicker:
         conn.close()
         return affected
 
-    def get_song_ranking_preview(self, num_songs=20):
-        """Show preview of which songs would be picked next"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            SELECT song_title, use_count, last_used
-            FROM songs
-            ORDER BY 
-                CASE WHEN use_count = 1 THEN 0 ELSE 1 END,
-                use_count ASC,
-                last_used ASC
-            LIMIT ?
-        """, (num_songs,))
-        
-        rows = cursor.fetchall()
-        conn.close()
-        
-        return [(row[0], row[1], row[2]) for row in rows]

@@ -323,6 +323,46 @@ class TestBuildMarkersFromSegments:
         markers = build_markers_from_segments([seg])
         assert markers == []
 
+    def test_negative_start_time_clamped_to_zero(self):
+        """
+        Lines 708-710: a segment with start < 0 should be clamped to 0,
+        not skipped, and produce a valid marker with time=0.
+        """
+        seg = MagicMock()
+        seg.text = "hello world here"
+        seg.start = -0.5
+        seg.end = 2.0
+        seg.words = []
+        markers = build_markers_from_segments([seg])
+        assert len(markers) == 1
+        assert markers[0]["time"] == 0.0
+        assert markers[0]["end_time"] == 2.0
+
+    def test_end_at_or_before_start_skipped(self):
+        """
+        Lines 711-713: a segment where end <= start (after optional clamping)
+        should be skipped entirely — no marker produced.
+        """
+        seg = MagicMock()
+        seg.text = "valid text here"
+        seg.start = 1.0
+        seg.end = 1.0   # end == start → skipped
+        seg.words = []
+        markers = build_markers_from_segments([seg])
+        assert markers == []
+
+    def test_negative_start_with_end_before_clamped_start_skipped(self):
+        """
+        start=-1.0 clamps to 0; end=0.0 means end <= clamped_start (0 <= 0) → skipped.
+        """
+        seg = MagicMock()
+        seg.text = "some text here"
+        seg.start = -1.0
+        seg.end = 0.0
+        seg.words = []
+        markers = build_markers_from_segments([seg])
+        assert markers == []
+
 
 # ===========================================================================
 # extract_word_timings

@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from scripts.audio_processing import detect_beats, mmss_to_milliseconds, trim_audio, download_audio
+from scripts.audio_processing import detect_beats, mmss_to_milliseconds, trim_audio, download_audio, reduce_noise
 from conftest import _write_silent_wav, _write_silent_mp3
 
 
@@ -147,7 +147,7 @@ class TestDownloadAudioEdges:
         result = download_audio("https://www.youtube.com/watch?v=abcdefghijk", str(job_folder))
         assert result == str(mp3_path)
 
-    @patch("scripts.audio_processing.yt_dlp.YoutubeDL")
+    @patch("yt_dlp.YoutubeDL")
     def test_429_retry(self, mock_ytdl_cls, job_folder):
         """Rate limit (429) should wait and retry."""
         ctx = MagicMock()
@@ -165,7 +165,7 @@ class TestDownloadAudioEdges:
         # Should have attempted 2 times
         assert ctx.download.call_count == 2
 
-    @patch("scripts.audio_processing.yt_dlp.YoutubeDL")
+    @patch("yt_dlp.YoutubeDL")
     def test_403_retry(self, mock_ytdl_cls, job_folder):
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=ctx)
@@ -181,7 +181,7 @@ class TestDownloadAudioEdges:
                 )
         assert ctx.download.call_count == 2
 
-    @patch("scripts.audio_processing.yt_dlp.YoutubeDL")
+    @patch("yt_dlp.YoutubeDL")
     def test_all_retries_exhausted(self, mock_ytdl_cls, job_folder):
         ctx = MagicMock()
         ctx.__enter__ = MagicMock(return_value=ctx)
@@ -196,3 +196,102 @@ class TestDownloadAudioEdges:
                     str(job_folder), max_retries=3
                 )
         assert ctx.download.call_count == 3
+
+
+# ---------------------------------------------------------------------------
+# reduce_noise — cache hit (line 238)
+# ---------------------------------------------------------------------------
+
+class TestReduceNoiseCache:
+    def test_cache_hit_returns_existing_clean_file(self, job_folder):
+        """
+        Line 237-238: if <base>_clean.wav already exists, reduce_noise must
+        return that path immediately without attempting to import noisereduce
+        or call librosa.
+
+        Verified by:
+          1. Creating the _clean.wav file manually before the call.
+          2. Asserting the returned path is the cached path.
+          3. Asserting that librosa is never imported (patching it to raise so
+             any import attempt would blow up the test).
+        """
+        audio_path = str(job_folder / "audio_trimmed.wav")
+        clean_path = str(job_folder / "audio_trimmed_clean.wav")
+
+        # Write a minimal WAV so the source file exists (not strictly required
+        # since cache is checked before reading the source, but keeps the test
+        # realistic)
+        _write_silent_wav(job_folder / "audio_trimmed.wav")
+
+        # Pre-create the cached clean file
+        _write_silent_wav(job_folder / "audio_trimmed_clean.wav")
+
+        # If the function attempts to import librosa it will raise, proving the
+        # cache branch was NOT taken — the test would then fail with ImportError.
+        import sys
+        original_librosa = sys.modules.get("librosa")
+        try:
+            sys.modules["librosa"] = None  # block the import
+            result = reduce_noise(audio_path)
+        finally:
+            if original_librosa is None:
+                sys.modules.pop("librosa", None)
+            else:
+                sys.modules["librosa"] = original_librosa
+
+        assert result == clean_path
+
+    def test_cache_hit_on_second_call(self, job_folder):
+        """
+        Calling reduce_noise twice on the same path: the second call must take
+        the early-return cache branch (line 237-238) because the _clean.wav
+        file written by the first call already exists.
+        """
+        audio_path = str(job_folder / "audio_trimmed.wav")
+        clean_path = str(job_folder / "audio_trimmed_clean.wav")
+
+        _write_silent_wav(job_folder / "audio_trimmed.wav")
+
+        # Mock noisereduce + librosa + soundfile so first call succeeds without
+        # needing the real libraries, and writes the cached file.
+        import numpy as np
+
+        mock_nr = MagicMock()
+        mock_nr.reduce_noise.return_value = np.zeros(100, dtype=np.float32)
+
+        mock_librosa = MagicMock()
+        mock_librosa.load.return_value = (np.zeros(100, dtype=np.float32), 16000)
+
+        mock_sf = MagicMock()
+
+        def fake_sf_write(path, data, sr):
+            # Simulate soundfile writing the clean file to disk
+            _write_silent_wav(Path(path))
+
+        mock_sf.write.side_effect = fake_sf_write
+
+        with patch.dict("sys.modules", {
+            "noisereduce": mock_nr,
+            "librosa": mock_librosa,
+            "soundfile": mock_sf,
+        }):
+            result_first = reduce_noise(audio_path)
+
+        # The first call should have produced the clean file
+        assert os.path.exists(clean_path), "First call should have written the clean file"
+
+        # Second call — the cache file now exists; must not call librosa at all
+        call_count = {"librosa_load": 0}
+
+        def counting_load(*args, **kwargs):
+            call_count["librosa_load"] += 1
+            return (np.zeros(100, dtype=np.float32), 16000)
+
+        mock_librosa2 = MagicMock()
+        mock_librosa2.load.side_effect = counting_load
+
+        with patch.dict("sys.modules", {"librosa": mock_librosa2}):
+            result_second = reduce_noise(audio_path)
+
+        assert result_second == clean_path
+        assert call_count["librosa_load"] == 0, "Cache hit must not call librosa.load"

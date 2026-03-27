@@ -320,15 +320,6 @@ class SongDatabase:
             conn.commit()
             return deleted
 
-    def clear_all_lyrics(self):
-        """Clear all cached lyrics (Aurora, Mono, Onyx) from every song"""
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("UPDATE songs SET transcribed_lyrics = NULL, mono_lyrics = NULL, onyx_lyrics = NULL")
-            affected = cursor.rowcount
-            conn.commit()
-            return affected
-
     def get_stats(self):
         """Get database statistics"""
         conn = sqlite3.connect(self.db_path)

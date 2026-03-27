@@ -99,11 +99,6 @@ class SmartSongPicker:
 
         return songs
     
-    def pick_song(self):
-        """Pick a single song intelligently"""
-        songs = self.get_available_songs(num_songs=1)
-        return songs[0] if songs else None
-    
     def get_database_stats(self):
         """Get statistics about song usage in database"""
         conn = sqlite3.connect(self.db_path)

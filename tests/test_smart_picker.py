@@ -8,8 +8,6 @@ Covers:
   - SmartSongPicker.get_available_songs: never-used songs (use_count=1) prioritised
   - SmartSongPicker.get_available_songs: shuffle=True still returns correct structure
   - SmartSongPicker.get_available_songs: shuffle=True picks from all tiers, not just first
-  - SmartSongPicker.pick_song: returns single dict or None on empty db
-  - SmartSongPicker.pick_song: result has required fields
   - SmartSongPicker.mark_song_used: increments use_count
   - SmartSongPicker.reset_all_use_counts: sets use_count=1 for all songs
   - SmartSongPicker.get_database_stats: correct total / unused counts
@@ -156,32 +154,6 @@ class TestAvailableSongsShuffle:
 
     def test_shuffle_empty_db_returns_empty(self, picker: SmartSongPicker):
         assert picker.get_available_songs(shuffle=True) == []
-
-
-# ===========================================================================
-# pick_song
-# ===========================================================================
-
-class TestPickSong:
-    def test_returns_none_on_empty_db(self, picker: SmartSongPicker):
-        assert picker.pick_song() is None
-
-    def test_returns_single_dict(self, picker: SmartSongPicker):
-        _add_song(picker, "Artist - Song")
-        result = picker.pick_song()
-        assert isinstance(result, dict)
-
-    def test_result_has_required_fields(self, picker: SmartSongPicker):
-        _add_song(picker, "Artist - Song")
-        result = picker.pick_song()
-        assert "song_title" in result
-        assert "youtube_url" in result
-        assert "use_count" in result
-
-    def test_picks_from_database(self, picker: SmartSongPicker):
-        _add_song(picker, "Known Song - Artist")
-        result = picker.pick_song()
-        assert result["song_title"] == "Known Song - Artist"
 
 
 # ===========================================================================

@@ -52,3 +52,9 @@ class NotificationService:
 
     def auth_failed(self) -> None:
         self.notify("🔐 Auth Failed", "Could not authenticate with Apollova website")
+
+    def platform_disconnected(self, account: str, platform: str) -> None:
+        self.notify(
+            f"⚠️ {platform} Disconnected",
+            f"{account.title()} {platform} token expired.\nRe-authenticate on the dashboard.",
+        )

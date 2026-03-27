@@ -272,6 +272,20 @@ class VideoUploader:
             logger.error(f"Status check failed: {e}")
             return None
 
+    def check_platform_health(self, notifications: "NotificationService") -> None:
+        """Check if any platform tokens are disconnected and notify the user."""
+        status = self.check_status()
+        if not status or "accounts" not in status:
+            return
+
+        for account_id, platforms in status["accounts"].items():
+            if not platforms.get("youtube"):
+                logger.warning(f"YouTube DISCONNECTED for [{account_id}] — re-authenticate on dashboard")
+                notifications.platform_disconnected(account_id, "YouTube")
+            if not platforms.get("tiktok"):
+                logger.warning(f"TikTok DISCONNECTED for [{account_id}] — re-authenticate on dashboard")
+                notifications.platform_disconnected(account_id, "TikTok")
+
     def upload_video(self, file_path: str, account: str) -> tuple[Optional[dict], str]:
         """Upload with exponential backoff retries (2s -> 4s -> 8s).
 
@@ -704,6 +718,9 @@ def watch_mode(
         observer.schedule(watcher, str(watch_path), recursive=False)
         logger.info(f"Watching: {watch_path} ({template} → {account})")
 
+    # Check platform health on startup — notify if any tokens are dead
+    uploader.check_platform_health(notifications)
+
     # Check for existing unprocessed videos
     total_unprocessed = 0
     for w in watchers:
@@ -726,9 +743,16 @@ def watch_mode(
     except Exception:
         pass  # Encoding error in headless mode — non-fatal
 
+    last_health_check = time.monotonic()
+    health_check_interval = 3600  # 1 hour
+
     try:
         while True:
             time.sleep(10)
+            # Periodic health check every hour
+            if time.monotonic() - last_health_check > health_check_interval:
+                uploader.check_platform_health(notifications)
+                last_health_check = time.monotonic()
     except (KeyboardInterrupt, SystemExit):
         logger.info("Watcher stopped")
     except Exception as e:

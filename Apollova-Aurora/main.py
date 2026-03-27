@@ -13,11 +13,12 @@ from rich.console import Console
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.config import Config
-from scripts.audio_processing import download_audio, trim_audio, detect_beats
+from scripts.audio_processing import detect_beats
 from scripts.image_processing import download_image, extract_colors
 from scripts.lyric_processing import transcribe_audio
 from scripts.genius_processing import fetch_genius_image
 from scripts.song_database import SongDatabase
+from scripts.pipeline_common import check_job_progress, run_audio_pipeline, run_batch
 
 console = Console()
 
@@ -26,27 +27,11 @@ SHARED_DB = Path(__file__).parent.parent / "database" / "songs.db"
 song_db = SongDatabase(db_path=str(SHARED_DB))
 
 
-def check_job_progress(job_folder):
-    """Check which stages are already complete for a job"""
-    stages = {
-        "audio_downloaded": os.path.exists(os.path.join(job_folder, "audio_source.mp3")),
-        "audio_trimmed": os.path.exists(os.path.join(job_folder, "audio_trimmed.wav")),
-        "lyrics_transcribed": os.path.exists(os.path.join(job_folder, "lyrics.txt")),
-        "image_downloaded": os.path.exists(os.path.join(job_folder, "cover.png")),
-        "beats_generated": os.path.exists(os.path.join(job_folder, "beats.json")),
-        "job_complete": os.path.exists(os.path.join(job_folder, "job_data.json"))
-    }
-    
-    job_data = {}
-    json_path = os.path.join(job_folder, "job_data.json")
-    if os.path.exists(json_path):
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                job_data = json.load(f)
-        except:
-            pass
-    
-    return stages, job_data
+_AURORA_STAGES = {
+    "lyrics_transcribed": "lyrics.txt",
+    "image_downloaded": "cover.png",
+    "beats_generated": "beats.json",
+}
 
 
 def process_single_job(job_id):
@@ -56,7 +41,7 @@ def process_single_job(job_id):
     
     console.print(f"\n[bold cyan]━━━ Aurora Job {job_id:03} ━━━[/bold cyan]")
     
-    stages, job_data = check_job_progress(job_folder)
+    stages, job_data = check_job_progress(job_folder, _AURORA_STAGES)
     
     # Check if already complete
     if stages["job_complete"] and all([
@@ -99,56 +84,11 @@ def process_single_job(job_id):
     else:
         console.print(f"[yellow]'{song_title}' not in database. Creating new entry...[/yellow]")
     
-    # === Audio Download ===
-    if not stages["audio_downloaded"]:
-        if cached_song:
-            audio_url = cached_song["youtube_url"]
-            console.print(f"[dim]Using cached URL[/dim]")
-        else:
-            audio_url = input(f"[Job {job_id}] Audio URL: ").strip()
-        
-        console.print("[cyan]Downloading audio...[/cyan]")
-        try:
-            audio_path = download_audio(audio_url, job_folder)
-        except Exception as e:
-            console.print(f"[red]Failed to download audio: {e}[/red]")
-            return False
-    else:
-        audio_path = os.path.join(job_folder, "audio_source.mp3")
-        console.print("✓ Audio already downloaded")
-        audio_url = cached_song["youtube_url"] if cached_song else job_data.get("youtube_url", "unknown")
-    
-    # === Audio Trimming ===
-    if not stages["audio_trimmed"]:
-        if cached_song:
-            start_time = cached_song["start_time"]
-            end_time = cached_song["end_time"]
-            console.print(f"[dim]Using cached timing: {start_time} → {end_time}[/dim]")
-        else:
-            start_time = input(f"[Job {job_id}] Start time (MM:SS or Enter for 00:00): ").strip()
-            if not start_time:
-                start_time = "00:00"
-            if start_time == "00:00":
-                end_time = "01:01"
-                console.print(f"[dim]Auto-set end time to {end_time}[/dim]")
-            else:
-                end_time = input(f"[Job {job_id}] End time (MM:SS): ").strip()
-        
-        console.print("[cyan]Trimming audio...[/cyan]")
-        try:
-            trimmed_path = trim_audio(job_folder, start_time, end_time)
-        except Exception as e:
-            console.print(f"[red]Failed to trim audio: {e}[/red]")
-            return False
-    else:
-        trimmed_path = os.path.join(job_folder, "audio_trimmed.wav")
-        console.print("✓ Audio already trimmed")
-        if cached_song:
-            start_time = cached_song["start_time"]
-            end_time = cached_song["end_time"]
-        else:
-            start_time = job_data.get("start_time", "00:00")
-            end_time = job_data.get("end_time", "01:01")
+    # === Audio Download + Trim ===
+    audio_result = run_audio_pipeline(job_folder, job_id, cached_song, job_data, console, color="cyan")
+    if audio_result is None:
+        return False
+    audio_path, trimmed_path, audio_url, start_time, end_time = audio_result
     
     # === Beat Detection ===
     beats_path = os.path.join(job_folder, "beats.json")
@@ -287,26 +227,8 @@ def process_single_job(job_id):
 
 def batch_generate_jobs():
     """Generate all Aurora jobs"""
-    console.print("\n[bold cyan]🎬 Apollova Aurora - Music Video Automation[/bold cyan]\n")
-    Config.validate()
-    
-    jobs_dir = os.path.join(os.path.dirname(__file__), Config.JOBS_DIR)
-    os.makedirs(jobs_dir, exist_ok=True)
-    
-    stats = song_db.get_stats()
-    if stats["total_songs"] > 0:
-        console.print(f"[dim]📊 Database: {stats['total_songs']} songs, "
-                      f"{stats['cached_lyrics']} with cached lyrics[/dim]\n")
-    
-    for job_id in range(1, Config.TOTAL_JOBS + 1):
-        success = process_single_job(job_id)
-        if not success:
-            console.print(f"\n[yellow]⚠️  Job {job_id} had errors, continuing...[/yellow]")
-    
-    console.print("\n[bold green]✅ All Aurora jobs processed![/bold green]")
-    stats = song_db.get_stats()
-    console.print(f"\n[cyan]📊 Database: {stats['total_songs']} songs, "
-                  f"{stats['cached_lyrics']} cached, {stats['total_uses']} total uses[/cyan]")
+    run_batch("Aurora", process_single_job, console, song_db,
+              "🎬 Apollova Aurora - Music Video Automation", color="cyan")
     console.print("\n[cyan]Next:[/cyan] Run the After Effects JSX script")
     console.print("[dim]File → Scripts → Run Script File... → scripts/JSX/automateMV_batch.jsx[/dim]\n")
 

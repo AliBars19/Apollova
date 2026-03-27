@@ -14,9 +14,9 @@ from rich.console import Console
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from scripts.config import Config
-from scripts.audio_processing import download_audio, trim_audio
 from scripts.lyric_processing_mono import transcribe_audio_mono
 from scripts.song_database import SongDatabase
+from scripts.pipeline_common import check_job_progress, run_audio_pipeline, run_batch
 
 console = Console()
 
@@ -28,25 +28,9 @@ song_db = SongDatabase(db_path=str(SHARED_DB))
 Config.set_max_line_length(40)
 
 
-def check_job_progress(job_folder):
-    """Check which stages are already complete"""
-    stages = {
-        "audio_downloaded": os.path.exists(os.path.join(job_folder, "audio_source.mp3")),
-        "audio_trimmed": os.path.exists(os.path.join(job_folder, "audio_trimmed.wav")),
-        "mono_data_generated": os.path.exists(os.path.join(job_folder, "mono_data.json")),
-        "job_complete": os.path.exists(os.path.join(job_folder, "job_data.json"))
-    }
-    
-    job_data = {}
-    json_path = os.path.join(job_folder, "job_data.json")
-    if os.path.exists(json_path):
-        try:
-            with open(json_path, "r", encoding="utf-8") as f:
-                job_data = json.load(f)
-        except:
-            pass
-    
-    return stages, job_data
+_MONO_STAGES = {
+    "mono_data_generated": "mono_data.json",
+}
 
 
 def process_single_job(job_id):
@@ -56,7 +40,7 @@ def process_single_job(job_id):
     
     console.print(f"\n[bold magenta]━━━ Mono Job {job_id:03} ━━━[/bold magenta]")
     
-    stages, job_data = check_job_progress(job_folder)
+    stages, job_data = check_job_progress(job_folder, _MONO_STAGES)
     
     # Check if already complete
     if stages["job_complete"] and all([
@@ -91,56 +75,11 @@ def process_single_job(job_id):
     else:
         console.print(f"[yellow]'{song_title}' not in database. Creating new entry...[/yellow]")
     
-    # === Audio Download ===
-    if not stages["audio_downloaded"]:
-        if cached_song:
-            audio_url = cached_song["youtube_url"]
-            console.print(f"[dim]Using cached URL[/dim]")
-        else:
-            audio_url = input(f"[Job {job_id}] Audio URL: ").strip()
-        
-        console.print("[magenta]Downloading audio...[/magenta]")
-        try:
-            audio_path = download_audio(audio_url, job_folder)
-        except Exception as e:
-            console.print(f"[red]Failed to download audio: {e}[/red]")
-            return False
-    else:
-        audio_path = os.path.join(job_folder, "audio_source.mp3")
-        console.print("✓ Audio already downloaded")
-        audio_url = cached_song["youtube_url"] if cached_song else job_data.get("youtube_url", "unknown")
-    
-    # === Audio Trimming ===
-    if not stages["audio_trimmed"]:
-        if cached_song:
-            start_time = cached_song["start_time"]
-            end_time = cached_song["end_time"]
-            console.print(f"[dim]Using cached timing: {start_time} → {end_time}[/dim]")
-        else:
-            start_time = input(f"[Job {job_id}] Start time (MM:SS or Enter for 00:00): ").strip()
-            if not start_time:
-                start_time = "00:00"
-            if start_time == "00:00":
-                end_time = "01:01"
-                console.print(f"[dim]Auto-set end time to {end_time}[/dim]")
-            else:
-                end_time = input(f"[Job {job_id}] End time (MM:SS): ").strip()
-        
-        console.print("[magenta]Trimming audio...[/magenta]")
-        try:
-            trimmed_path = trim_audio(job_folder, start_time, end_time)
-        except Exception as e:
-            console.print(f"[red]Failed to trim audio: {e}[/red]")
-            return False
-    else:
-        trimmed_path = os.path.join(job_folder, "audio_trimmed.wav")
-        console.print("✓ Audio already trimmed")
-        if cached_song:
-            start_time = cached_song["start_time"]
-            end_time = cached_song["end_time"]
-        else:
-            start_time = job_data.get("start_time", "00:00")
-            end_time = job_data.get("end_time", "01:01")
+    # === Audio Download + Trim ===
+    audio_result = run_audio_pipeline(job_folder, job_id, cached_song, job_data, console, color="magenta")
+    if audio_result is None:
+        return False
+    audio_path, trimmed_path, audio_url, start_time, end_time = audio_result
     
     # === Mono Transcription (Mono manages mono_lyrics column) ===
     mono_data_path = os.path.join(job_folder, "mono_data.json")
@@ -217,22 +156,8 @@ def process_single_job(job_id):
 
 def batch_generate_jobs():
     """Generate all Mono jobs"""
-    console.print("\n[bold magenta]🎵 Apollova Mono - Minimal Lyric Videos[/bold magenta]\n")
-    Config.validate()
-    
-    jobs_dir = os.path.join(os.path.dirname(__file__), Config.JOBS_DIR)
-    os.makedirs(jobs_dir, exist_ok=True)
-    
-    stats = song_db.get_stats()
-    if stats["total_songs"] > 0:
-        console.print(f"[dim]📊 Database: {stats['total_songs']} songs[/dim]\n")
-    
-    for job_id in range(1, Config.TOTAL_JOBS + 1):
-        success = process_single_job(job_id)
-        if not success:
-            console.print(f"\n[yellow]⚠️  Job {job_id} had errors, continuing...[/yellow]")
-    
-    console.print("\n[bold green]✅ All Mono jobs processed![/bold green]")
+    run_batch("Mono", process_single_job, console, song_db,
+              "🎵 Apollova Mono - Minimal Lyric Videos", color="magenta")
     console.print("\n[magenta]Next:[/magenta] Run the After Effects JSX script")
     console.print("[dim]File → Scripts → Run Script File... → scripts/JSX/automateMV_mono.jsx[/dim]\n")
 

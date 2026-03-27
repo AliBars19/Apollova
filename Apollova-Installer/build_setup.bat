@@ -65,6 +65,16 @@ if not exist "%SCRIPT_DIR%assets\apollova_secrets.py" (
 echo All source files present.
 echo.
 
+echo Syncing shared scripts from ../scripts/ to assets/scripts/...
+set "SHARED_SCRIPTS=%SCRIPT_DIR%..\scripts\"
+if exist "%SHARED_SCRIPTS%" (
+    copy /Y "%SHARED_SCRIPTS%*.py" "%SCRIPT_DIR%assets\scripts\" >nul
+    echo Scripts synced successfully.
+) else (
+    echo WARNING: ../scripts/ not found — using existing assets/scripts/ copies.
+)
+echo.
+
 echo Cleaning previous builds...
 rmdir /s /q build_temp 2>nul
 del /q "%SCRIPT_DIR%Setup.exe" "%SCRIPT_DIR%Apollova.exe" "%SCRIPT_DIR%Uninstall.exe" 2>nul

@@ -11,6 +11,7 @@ Auth: Bearer token from settings.json (generated on first Mobile Connect setup).
 import os
 import sys
 import json
+import hmac
 import asyncio
 import secrets
 import threading
@@ -91,7 +92,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         auth = request.headers.get("Authorization", "")
         expected = f"Bearer {_get_session_token()}"
 
-        if auth != expected:
+        if not hmac.compare_digest(auth, expected):
             return JSONResponse(
                 status_code=401,
                 content={"detail": "Unauthorized"},

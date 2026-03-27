@@ -50,7 +50,10 @@ class SongDatabase:
             """)
 
             # Add columns if they don't exist (for existing databases)
+            _valid_new_columns = {"mono_lyrics", "onyx_lyrics"}
             for col in ["mono_lyrics", "onyx_lyrics"]:
+                if col not in _valid_new_columns:
+                    continue
                 try:
                     cursor.execute(f"ALTER TABLE songs ADD COLUMN {col} TEXT")
                 except sqlite3.OperationalError:

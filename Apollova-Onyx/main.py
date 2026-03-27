@@ -6,6 +6,7 @@ Hybrid template: Word-by-word lyrics + spinning disc with album art
 import os
 import sys
 import json
+import traceback
 from pathlib import Path
 from rich.console import Console
 
@@ -211,7 +212,6 @@ def process_single_job(job_id):
             console.print(f"[green]✓ Onyx data: {len(onyx_data.get('markers', []))} markers[/green]")
         except Exception as e:
             console.print(f"[red]Failed to generate Onyx data: {e}[/red]")
-            import traceback
             traceback.print_exc()
             return False
     else:

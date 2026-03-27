@@ -6,6 +6,7 @@ Minimal text-only lyric videos with word-by-word reveal
 import os
 import sys
 import json
+import traceback
 from pathlib import Path
 from rich.console import Console
 
@@ -161,7 +162,6 @@ def process_single_job(job_id):
             console.print(f"[green]✓ Mono data generated: {len(transcribed_lyrics)} markers[/green]")
         except Exception as e:
             console.print(f"[red]Failed to generate Mono data: {e}[/red]")
-            import traceback
             traceback.print_exc()
             return False
     else:

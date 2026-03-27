@@ -517,7 +517,8 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
     # Use duration from normalization pass to avoid re-decoding the file
     actual_dur = norm_dur if norm_dur is not None else get_audio_duration(audio_path)
     print(f"  🔍 Whisper input: {audio_path}")
-    print(f"  🔍 File duration: {actual_dur:.1f}s (caller reported: {duration}s)" if actual_dur else f"  🔍 Whisper input: {audio_path}")
+    if actual_dur:
+        print(f"  🔍 File duration: {actual_dur:.1f}s (caller reported: {duration}s)")
     if actual_dur is not None and duration is not None and actual_dur > duration + 10:
         print(f"  ⚠ WARNING: audio file ({actual_dur:.1f}s) much longer than expected ({duration}s)!")
 

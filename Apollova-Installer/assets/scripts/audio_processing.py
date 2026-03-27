@@ -96,6 +96,13 @@ def download_audio(url, job_folder, max_retries=3, use_oauth=True):
                     f"How to fix: Replace the YouTube URL with a free (non-Music Premium) upload of the same song."
                 ) from None
 
+            # Bail immediately on errors that retrying can never fix
+            if any(x in error_msg for x in ["sign in", "age-restricted", "private video", "unavailable", "copyright"]):
+                raise ValueError(
+                    f"This video cannot be downloaded: {str(e)[:100]}\n\n"
+                    f"How to fix: Replace the YouTube URL with a different upload of the same song."
+                ) from None
+
             if "429" in error_msg or "rate" in error_msg:
                 print(f"⚠️  Rate limited, waiting 15s...")
                 time.sleep(15)

@@ -177,19 +177,45 @@ def get_audio_duration(audio_path):
         return None
 
 
+def _get_audio_hash(audio_path):
+    """Compute SHA-256 hash of an audio file for cross-template caching."""
+    import hashlib
+    h = hashlib.sha256()
+    with open(audio_path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()[:16]
+
+
 def separate_vocals(audio_path, job_folder):
     """
     Use Demucs to extract vocals from audio for cleaner Whisper input.
 
     Saves vocals.wav in the job folder.  Returns the vocals path if
     successful, or the original audio_path as fallback.
+    Uses a shared cache so the same audio doesn't run Demucs multiple times
+    across Aurora/Mono/Onyx.
     """
     vocals_path = os.path.join(job_folder, "vocals.wav")
 
-    # Use cached vocals if already separated
+    # Use cached vocals if already separated in this job folder
     if os.path.exists(vocals_path):
         print("  Reusing cached vocals.wav")
         return vocals_path
+
+    # Check shared cross-template cache
+    cache_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(job_folder))), "cache", "vocals")
+    try:
+        audio_hash = _get_audio_hash(audio_path)
+        os.makedirs(cache_dir, exist_ok=True)
+        cached_vocals = os.path.join(cache_dir, f"{audio_hash}.wav")
+        if os.path.exists(cached_vocals):
+            shutil.copy2(cached_vocals, vocals_path)
+            print(f"  Reusing shared vocals cache ({audio_hash})")
+            return vocals_path
+    except Exception:
+        audio_hash = None
+        cached_vocals = None
 
     try:
         print("  Separating vocals (Demucs)...")
@@ -208,6 +234,12 @@ def separate_vocals(audio_path, job_folder):
             src = os.path.join(tmpdir, "htdemucs", stem, "vocals.wav")
             if os.path.exists(src):
                 shutil.copy2(src, vocals_path)
+                # Save to shared cache for other templates
+                if cached_vocals:
+                    try:
+                        shutil.copy2(src, cached_vocals)
+                    except Exception:
+                        pass
                 print("  Vocals separated successfully")
                 return vocals_path
             else:
@@ -495,7 +527,8 @@ def remove_stutter_duplicates(items, text_key):
 # ============================================================================
 
 def multi_pass_transcribe(audio_path, prompt, duration, language,
-                          word_timestamps=True, regroup_passes=None):
+                          word_timestamps=True, regroup_passes=None,
+                          from_demucs=False):
     """
     Try multiple Whisper configurations, return (best_result, pass_index).
 
@@ -510,8 +543,9 @@ def multi_pass_transcribe(audio_path, prompt, duration, language,
     # Normalize audio levels (also returns duration, avoiding a redundant decode)
     audio_path, norm_dur = normalize_audio(audio_path)
 
-    # Apply noise reduction (removes reverb tails, recording noise)
-    audio_path = reduce_noise(audio_path)
+    # Skip noise reduction for Demucs output — vocals stem is already clean
+    if not from_demucs:
+        audio_path = reduce_noise(audio_path)
 
     # Use duration from normalization pass to avoid re-decoding the file
     actual_dur = norm_dur if norm_dur is not None else get_audio_duration(audio_path)
@@ -1204,10 +1238,12 @@ def transcribe_word_level(job_folder, song_title, template_name,
         else:
             # Vocal separation + multi-pass transcription
             transcribe_path = separate_vocals(audio_path, job_folder)
+            used_demucs = transcribe_path != audio_path
             result, pass_idx = multi_pass_transcribe(
                 transcribe_path, initial_prompt, audio_duration, language,
                 word_timestamps=True,
                 regroup_passes=regroup_passes,
+                from_demucs=used_demucs,
             )
 
             if not result or not result.segments:

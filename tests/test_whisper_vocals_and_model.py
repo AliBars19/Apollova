@@ -10,6 +10,8 @@ Covers:
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
@@ -29,6 +31,12 @@ from scripts.whisper_common import (
 # ---------------------------------------------------------------------------
 
 class TestSeparateVocals:
+
+    def teardown_method(self):
+        """Clean shared vocals cache between tests to prevent cross-contamination."""
+        import glob
+        for cache_dir in glob.glob(os.path.join(tempfile.gettempdir(), "**", "cache", "vocals"), recursive=True):
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
     def test_cached_vocals_reuse(self, job_folder):
         """If vocals.wav already exists, return it without running Demucs."""

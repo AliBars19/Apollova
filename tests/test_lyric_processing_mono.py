@@ -22,7 +22,7 @@ def _mock_whisper_common(monkeypatch):
     import scripts.whisper_common as wc
     monkeypatch.setattr(wc, "get_audio_duration", lambda p: 60.0)
     monkeypatch.setattr(wc, "build_initial_prompt", lambda t: "prompt")
-    monkeypatch.setattr(wc, "detect_language", lambda t: "en")
+    monkeypatch.setattr(wc, "detect_language", lambda t, g=None: "en")
     monkeypatch.setattr(wc, "load_whisper_cache", lambda jf: None)
     monkeypatch.setattr(wc, "save_whisper_cache", lambda jf, s: None)
     monkeypatch.setattr(wc, "separate_vocals", lambda a, jf: a)
@@ -120,9 +120,11 @@ class TestMonoGeniusAlignment:
         monkeypatch.setattr(wc, "build_markers_from_segments", lambda segs: [
             {"time": 0, "text": "line", "words": [], "color": "", "end_time": 2}
         ])
-        monkeypatch.setattr("scripts.lyric_processing_mono.fetch_genius_lyrics", lambda t: "line\n")
-        monkeypatch.setattr("scripts.lyric_processing_mono.align_genius_to_whisper",
+        monkeypatch.setattr("scripts.genius_processing.fetch_genius_lyrics", lambda t: "line\n")
+        monkeypatch.setattr("scripts.lyric_alignment.align_genius_to_whisper",
                             lambda m, t, **kw: (m, 0.8))
+        # align_genius_to_audio returns None → falls back to rebuild_words_after_alignment
+        monkeypatch.setattr(wc, "align_genius_to_audio", lambda *a, **kw: None)
 
         rebuild_called = []
         monkeypatch.setattr(wc, "rebuild_words_after_alignment",
@@ -142,14 +144,14 @@ class TestMonoGeniusAlignment:
         monkeypatch.setattr(wc, "build_markers_from_segments", lambda segs: [
             {"time": 0, "text": "original", "words": [], "color": "", "end_time": 2}
         ])
-        monkeypatch.setattr("scripts.lyric_processing_mono.fetch_genius_lyrics", lambda t: "wrong")
+        monkeypatch.setattr("scripts.genius_processing.fetch_genius_lyrics", lambda t: "wrong")
 
         def bad_align(m, t, **kw):
             for marker in m:
                 marker["text"] = "REPLACED"
             return m, 0.1
 
-        monkeypatch.setattr("scripts.lyric_processing_mono.align_genius_to_whisper", bad_align)
+        monkeypatch.setattr("scripts.lyric_alignment.align_genius_to_whisper", bad_align)
 
         rebuild_called = []
         monkeypatch.setattr(wc, "rebuild_words_after_alignment",

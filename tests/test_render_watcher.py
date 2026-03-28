@@ -15,6 +15,7 @@ import threading
 from pathlib import Path
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch, PropertyMock
+from freezegun import freeze_time
 
 import pytest
 
@@ -71,14 +72,17 @@ class TestSmartScheduler:
         slot = scheduler.get_next_slot("aurora")
         assert not (upload_config.dead_hours_start <= slot.hour < upload_config.dead_hours_end)
 
+    @freeze_time("2026-03-23 14:00:00")
     def test_past_candidate_bumped(self, upload_config, upload_state):
         scheduler = self._make_scheduler(upload_config, upload_state)
-        # Last scheduled time was yesterday
-        yesterday = datetime.now() - timedelta(days=1)
-        upload_state.get_last_scheduled_time = MagicMock(return_value=yesterday)
+        # Last scheduled time was 3 hours ago — candidate would be 2 hours ago (in the past)
+        # The scheduler should bump it to at least now + 10 minutes
+        three_hours_ago = datetime(2026, 3, 23, 11, 0, 0)
+        upload_state.get_last_scheduled_time = MagicMock(return_value=three_hours_ago)
         upload_state.count_scheduled_for_date = MagicMock(return_value=1)
         slot = scheduler.get_next_slot("aurora")
-        assert slot > datetime.now()
+        frozen_now = datetime(2026, 3, 23, 14, 0, 0)
+        assert slot > frozen_now
 
 
 # ---------------------------------------------------------------------------

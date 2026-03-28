@@ -1,6 +1,12 @@
 """
-Smart Song Picker - Intelligently selects songs from database
-Ensures fair rotation: no song used twice until all used once
+Smart Song Picker - Intelligent song selection from database
+Shared across Aurora, Mono, and Onyx templates
+
+Priority system:
+  1. Never-used songs first (use_count = 1)
+  2. Least used songs (lowest use_count)
+  3. Oldest last_used timestamp
+  4. Random tiebreaker
 """
 import sqlite3
 import random
@@ -9,10 +15,10 @@ from itertools import groupby
 
 class SmartSongPicker:
     """Intelligently picks songs from database based on usage patterns"""
-    
+
     def __init__(self, db_path="database/songs.db"):
         self.db_path = db_path
-    
+
     def get_available_songs(self, num_songs=12, shuffle=False):
         """
         Get songs prioritized by:
@@ -30,7 +36,6 @@ class SmartSongPicker:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        # Check total songs
         cursor.execute("SELECT COUNT(*) FROM songs")
         total_songs = cursor.fetchone()[0]
 
@@ -38,12 +43,10 @@ class SmartSongPicker:
             conn.close()
             return []
 
-        # Check unused songs
         cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1")
         unused_count = cursor.fetchone()[0]
 
         if unused_count >= num_songs:
-            # Enough unused songs - prioritize these with random selection
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
                 FROM songs
@@ -53,8 +56,6 @@ class SmartSongPicker:
             """, (num_songs,))
             rows = cursor.fetchall()
         elif shuffle:
-            # Shuffle mode: fetch all eligible songs grouped by use_count tier,
-            # randomize within each tier, then take the top num_songs
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
                 FROM songs
@@ -63,7 +64,6 @@ class SmartSongPicker:
                     use_count ASC
             """)
             all_rows = cursor.fetchall()
-            # Group by use_count, shuffle within each group, then flatten
             grouped = []
             for _key, group in groupby(all_rows, key=lambda r: r[5]):
                 tier = list(group)
@@ -71,7 +71,6 @@ class SmartSongPicker:
                 grouped.extend(tier)
             rows = grouped[:num_songs]
         else:
-            # Mix of unused and least used songs
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
                 FROM songs
@@ -86,21 +85,17 @@ class SmartSongPicker:
 
         conn.close()
 
-        songs = []
-        for row in rows:
-            songs.append({
-                "id": row[0],
-                "song_title": row[1],
-                "youtube_url": row[2],
-                "start_time": row[3],
-                "end_time": row[4],
-                "use_count": row[5]
-            })
-
-        return songs
+        return [{
+            "id": row[0],
+            "song_title": row[1],
+            "youtube_url": row[2],
+            "start_time": row[3],
+            "end_time": row[4],
+            "use_count": row[5]
+        } for row in rows]
     
     def get_database_stats(self):
-        """Get statistics about song usage in database"""
+        """Get statistics about song usage"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -124,7 +119,7 @@ class SmartSongPicker:
         }
     
     def mark_song_used(self, song_title):
-        """Update song usage statistics when used"""
+        """Update song usage when used"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         

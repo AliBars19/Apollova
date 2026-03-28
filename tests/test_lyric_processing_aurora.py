@@ -30,7 +30,7 @@ def _mock_whisper_common(monkeypatch):
 
     monkeypatch.setattr(wc, "get_audio_duration", lambda p: 60.0)
     monkeypatch.setattr(wc, "build_initial_prompt", lambda t: "prompt")
-    monkeypatch.setattr(wc, "detect_language", lambda t: "en")
+    monkeypatch.setattr(wc, "detect_language", lambda t, g=None: "en")
     monkeypatch.setattr(wc, "load_whisper_cache", lambda jf: None)
     monkeypatch.setattr(wc, "save_whisper_cache", lambda jf, s: None)
     monkeypatch.setattr(wc, "separate_vocals", lambda a, jf: a)

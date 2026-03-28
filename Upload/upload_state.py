@@ -422,6 +422,12 @@ class StateManager:
 
     # ── Internals ────────────────────────────────────────────────
 
+    _ALLOWED_COLUMNS = frozenset({
+        "upload_status", "video_id", "upload_attempts", "upload_error",
+        "uploaded_at", "schedule_status", "scheduled_at", "published_at",
+        "updated_at", "platform", "render_hash",
+    })
+
     def _update(self, record_id: int, _action: str = "", _message: str = "", **fields) -> None:
         with self._lock:
             conn = self._get_conn()
@@ -429,6 +435,9 @@ class StateManager:
                 fields["updated_at"] = _now()
                 # Filter out our private kwargs
                 db_fields = {k: v for k, v in fields.items() if not k.startswith("_")}
+                invalid = set(db_fields) - self._ALLOWED_COLUMNS
+                if invalid:
+                    raise ValueError(f"Illegal column names: {invalid}")
                 sets = ", ".join(f"{k} = ?" for k in db_fields)
                 values = list(db_fields.values()) + [record_id]
                 conn.execute(f"UPDATE uploads SET {sets} WHERE id = ?", values)
@@ -444,7 +453,17 @@ class StateManager:
             (upload_id, action, status, message),
         )
 
+    _ALLOWED_WHERE_CLAUSES = frozenset({
+        "upload_status = ?",
+        "upload_status = ? AND platform = ?",
+        "upload_status = ? AND upload_attempts < ?",
+        "schedule_status = ?",
+        "id = ?",
+    })
+
     def _query(self, where: str, params: tuple) -> list[UploadRecord]:
+        if where not in self._ALLOWED_WHERE_CLAUSES:
+            raise ValueError(f"Unsupported WHERE clause: {where}")
         with self._lock:
             conn = self._get_conn()
             try:

@@ -234,11 +234,13 @@ class VideoUploader:
         self.session = requests.Session()
         self._authenticated = False
         self._auth_lock = threading.Lock()
+        self._auth_failures = 0
 
     def authenticate(self) -> bool:
         with self._auth_lock:
             if self.test_mode:
                 self._authenticated = True
+                self._auth_failures = 0
                 return True
             try:
                 resp = self.session.post(
@@ -249,15 +251,22 @@ class VideoUploader:
                 self._authenticated = resp.status_code == 200
                 if self._authenticated:
                     logger.info("Authenticated with website")
+                    self._auth_failures = 0
                 else:
+                    self._auth_failures += 1
                     logger.error(f"Auth failed: HTTP {resp.status_code}")
                 return self._authenticated
             except requests.RequestException as e:
+                self._auth_failures += 1
                 logger.error(f"Auth error: {e}")
                 return False
 
     def _ensure_auth(self) -> bool:
         if not self._authenticated:
+            if self._auth_failures > 0:
+                backoff = min(2 ** self._auth_failures, 300)
+                logger.info(f"Auth backoff: waiting {backoff}s (failure #{self._auth_failures})")
+                time.sleep(backoff)
             return self.authenticate()
         return True
 

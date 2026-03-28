@@ -136,14 +136,14 @@ class TestKeyVariants:
 class TestBoundaryConditions:
 
     def test_midpoint_calculation(self, job_folder):
-        """Midpoint of (2.0, 4.0) = 3.0 → chunk index 3."""
+        """Span [2,3,4] all silent → 100% silent ratio > 70% threshold → item removed."""
         audio = _write_wav_with_volume(
             job_folder / "audio.wav", duration_ms=6000,
-            loud_ranges=[(0, 2500)],  # chunks 0,1 loud; 2,3,4,5 silent
+            loud_ranges=[(0, 2000)],  # chunks 0,1 loud; 2,3,4,5 silent
         )
         item = _aurora_item(2.0, 4.0, "midpoint at 3s")
         result = remove_instrumental_hallucinations([item], "lyric_current", str(audio))
-        assert len(result) == 0  # chunk 3 is silent
+        assert len(result) == 0  # span chunks [2,3,4] are all silent
 
     def test_segment_beyond_audio_length(self, job_folder):
         """Segment midpoint beyond audio duration shouldn't crash."""

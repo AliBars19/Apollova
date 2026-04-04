@@ -236,11 +236,17 @@ def save_all_settings(app) -> None:
     Config.GENIUS_API_TOKEN = app.genius_edit.text()
     Config.WHISPER_MODEL = app.whisper_combo.currentText()
     app._save_settings()
-    env = INSTALL_DIR / ".env"
-    with open(env, 'w', encoding='utf-8') as f:
+    # Write .env to APPDATA (not install root) — matches config.py load priority
+    from assets.scripts.config import Config as _Cfg
+    env_dir = _Cfg.APPDATA_DIR
+    env_dir.mkdir(parents=True, exist_ok=True)
+    env = env_dir / ".env"
+    tmp = env.with_suffix(".env.tmp")
+    with open(tmp, 'w', encoding='utf-8') as f:
         f.write(f"GENIUS_API_TOKEN={app.genius_edit.text()}\n")
         f.write(f"WHISPER_MODEL={app.whisper_combo.currentText()}\n")
         f.write(f"LASTFM_API_KEY={app.lastfm_key_edit.text()}\n")
+    tmp.replace(env)  # atomic write
     QMessageBox.information(app, "Saved", "Settings saved successfully!")
     app._update_inject_status()
 

@@ -2,21 +2,14 @@
 """
 Apollova - Lyric Video Job Generator
 PyQt6 GUI Application - No tkinter, no Tcl/Tk dependency
+
+This is the main class shell. Tab-building and handlers live in assets/gui/.
 """
 
 import os
-import re
 import sys
-import io
 import json
-import shutil
-import time
 import threading
-import tempfile
-import traceback
-import subprocess
-from pathlib import Path
-from datetime import datetime
 
 # ── Fix stdout/stderr for --windowed PyInstaller builds ──────────────────────
 # PyInstaller --windowed sets stdout/stderr to None on Windows, which causes
@@ -39,26 +32,20 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QPushButton, QComboBox, QRadioButton, QCheckBox,
-    QTabWidget, QGroupBox, QTextEdit, QProgressBar, QListWidget,
-    QScrollArea, QFileDialog, QMessageBox, QButtonGroup, QFrame,
-    QSystemTrayIcon, QMenu, QTableWidget, QTableWidgetItem, QHeaderView,
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QFrame
+from PyQt6.QtGui import QIcon
+
+from assets.gui.constants import (
+    BASE_DIR, ASSETS_DIR, INSTALL_DIR, APP_VERSION,
+    AURORA_JOBS_DIR, MONO_JOBS_DIR, ONYX_JOBS_DIR,
+    DATABASE_DIR, WHISPER_DIR, TEMPLATES_DIR, SETTINGS_FILE,
+    APP_STYLE,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QObject
-from PyQt6.QtGui import QFont, QIcon, QAction
+from assets.gui.helpers import (
+    WorkerSignals, _label, _show_startup_error,
+)
 
-# ── Path resolution ───────────────────────────────────────────────────────────
-if getattr(sys, "frozen", False):
-    BASE_DIR   = Path(sys.executable).parent
-    ASSETS_DIR = BASE_DIR / "assets"
-else:
-    ASSETS_DIR = Path(__file__).parent
-    BASE_DIR   = ASSETS_DIR.parent
-
-BUNDLED_JSX_DIR = ASSETS_DIR / "scripts" / "JSX"
-APP_VERSION = "1.0.0"
+# ── Path setup for script imports ─────────────────────────────────────────────
 sys.path.insert(0, str(ASSETS_DIR))
 
 try:
@@ -66,27 +53,8 @@ try:
 except Exception:
     _get_logger = None
 
-# ── Safe startup: friendly GUI errors instead of raw tracebacks ───────────────
-def _show_startup_error(title, message, fix=None):
-    app = QApplication.instance() or QApplication(sys.argv)
-    dlg = QMessageBox()
-    dlg.setWindowTitle(f"Apollova \u2014 {title}")
-    dlg.setIcon(QMessageBox.Icon.Critical)
-    dlg.setText(f"<b>{title}</b>")
-    full_msg = message
-    if fix:
-        full_msg += f"\n\n<b>How to fix:</b>\n{fix}"
-    dlg.setInformativeText(full_msg)
-    dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-    dlg.setStyleSheet(
-        "QWidget{background:#1e1e2e;color:#cdd6f4;font-family:'Segoe UI';font-size:13px;}"
-        "QPushButton{background:#313244;border:1px solid #45475a;border-radius:5px;"
-        "padding:6px 16px;color:#cdd6f4;}"
-        "QPushButton:hover{background:#89b4fa;color:#1e1e2e;}"
-    )
-    dlg.exec()
-    sys.exit(1)
 
+# ── Import pipeline scripts ──────────────────────────────────────────────────
 def _import_scripts():
     global Config, download_audio, trim_audio, detect_beats
     global download_image, extract_colors, transcribe_audio
@@ -94,11 +62,11 @@ def _import_scripts():
     global SongDatabase, fetch_genius_image, fetch_genius_image_rotated, SmartSongPicker
 
     # Check files exist
-    missing = [s for s in ["config","audio_processing","image_processing",
-                            "whisper_common",
-                            "lyric_processing","lyric_processing_mono",
-                            "lyric_processing_onyx","lyric_alignment",
-                            "song_database","genius_processing","smart_picker"]
+    missing = [s for s in ["config", "audio_processing", "image_processing",
+                           "whisper_common",
+                           "lyric_processing", "lyric_processing_mono",
+                           "lyric_processing_onyx", "lyric_alignment",
+                           "song_database", "genius_processing", "smart_picker"]
                if not (ASSETS_DIR / "scripts" / f"{s}.py").exists()]
     if missing:
         _show_startup_error(
@@ -119,11 +87,11 @@ def _import_scripts():
         from scripts.genius_processing import fetch_genius_image as _fg
         from scripts.genius_processing import fetch_genius_image_rotated as _fgr
         from scripts.smart_picker import SmartSongPicker as _SP
-        Config=_C; download_audio=_da; trim_audio=_ta; detect_beats=_db
-        download_image=_di; extract_colors=_ec; transcribe_audio=_tr
-        transcribe_audio_mono=_trm; transcribe_audio_onyx=_tro
-        SongDatabase=_SD; fetch_genius_image=_fg; fetch_genius_image_rotated=_fgr
-        SmartSongPicker=_SP
+        Config = _C; download_audio = _da; trim_audio = _ta; detect_beats = _db
+        download_image = _di; extract_colors = _ec; transcribe_audio = _tr
+        transcribe_audio_mono = _trm; transcribe_audio_onyx = _tro
+        SongDatabase = _SD; fetch_genius_image = _fg; fetch_genius_image_rotated = _fgr
+        SmartSongPicker = _SP
 
     except OSError as e:
         err = str(e)
@@ -143,7 +111,7 @@ def _import_scripts():
                             "Re-run Setup.exe to repair your installation.")
 
     except ImportError as e:
-        pkg = str(e).replace("No module named ","").strip("'")
+        pkg = str(e).replace("No module named ", "").strip("'")
         _show_startup_error(
             "Missing Package",
             f"A required Python package is not installed:\n\n  {pkg}",
@@ -157,272 +125,17 @@ def _import_scripts():
             "Re-run Setup.exe to repair your installation."
         )
 
-Config=download_audio=trim_audio=detect_beats=None
-download_image=extract_colors=transcribe_audio=None
-transcribe_audio_mono=transcribe_audio_onyx=None
-SongDatabase=fetch_genius_image=fetch_genius_image_rotated=SmartSongPicker=None
+
+Config = download_audio = trim_audio = detect_beats = None
+download_image = extract_colors = transcribe_audio = None
+transcribe_audio_mono = transcribe_audio_onyx = None
+SongDatabase = fetch_genius_image = fetch_genius_image_rotated = SmartSongPicker = None
 _import_scripts()
 
-# ── Directory constants ───────────────────────────────────────────────────────
-INSTALL_DIR     = BASE_DIR
-TEMPLATES_DIR   = BASE_DIR / "templates"
-AURORA_JOBS_DIR = BASE_DIR / "Apollova-Aurora" / "jobs"
-MONO_JOBS_DIR   = BASE_DIR / "Apollova-Mono"   / "jobs"
-ONYX_JOBS_DIR   = BASE_DIR / "Apollova-Onyx"   / "jobs"
-DATABASE_DIR    = BASE_DIR / "database"
-WHISPER_DIR     = BASE_DIR / "whisper_models"
-SETTINGS_FILE   = BASE_DIR / "settings.json"
-
-TEMPLATE_PATHS = {
-    "aurora": TEMPLATES_DIR / "Apollova-Aurora.aep",
-    "mono":   TEMPLATES_DIR / "Apollova-Mono.aep",
-    "onyx":   TEMPLATES_DIR / "Apollova-Onyx.aep",
-}
-JOBS_DIRS = {
-    "aurora": AURORA_JOBS_DIR,
-    "mono":   MONO_JOBS_DIR,
-    "onyx":   ONYX_JOBS_DIR,
-}
-JSX_SCRIPTS = {
-    "aurora": "Apollova-Aurora-Injection.jsx",
-    "mono":   "Apollova-Mono-Injection.jsx",
-    "onyx":   "Apollova-Onyx-Injection.jsx",
-}
-
-# ── Stylesheet ────────────────────────────────────────────────────────────────
-APP_STYLE = """
-QMainWindow, QWidget {
-    background-color: #1e1e2e;
-    color: #cdd6f4;
-    font-family: 'Segoe UI';
-    font-size: 13px;
-}
-QTabWidget::pane {
-    border: 1px solid #313244;
-    border-radius: 6px;
-    background: #1e1e2e;
-}
-QTabBar::tab {
-    background: #313244;
-    color: #cdd6f4;
-    padding: 8px 18px;
-    border-radius: 4px;
-    margin-right: 3px;
-}
-QTabBar::tab:selected {
-    background: #89b4fa;
-    color: #1e1e2e;
-    font-weight: bold;
-}
-QGroupBox {
-    border: 1px solid #313244;
-    border-radius: 6px;
-    margin-top: 12px;
-    padding: 10px;
-    font-weight: bold;
-    color: #89b4fa;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 10px;
-    padding: 0 5px;
-}
-QLineEdit {
-    background: #313244;
-    border: 1px solid #45475a;
-    border-radius: 4px;
-    padding: 6px 8px;
-    color: #cdd6f4;
-}
-QLineEdit:focus { border: 1px solid #89b4fa; }
-QPushButton {
-    background: #313244;
-    border: 1px solid #45475a;
-    border-radius: 6px;
-    padding: 7px 18px;
-    color: #cdd6f4;
-    min-height: 28px;
-}
-QPushButton:hover { background: #3a3d5c; border-color: #89b4fa; color: #cdd6f4; }
-QPushButton:pressed { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
-QPushButton:disabled { background: #1e1e2e; color: #45475a; border-color: #2a2a3c; }
-QPushButton#primary {
-    background: #89b4fa;
-    color: #1e1e2e;
-    font-weight: bold;
-    font-size: 14px;
-    padding: 9px 26px;
-    border: none;
-    border-radius: 6px;
-    min-height: 34px;
-}
-QPushButton#primary:hover { background: #b4befe; border: none; }
-QPushButton#primary:pressed { background: #cdd6f4; border: none; }
-QPushButton#primary:disabled { background: #2a2f45; color: #45475a; border: 1px solid #313244; }
-QPushButton#accent {
-    background: #1a2540;
-    color: #89b4fa;
-    border: 1px solid #4a6fa5;
-    border-radius: 6px;
-    padding: 7px 18px;
-    min-height: 28px;
-}
-QPushButton#accent:hover { background: #89b4fa; color: #1e1e2e; border-color: #89b4fa; }
-QPushButton#accent:pressed { background: #b4befe; color: #1e1e2e; }
-QPushButton#accent:disabled { background: #1e1e2e; color: #45475a; border-color: #2a2a3c; }
-QPushButton#danger {
-    background: #2e1520;
-    color: #f38ba8;
-    border: 1px solid #6b2d3e;
-    border-radius: 6px;
-    padding: 7px 18px;
-    min-height: 28px;
-}
-QPushButton#danger:hover { background: #f38ba8; color: #1e1e2e; border-color: #f38ba8; }
-QPushButton#danger:pressed { background: #eba0ac; color: #1e1e2e; }
-QPushButton#muted {
-    background: #1e1e2e;
-    color: #6c7086;
-    border: 1px solid #313244;
-    border-radius: 6px;
-    padding: 7px 18px;
-    min-height: 28px;
-}
-QPushButton#muted:hover { background: #313244; color: #a6adc8; border-color: #45475a; }
-QPushButton#muted:pressed { background: #45475a; color: #cdd6f4; }
-QComboBox {
-    background: #313244;
-    border: 1px solid #45475a;
-    border-radius: 4px;
-    padding: 5px 8px;
-    color: #cdd6f4;
-}
-QComboBox::drop-down { border: none; }
-QComboBox QAbstractItemView {
-    background: #313244;
-    color: #cdd6f4;
-    selection-background-color: #89b4fa;
-    selection-color: #1e1e2e;
-}
-QRadioButton { spacing: 8px; color: #cdd6f4; padding: 3px 0; }
-QRadioButton::indicator {
-    width: 16px; height: 16px;
-    border-radius: 8px;
-    border: 2px solid #45475a;
-    background: #1e1e2e;
-}
-QRadioButton::indicator:hover { border-color: #89b4fa; }
-QRadioButton::indicator:checked { background: #89b4fa; border-color: #89b4fa; }
-QTextEdit {
-    background: #11111b;
-    border: 1px solid #313244;
-    border-radius: 4px;
-    color: #a6e3a1;
-    font-family: 'Consolas';
-    font-size: 11px;
-}
-QListWidget {
-    background: #181825;
-    border: 1px solid #313244;
-    border-radius: 4px;
-    color: #cdd6f4;
-    font-family: 'Consolas';
-    font-size: 11px;
-}
-QListWidget::item:selected { background: #89b4fa; color: #1e1e2e; }
-QProgressBar {
-    background: #313244;
-    border: none;
-    border-radius: 4px;
-    height: 10px;
-    text-align: center;
-    color: #1e1e2e;
-}
-QProgressBar::chunk { background: #89b4fa; border-radius: 4px; }
-QScrollArea { border: none; }
-QScrollBar:vertical {
-    background: #1e1e2e;
-    width: 8px;
-    border-radius: 4px;
-}
-QScrollBar::handle:vertical {
-    background: #45475a;
-    border-radius: 4px;
-    min-height: 20px;
-}
-QScrollBar::handle:vertical:hover { background: #89b4fa; }
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-"""
-
-
-# ── Validation patterns ───────────────────────────────────────────────────────
-_VALID_YT   = re.compile(r'(?:youtube\.com/watch\?.*v=|youtu\.be/)([A-Za-z0-9_-]{11})')
-_VALID_TIME = re.compile(r'^\d{1,2}:\d{2}$')
-
-from dataclasses import dataclass
-from typing import Optional
-
-@dataclass
-class DiscoveryResult:
-    track: object              # LastFMTrack from lastfm_discovery.py
-    youtube_url: Optional[str]
-    youtube_confidence: str    # "high", "medium", "low", "none"
-    start_mmss: str
-    end_mmss: str
-    chorus_confidence: float   # 0.0-1.0
-    status: str                # "ready", "no_youtube", "no_chorus"
-
-# ── Worker signals (thread → UI) ──────────────────────────────────────────────
-class WorkerSignals(QObject):
-    log                   = pyqtSignal(str)
-    progress              = pyqtSignal(float)
-    finished              = pyqtSignal()
-    error                 = pyqtSignal(str)
-    stats_refresh         = pyqtSignal()
-    batch_progress        = pyqtSignal(str, float, str)
-    batch_template_status = pyqtSignal(str, str)
-    batch_finished        = pyqtSignal(dict)
-    discovery_progress    = pyqtSignal(str, int, int, str)
-    discovery_results     = pyqtSignal(list)
-    discovery_error       = pyqtSignal(str)
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-def _label(text, style=""):
-    lbl = QLabel(text)
-    if style == "title":
-        f = QFont("Segoe UI")
-        f.setPointSize(16)
-        f.setWeight(QFont.Weight.Bold)
-        lbl.setFont(f)
-        lbl.setStyleSheet("color:#89b4fa;")
-    elif style == "subtitle":
-        lbl.setStyleSheet("color:#6c7086; font-size:12px;")
-    elif style == "muted":
-        lbl.setStyleSheet("color:#6c7086; font-size:11px;")
-    elif style == "success":
-        lbl.setStyleSheet("color:#a6e3a1;")
-    elif style == "warning":
-        lbl.setStyleSheet("color:#f9e2af;")
-    elif style == "error":
-        lbl.setStyleSheet("color:#f38ba8;")
-    return lbl
-
-def _set_label_style(lbl, style):
-    styles = {
-        "success": "color:#a6e3a1;",
-        "warning": "color:#f9e2af;",
-        "error":   "color:#f38ba8;",
-        "muted":   "color:#6c7086; font-size:11px;",
-        "normal":  "color:#cdd6f4;",
-    }
-    lbl.setStyleSheet(styles.get(style, "color:#cdd6f4;"))
-
-def _scrollable(widget):
-    scroll = QScrollArea()
-    scroll.setWidget(widget)
-    scroll.setWidgetResizable(True)
-    return scroll
+# ── Tab + handler modules ────────────────────────────────────────────────────
+from assets.gui import job_creation_tab, jsx_injection_tab, settings_tab
+from assets.gui import mobile_server, job_processing
+from pathlib import Path
 
 
 # ── Main Window ───────────────────────────────────────────────────────────────
@@ -439,27 +152,27 @@ class AppolovaApp(QMainWindow):
             self.setWindowIcon(QIcon(str(icon_path)))
 
         self._init_directories()
-        self.song_db  = SongDatabase(db_path=str(DATABASE_DIR / "songs.db"))
+        self.song_db = SongDatabase(db_path=str(DATABASE_DIR / "songs.db"))
         self.smart_picker = SmartSongPicker(db_path=str(DATABASE_DIR / "songs.db"))
         self.settings = self._load_settings()
 
-        # Sync settings → Config and validate
+        # Sync settings -> Config and validate
         Config.GENIUS_API_TOKEN = self.settings.get('genius_api_token', '')
         Config.WHISPER_MODEL = self.settings.get('whisper_model', 'small')
         self._config_warnings = Config.validate()
 
-        self._job_queue             = []   # list of {title, url, start, end}
-        self.is_processing          = False
-        self.cancel_requested       = False
-        self._resume_mode           = False
-        self.use_smart_picker       = False
-        self._smart_songs           = []
-        self.batch_render_active    = False
+        self._job_queue = []
+        self.is_processing = False
+        self.cancel_requested = False
+        self._resume_mode = False
+        self.use_smart_picker = False
+        self._smart_songs = []
+        self.batch_render_active = False
         self.batch_render_cancelled = False
-        self.batch_results          = {}
-        self._discover_cancel_event     = threading.Event()
-        self._discovery_in_progress    = False
-        self._discovery_results        = []
+        self.batch_results = {}
+        self._discover_cancel_event = threading.Event()
+        self._discovery_in_progress = False
+        self._discovery_results = []
 
         self.signals = WorkerSignals()
         self.signals.log.connect(self._append_log)
@@ -497,7 +210,7 @@ class AppolovaApp(QMainWindow):
                 self.ae_path_edit.setText(detected)
                 self._update_ae_status()
 
-        # ── Mobile server + tunnel ────────────────────────────────────────────
+        # Mobile server + tunnel
         self._tunnel_manager = None
         self._server_thread = None
         self._start_mobile_server()
@@ -519,8 +232,8 @@ class AppolovaApp(QMainWindow):
                 pass
         return {
             'after_effects_path': None,
-            'genius_api_token':   Config.GENIUS_API_TOKEN,
-            'whisper_model':      Config.WHISPER_MODEL,
+            'genius_api_token': Config.GENIUS_API_TOKEN,
+            'whisper_model': Config.WHISPER_MODEL,
         }
 
     def _save_settings(self):
@@ -554,12 +267,12 @@ class AppolovaApp(QMainWindow):
 
         # Header
         hdr = QHBoxLayout()
-        hdr.addWidget(_label("🎬 Apollova", "title"))
+        hdr.addWidget(_label("\U0001f3ac Apollova", "title"))
         hdr.addWidget(_label("  Lyric Video Generator", "subtitle"))
         hdr.addStretch()
         stats = self.song_db.get_stats()
         self.stats_label = _label(
-            f"📊 {stats['total_songs']} songs | {stats['cached_lyrics']} with lyrics",
+            f"\U0001f4ca {stats['total_songs']} songs | {stats['cached_lyrics']} with lyrics",
             "subtitle")
         hdr.addWidget(self.stats_label)
         root.addLayout(hdr)
@@ -572,606 +285,13 @@ class AppolovaApp(QMainWindow):
         self.tabs = QTabWidget()
         root.addWidget(self.tabs)
 
-        self._build_job_tab()
-        self._build_inject_tab()
-        self._build_settings_tab()
+        job_creation_tab.build(self)
+        jsx_injection_tab.build(self)
+        settings_tab.build(self)
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
 
-    # ── Job Creation Tab ──────────────────────────────────────────────────────
-
-    def _build_job_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(12)
-
-        # Template
-        tpl_grp = QGroupBox("Template")
-        tpl_lay = QVBoxLayout(tpl_grp)
-        self.job_tpl_group = QButtonGroup(self)
-        for name, val, desc in [
-            ("Aurora", "aurora", "Full visual with gradients, spectrum, beat-sync"),
-            ("Mono",   "mono",   "Minimal text-only, black/white alternating"),
-            ("Onyx",   "onyx",   "Hybrid — word-by-word lyrics + spinning vinyl disc"),
-        ]:
-            rb = QRadioButton(f"{name}  —  {desc}")
-            rb.setProperty("tval", val)
-            if val == "aurora":
-                rb.setChecked(True)
-            self.job_tpl_group.addButton(rb)
-            tpl_lay.addWidget(rb)
-
-        path_row = QHBoxLayout()
-        path_row.addWidget(_label("Output:", "muted"))
-        self.output_path_label = _label(str(AURORA_JOBS_DIR), "muted")
-        path_row.addWidget(self.output_path_label)
-        path_row.addStretch()
-        tpl_lay.addLayout(path_row)
-        layout.addWidget(tpl_grp)
-        self.job_tpl_group.buttonClicked.connect(self._on_template_change)
-
-        # Song selection
-        song_grp = QGroupBox("Song Selection")
-        song_lay = QVBoxLayout(song_grp)
-        self.song_tabs = QTabWidget()
-        song_lay.addWidget(self.song_tabs)
-        layout.addWidget(song_grp)
-
-        # Manual entry sub-tab
-        manual_w = QWidget()
-        ml = QVBoxLayout(manual_w)
-        ml.setSpacing(6)
-
-        # ── Input fields ──────────────────────────────────────────────────────
-        ml.addWidget(QLabel("Song Title (Artist - Song):"))
-        self.title_edit = QLineEdit()
-        self.title_edit.setPlaceholderText("e.g. Drake - God's Plan")
-        self.title_edit.textChanged.connect(self._check_database)
-        ml.addWidget(self.title_edit)
-        self.db_match_label = _label("", "muted")
-        ml.addWidget(self.db_match_label)
-        ml.addWidget(QLabel("YouTube URL:"))
-        self.url_edit = QLineEdit()
-        self.url_edit.setPlaceholderText("https://www.youtube.com/watch?v=...")
-        self.url_edit.textChanged.connect(self._on_url_changed)
-        ml.addWidget(self.url_edit)
-        self.url_error_label = _label("", "error")
-        self.url_error_label.setVisible(False)
-        ml.addWidget(self.url_error_label)
-        tr = QHBoxLayout()
-        tr.addWidget(QLabel("Start (MM:SS):"))
-        self.start_edit = QLineEdit("00:00")
-        self.start_edit.setFixedWidth(70)
-        tr.addWidget(self.start_edit)
-        tr.addSpacing(20)
-        tr.addWidget(QLabel("End (MM:SS):"))
-        self.end_edit = QLineEdit("01:01")
-        self.end_edit.setFixedWidth(70)
-        tr.addWidget(self.end_edit)
-        tr.addStretch()
-        ml.addLayout(tr)
-
-        # ── Add to queue button ───────────────────────────────────────────────
-        add_row = QHBoxLayout()
-        self.add_job_btn = QPushButton("＋  Add to Queue")
-        self.add_job_btn.setObjectName("accent")
-        self.add_job_btn.clicked.connect(self._add_job_to_queue)
-        add_row.addWidget(self.add_job_btn)
-        add_row.addStretch()
-        ml.addLayout(add_row)
-
-        # ── Separator ─────────────────────────────────────────────────────────
-        q_sep = QFrame()
-        q_sep.setFrameShape(QFrame.Shape.HLine)
-        q_sep.setStyleSheet("color:#313244; margin:4px 0;")
-        ml.addWidget(q_sep)
-
-        # ── Queue header with counter ─────────────────────────────────────────
-        q_hdr = QHBoxLayout()
-        q_hdr.addWidget(QLabel("Job Queue:"))
-        q_hdr.addStretch()
-        self.queue_counter_label = _label("0 / 12", "muted")
-        q_hdr.addWidget(self.queue_counter_label)
-        ml.addLayout(q_hdr)
-
-        # ── Queue list ────────────────────────────────────────────────────────
-        self.queue_list = QListWidget()
-        self.queue_list.setMinimumHeight(90)
-        self.queue_list.setMaximumHeight(120)
-        self.queue_list.itemSelectionChanged.connect(
-            lambda: self.remove_job_btn.setEnabled(
-                bool(self.queue_list.selectedItems()) and not self.is_processing))
-        ml.addWidget(self.queue_list)
-
-        # ── Queue action buttons ──────────────────────────────────────────────
-        q_btn_row = QHBoxLayout()
-        self.remove_job_btn = QPushButton("✕  Remove Selected")
-        self.remove_job_btn.setObjectName("muted")
-        self.remove_job_btn.setEnabled(False)
-        self.remove_job_btn.clicked.connect(self._remove_from_queue)
-        q_btn_row.addWidget(self.remove_job_btn)
-        self.clear_queue_btn = QPushButton("🗑  Clear Queue")
-        self.clear_queue_btn.setObjectName("danger")
-        self.clear_queue_btn.setEnabled(False)
-        self.clear_queue_btn.clicked.connect(self._clear_queue)
-        q_btn_row.addWidget(self.clear_queue_btn)
-        q_btn_row.addStretch()
-        ml.addLayout(q_btn_row)
-
-        ml.addStretch()
-        self.song_tabs.addTab(manual_w, "  ✏️ Manual Entry  ")
-
-        # Smart Picker sub-tab
-        smart_w = QWidget()
-        sl = QVBoxLayout(smart_w)
-        sl.setSpacing(6)
-        desc_lbl = _label(
-            "Smart Picker automatically selects songs from your database.\n"
-            "It ensures fair rotation — no song used twice until all used once.", "muted")
-        desc_lbl.setWordWrap(True)
-        sl.addWidget(desc_lbl)
-        self.smart_stats_label = QLabel("Loading stats...")
-        sl.addWidget(self.smart_stats_label)
-        sp_btn_row = QHBoxLayout()
-        ref_btn = QPushButton("🔄 Refresh Stats")
-        ref_btn.clicked.connect(self._refresh_smart_picker_stats)
-        sp_btn_row.addWidget(ref_btn)
-        self.reshuffle_btn = QPushButton("🔀 Reshuffle Songs")
-        self.reshuffle_btn.setObjectName("accent")
-        self.reshuffle_btn.setToolTip("Pick a different random selection from the same priority pool")
-        self.reshuffle_btn.clicked.connect(self._reshuffle_songs)
-        sp_btn_row.addWidget(self.reshuffle_btn)
-        self.reset_uses_btn = QPushButton("🔄 Reset Uses")
-        self.reset_uses_btn.setToolTip("Reset all song use counts back to unused")
-        self.reset_uses_btn.clicked.connect(self._reset_use_counts)
-        sp_btn_row.addWidget(self.reset_uses_btn)
-        sp_btn_row.addStretch()
-        sl.addLayout(sp_btn_row)
-        sl.addWidget(QLabel("Next songs to be selected:"))
-        self.smart_listbox = QListWidget()
-        self.smart_listbox.setMinimumHeight(150)
-        sl.addWidget(self.smart_listbox)
-        self.smart_warning_label = _label("", "warning")
-        sl.addWidget(self.smart_warning_label)
-        sl.addStretch()
-        self.song_tabs.addTab(smart_w, "  🤖 Smart Picker  ")
-
-        # ── Discover sub-tab ─────────────────────────────────────────────────
-        discover_w = QWidget()
-        dl = QVBoxLayout(discover_w)
-        dl.setSpacing(6)
-
-        # Not-configured warning (shown when Last.fm API key missing)
-        self.discover_not_configured = _label(
-            "Last.fm not configured — add your API key in Settings tab", "warning")
-        self.discover_not_configured.setWordWrap(True)
-        self.discover_not_configured.setVisible(False)
-        dl.addWidget(self.discover_not_configured)
-
-        # Row 1: source + limit + skip existing
-        d_row1 = QHBoxLayout()
-        d_row1.addWidget(QLabel("Source:"))
-        self.discover_source_combo = QComboBox()
-        from scripts.lastfm_discovery import CHART_SOURCES as _LFM_SOURCES
-        for name in _LFM_SOURCES:
-            self.discover_source_combo.addItem(name)
-        d_row1.addWidget(self.discover_source_combo)
-        d_row1.addSpacing(10)
-        d_row1.addWidget(QLabel("Limit:"))
-        self.discover_limit_combo = QComboBox()
-        for v in ["25", "50", "100"]:
-            self.discover_limit_combo.addItem(v)
-        self.discover_limit_combo.setCurrentIndex(1)  # default 50
-        d_row1.addWidget(self.discover_limit_combo)
-        d_row1.addSpacing(10)
-        self.discover_skip_existing = QCheckBox("Skip songs already in DB")
-        self.discover_skip_existing.setChecked(True)
-        d_row1.addWidget(self.discover_skip_existing)
-        d_row1.addStretch()
-        dl.addLayout(d_row1)
-
-        # Row 2: fetch + cancel buttons
-        d_row2 = QHBoxLayout()
-        self.discover_fetch_btn = QPushButton("Fetch Songs")
-        self.discover_fetch_btn.setObjectName("primary")
-        self.discover_fetch_btn.clicked.connect(self._start_discovery)
-        d_row2.addWidget(self.discover_fetch_btn)
-        self.discover_cancel_btn = QPushButton("Cancel")
-        self.discover_cancel_btn.setObjectName("muted")
-        self.discover_cancel_btn.setEnabled(False)
-        self.discover_cancel_btn.clicked.connect(self._cancel_discovery)
-        d_row2.addWidget(self.discover_cancel_btn)
-        d_row2.addStretch()
-        dl.addLayout(d_row2)
-
-        # Progress section (hidden by default)
-        self.discover_progress_bar = QProgressBar()
-        self.discover_progress_bar.setVisible(False)
-        dl.addWidget(self.discover_progress_bar)
-        self.discover_phase_label = _label("", "muted")
-        self.discover_phase_label.setVisible(False)
-        dl.addWidget(self.discover_phase_label)
-
-        # Results table
-        self.discover_table = QTableWidget()
-        self.discover_table.setColumnCount(8)
-        self.discover_table.setHorizontalHeaderLabels(
-            ["#", "", "Title", "Artist", "Start", "End", "YouTube", "Confidence"])
-        self.discover_table.horizontalHeader().setSectionResizeMode(
-            2, QHeaderView.ResizeMode.Stretch)
-        self.discover_table.horizontalHeader().setSectionResizeMode(
-            3, QHeaderView.ResizeMode.Stretch)
-        self.discover_table.setColumnWidth(0, 35)
-        self.discover_table.setColumnWidth(1, 30)
-        self.discover_table.setColumnWidth(4, 60)
-        self.discover_table.setColumnWidth(5, 60)
-        self.discover_table.setColumnWidth(6, 180)
-        self.discover_table.setColumnWidth(7, 90)
-        self.discover_table.setStyleSheet(
-            "QTableWidget { background: #181825; border: 1px solid #313244; "
-            "border-radius: 4px; color: #cdd6f4; gridline-color: #313244; }"
-            "QTableWidget::item { padding: 3px; }"
-            "QHeaderView::section { background: #313244; color: #cdd6f4; "
-            "padding: 4px; border: 1px solid #45475a; }")
-        self.discover_table.setMinimumHeight(200)
-        self.discover_table.itemChanged.connect(self._update_discover_add_btn)
-        self.discover_table.setVisible(False)
-        dl.addWidget(self.discover_table)
-
-        # Action row
-        d_action = QHBoxLayout()
-        d_sel_all = QPushButton("Select All")
-        d_sel_all.setObjectName("muted")
-        d_sel_all.clicked.connect(self._discover_select_all)
-        d_action.addWidget(d_sel_all)
-        d_desel_all = QPushButton("Deselect All")
-        d_desel_all.setObjectName("muted")
-        d_desel_all.clicked.connect(self._discover_deselect_all)
-        d_action.addWidget(d_desel_all)
-        d_desel_low = QPushButton("Deselect Low")
-        d_desel_low.setObjectName("muted")
-        d_desel_low.clicked.connect(self._discover_deselect_low)
-        d_action.addWidget(d_desel_low)
-        d_action.addStretch()
-        self.discover_add_btn = QPushButton("Add Selected Songs")
-        self.discover_add_btn.setObjectName("primary")
-        self.discover_add_btn.setEnabled(False)
-        self.discover_add_btn.clicked.connect(self._discover_add_selected)
-        d_action.addWidget(self.discover_add_btn)
-        self.discover_action_row = QWidget()
-        self.discover_action_row.setLayout(d_action)
-        self.discover_action_row.setVisible(False)
-        dl.addWidget(self.discover_action_row)
-
-        # Summary label
-        self.discover_summary_label = _label("", "success")
-        self.discover_summary_label.setWordWrap(True)
-        self.discover_summary_label.setVisible(False)
-        dl.addWidget(self.discover_summary_label)
-
-        dl.addStretch()
-        self.song_tabs.addTab(discover_w, "  🔍 Discover  ")
-
-        self.song_tabs.currentChanged.connect(self._on_song_mode_changed)
-        self._refresh_smart_picker_stats()
-
-        # Job settings
-        js_grp = QGroupBox("Job Settings")
-        js_lay = QHBoxLayout(js_grp)
-        js_lay.addWidget(QLabel("Number of Jobs:"))
-        self.jobs_combo = QComboBox()
-        self.jobs_combo.addItems(["1", "3", "6", "12"])
-        self.jobs_combo.setCurrentText("12")
-        self.jobs_combo.setFixedWidth(70)
-        self.jobs_combo.currentIndexChanged.connect(self._on_jobs_count_changed)
-        js_lay.addWidget(self.jobs_combo)
-        js_lay.addSpacing(20)
-        js_lay.addWidget(QLabel("Whisper Model:"))
-        self.whisper_combo = QComboBox()
-        self.whisper_combo.addItems(["tiny", "base", "small", "medium", "large-v3"])
-        self.whisper_combo.setCurrentText(self.settings.get('whisper_model', 'small'))
-        self.whisper_combo.setFixedWidth(110)
-        js_lay.addWidget(self.whisper_combo)
-        js_lay.addStretch()
-        self.job_warning_label = _label("", "warning")
-        js_lay.addWidget(self.job_warning_label)
-        self.delete_jobs_btn = QPushButton("Delete Existing Jobs")
-        self.delete_jobs_btn.setObjectName("danger")
-        self.delete_jobs_btn.setVisible(False)
-        self.delete_jobs_btn.clicked.connect(self._delete_existing_jobs)
-        js_lay.addWidget(self.delete_jobs_btn)
-        layout.addWidget(js_grp)
-        self._check_existing_jobs()
-
-        # Progress
-        prog_grp = QGroupBox("Progress")
-        prog_lay = QVBoxLayout(prog_grp)
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setRange(0, 100)
-        prog_lay.addWidget(self.progress_bar)
-        self.status_label = QLabel("Ready")
-        prog_lay.addWidget(self.status_label)
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(130)
-        prog_lay.addWidget(self.log_text)
-        layout.addWidget(prog_grp)
-
-        # Buttons
-        btn_row = QHBoxLayout()
-        self.generate_btn = QPushButton("🚀 Generate Jobs")
-        self.generate_btn.setObjectName("primary")
-        self.generate_btn.clicked.connect(self._start_generation)
-        self.generate_btn.setEnabled(False)   # enabled when queue is full (manual) or always (smart)
-        self.generate_btn.setToolTip("Add songs to queue first, or use Smart Picker")
-        btn_row.addWidget(self.generate_btn)
-        self.cancel_btn = QPushButton("✕  Cancel")
-        self.cancel_btn.setObjectName("muted")
-        self.cancel_btn.setEnabled(False)
-        self.cancel_btn.setToolTip("Cancel running job generation")
-        self.cancel_btn.clicked.connect(self._cancel_generation)
-        btn_row.addWidget(self.cancel_btn)
-        open_btn = QPushButton("📂  Open Jobs Folder")
-        open_btn.clicked.connect(self._open_jobs_folder)
-        btn_row.addWidget(open_btn)
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        self.tabs.addTab(_scrollable(page), "  📁 Job Creation  ")
-
-    # ── JSX Injection Tab ─────────────────────────────────────────────────────
-
-    def _build_inject_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(12)
-
-        # Template selector
-        tpl_grp = QGroupBox("Individual Template Injection")
-        tpl_lay = QVBoxLayout(tpl_grp)
-        self.inject_tpl_group = QButtonGroup(self)
-        for name, val, desc in [
-            ("Aurora", "aurora", "Full visual template"),
-            ("Mono",   "mono",   "Minimal text template"),
-            ("Onyx",   "onyx",   "Hybrid vinyl template"),
-        ]:
-            rb = QRadioButton(f"{name}  —  {desc}")
-            rb.setProperty("tval", val)
-            if val == "aurora":
-                rb.setChecked(True)
-            self.inject_tpl_group.addButton(rb)
-            tpl_lay.addWidget(rb)
-        self.inject_tpl_group.buttonClicked.connect(self._update_inject_status)
-        layout.addWidget(tpl_grp)
-
-        # Status
-        status_grp = QGroupBox("Status")
-        status_lay = QVBoxLayout(status_grp)
-
-        def status_row(label_text):
-            row = QHBoxLayout()
-            lbl_key = QLabel(label_text)
-            lbl_key.setFixedWidth(130)
-            lbl_val = QLabel("Checking...")
-            row.addWidget(lbl_key)
-            row.addWidget(lbl_val)
-            row.addStretch()
-            status_lay.addLayout(row)
-            return lbl_val
-
-        self.inject_jobs_label     = status_row("Jobs:")
-        self.inject_template_label = status_row("Template File:")
-        self.inject_ae_label       = status_row("After Effects:")
-
-        ref_row = QHBoxLayout()
-        ref_btn = QPushButton("🔄  Refresh Status")
-        ref_btn.setObjectName("muted")
-        ref_btn.clicked.connect(self._update_inject_status)
-        ref_row.addWidget(ref_btn)
-        ref_row.addStretch()
-        status_lay.addLayout(ref_row)
-
-        install_lbl = _label(f"Install Dir: {INSTALL_DIR}", "muted")
-        status_lay.addWidget(install_lbl)
-        layout.addWidget(status_grp)
-
-        self.inject_btn = QPushButton("Launch After Effects & Inject")
-        self.inject_btn.setObjectName("primary")
-        self.inject_btn.clicked.connect(self._run_injection)
-        layout.addWidget(self.inject_btn)
-
-        info = _label(
-            "This will launch AE, open the template, and inject job data.\n"
-            "After injection, review the comps and manually add to render queue.", "muted")
-        layout.addWidget(info)
-
-        # Batch render
-        batch_grp = QGroupBox("Batch Render All Templates")
-        batch_lay = QVBoxLayout(batch_grp)
-        batch_lay.addWidget(QLabel("Templates Ready:"))
-        self.batch_status_labels = {}
-        for name, val, _ in [("Aurora","aurora",""), ("Mono","mono",""), ("Onyx","onyx","")]:
-            lbl = QLabel(f"  {name}: Checking...")
-            self.batch_status_labels[val] = lbl
-            batch_lay.addWidget(lbl)
-
-        self.batch_status_label  = QLabel("Status: Idle")
-        self.batch_progress_bar  = QProgressBar()
-        self.batch_progress_bar.setRange(0, 100)
-        self.batch_current_label = _label("", "muted")
-        batch_lay.addWidget(self.batch_status_label)
-        batch_lay.addWidget(self.batch_progress_bar)
-        batch_lay.addWidget(self.batch_current_label)
-
-        bb_row = QHBoxLayout()
-        self.render_all_btn = QPushButton("Render All")
-        self.render_all_btn.setObjectName("primary")
-        self.render_all_btn.setToolTip("Render all templates with After Effects")
-        self.render_all_btn.clicked.connect(self._start_batch_render)
-        bb_row.addWidget(self.render_all_btn)
-        self.batch_cancel_btn = QPushButton("✕  Cancel")
-        self.batch_cancel_btn.setObjectName("muted")
-        self.batch_cancel_btn.setEnabled(False)
-        self.batch_cancel_btn.setToolTip("Cancel batch render after current template")
-        self.batch_cancel_btn.clicked.connect(self._cancel_batch_render)
-        bb_row.addWidget(self.batch_cancel_btn)
-        bb_row.addStretch()
-        batch_lay.addLayout(bb_row)
-
-        batch_info = _label(
-            "Renders all templates sequentially (Aurora → Mono → Onyx).\n"
-            "Each template auto-injects, renders, then closes. Requires 2+ templates.", "muted")
-        batch_lay.addWidget(batch_info)
-        layout.addWidget(batch_grp)
-        layout.addStretch()
-
-        self.tabs.addTab(_scrollable(page), "  🚀 JSX Injection  ")
-        self._update_inject_status()
-        self._update_batch_status()
-
-    # ── Settings Tab ──────────────────────────────────────────────────────────
-
-    def _build_settings_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(12)
-
-        # After Effects
-        ae_grp = QGroupBox("Adobe After Effects")
-        ae_lay = QVBoxLayout(ae_grp)
-        ae_row = QHBoxLayout()
-        ae_row.addWidget(QLabel("Path:"))
-        self.ae_path_edit = QLineEdit(self.settings.get('after_effects_path', '') or '')
-        self.ae_path_edit.setPlaceholderText(
-            "C:/Program Files/Adobe/.../AfterFX.exe")
-        ae_row.addWidget(self.ae_path_edit)
-        browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self._browse_ae_path)
-        ae_row.addWidget(browse_btn)
-        detect_btn = QPushButton("🔍  Auto-Detect")
-        detect_btn.clicked.connect(self._auto_detect_ae_click)
-        ae_row.addWidget(detect_btn)
-        ae_lay.addLayout(ae_row)
-        self.ae_status_label = QLabel("")
-        ae_lay.addWidget(self.ae_status_label)
-        self._update_ae_status()
-        layout.addWidget(ae_grp)
-
-        # Genius API
-        genius_grp = QGroupBox("Genius API")
-        genius_lay = QVBoxLayout(genius_grp)
-        genius_lay.addWidget(QLabel("API Token:"))
-        self.genius_edit = QLineEdit(self.settings.get('genius_api_token', '') or '')
-        self.genius_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        genius_lay.addWidget(self.genius_edit)
-        genius_lay.addWidget(_label("Get your token at: https://genius.com/api-clients", "muted"))
-        layout.addWidget(genius_grp)
-
-        # Last.fm Integration
-        lastfm_grp = QGroupBox("Last.fm Integration")
-        lastfm_lay = QVBoxLayout(lastfm_grp)
-        lastfm_lay.addWidget(QLabel("API Key:"))
-        self.lastfm_key_edit = QLineEdit(self.settings.get('lastfm_api_key', '') or '')
-        self.lastfm_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.lastfm_key_edit.setPlaceholderText("Enter Last.fm API Key")
-        lastfm_lay.addWidget(self.lastfm_key_edit)
-        lfm_test_row = QHBoxLayout()
-        lfm_test_btn = QPushButton("Test Connection")
-        lfm_test_btn.setObjectName("accent")
-        lfm_test_btn.clicked.connect(self._test_lastfm_connection)
-        lfm_test_row.addWidget(lfm_test_btn)
-        self.lastfm_status_label = _label("", "muted")
-        lfm_test_row.addWidget(self.lastfm_status_label)
-        lfm_test_row.addStretch()
-        lastfm_lay.addLayout(lfm_test_row)
-        lastfm_lay.addWidget(_label(
-            "Get a free API key at: https://www.last.fm/api/account/create\n"
-            "No subscription required. Enables the Discover tab.", "muted"))
-        layout.addWidget(lastfm_grp)
-
-        # Image Rotation
-        img_grp = QGroupBox("Cover Image")
-        img_lay = QVBoxLayout(img_grp)
-        self.image_rotation_chk = QCheckBox(
-            "Enable image rotation  (uses a different cover each time a song is processed)")
-        self.image_rotation_chk.setChecked(
-            self.settings.get('image_rotation', False))
-        img_lay.addWidget(self.image_rotation_chk)
-        img_lay.addWidget(_label(
-            "    Fetches an alternative image from Genius each run so TikTok "
-            "videos look different.  Requires internet.", "muted"))
-        layout.addWidget(img_grp)
-
-        # FFmpeg
-        ffmpeg_grp = QGroupBox("FFmpeg")
-        ffmpeg_lay = QVBoxLayout(ffmpeg_grp)
-        self.ffmpeg_status_label = QLabel("Checking...")
-        ffmpeg_lay.addWidget(self.ffmpeg_status_label)
-        self._check_ffmpeg()
-        layout.addWidget(ffmpeg_grp)
-
-        # Mobile & Remote
-        mobile_grp = QGroupBox("Mobile & Remote")
-        mobile_lay = QVBoxLayout(mobile_grp)
-
-        # Launch on startup
-        self.startup_chk = QCheckBox("Launch Apollova on Windows startup (minimised to tray)")
-        self.startup_chk.setChecked(self.settings.get("launch_on_startup", False))
-        self.startup_chk.toggled.connect(self._toggle_launch_on_startup)
-        mobile_lay.addWidget(self.startup_chk)
-
-        # Tunnel status
-        tunnel_row = QHBoxLayout()
-        tunnel_row.addWidget(QLabel("Tunnel:"))
-        self.tunnel_status_label = QLabel("Checking...")
-        tunnel_row.addWidget(self.tunnel_status_label)
-        tunnel_row.addStretch()
-        mobile_lay.addLayout(tunnel_row)
-
-        # QR Code buttons
-        qr_row = QHBoxLayout()
-        show_qr_btn = QPushButton("Show QR Code")
-        show_qr_btn.setObjectName("accent")
-        show_qr_btn.clicked.connect(self._show_mobile_qr)
-        qr_row.addWidget(show_qr_btn)
-        regen_qr_btn = QPushButton("Regenerate QR")
-        regen_qr_btn.setObjectName("danger")
-        regen_qr_btn.clicked.connect(self._regenerate_qr)
-        qr_row.addWidget(regen_qr_btn)
-        qr_row.addStretch()
-        mobile_lay.addLayout(qr_row)
-        mobile_lay.addWidget(_label(
-            "    Scan the QR code with the Apollova iOS app to connect your phone.", "muted"))
-        layout.addWidget(mobile_grp)
-
-        save_btn = QPushButton("Save Settings")
-        save_btn.setObjectName("primary")
-        save_btn.clicked.connect(self._save_all_settings)
-        layout.addWidget(save_btn)
-
-        # Paths info
-        paths_grp = QGroupBox("Installation Paths (Read-Only)")
-        paths_lay = QVBoxLayout(paths_grp)
-        paths_lbl = _label(
-            f"Install Dir:  {INSTALL_DIR}\n"
-            f"Templates:    {TEMPLATES_DIR}\n"
-            f"Aurora Jobs:  {AURORA_JOBS_DIR}\n"
-            f"Mono Jobs:    {MONO_JOBS_DIR}\n"
-            f"Onyx Jobs:    {ONYX_JOBS_DIR}\n"
-            f"Database:     {DATABASE_DIR}", "muted")
-        f2 = QFont("Consolas")
-        f2.setPointSize(9)
-        paths_lbl.setFont(f2)
-        paths_lay.addWidget(paths_lbl)
-        layout.addWidget(paths_grp)
-        layout.addStretch()
-
-        self.tabs.addTab(_scrollable(page), "  ⚙ Settings  ")
-
-    # ── Event handlers ────────────────────────────────────────────────────────
+    # ── Delegated handlers: Job Creation tab ──────────────────────────────────
 
     def _on_tab_changed(self, index):
         if index == 1:
@@ -1179,2084 +299,217 @@ class AppolovaApp(QMainWindow):
             self._update_batch_status()
 
     def _on_template_change(self):
-        t = self._job_template()
-        self.output_path_label.setText(str(JOBS_DIRS.get(t, AURORA_JOBS_DIR)))
-        self._check_existing_jobs()
+        job_creation_tab.on_template_change(self)
 
     def _on_song_mode_changed(self, index):
-        self.use_smart_picker = (index == 1)
-        if index == 1:
-            self._refresh_smart_picker_stats()
-        elif index == 2:
-            self._check_lastfm_configured()
-        self._update_generate_btn_state()
+        job_creation_tab.on_song_mode_changed(self, index)
 
     def _on_jobs_count_changed(self, _index):
-        self._update_queue_counter()
-        self._update_generate_btn_state()
-        if self.use_smart_picker:
-            self._refresh_smart_picker_stats()
+        job_creation_tab.on_jobs_count_changed(self, _index)
 
     def _update_queue_counter(self):
-        n     = int(self.jobs_combo.currentText())
-        count = len(self._job_queue)
-        self.queue_counter_label.setText(f"{count} / {n}")
+        job_creation_tab.update_queue_counter(self)
 
     def _update_generate_btn_state(self):
-        if self.is_processing:
-            self.generate_btn.setEnabled(False)
-            return
-        if self.use_smart_picker:
-            self.generate_btn.setEnabled(True)
-        else:
-            n = int(self.jobs_combo.currentText())
-            self.generate_btn.setEnabled(len(self._job_queue) >= n)
+        job_creation_tab.update_generate_btn_state(self)
 
     def _add_job_to_queue(self):
-        title = self.title_edit.text().strip()
-        url   = self.url_edit.text().strip()
-        start = self.start_edit.text().strip()
-        end   = self.end_edit.text().strip()
-        n     = int(self.jobs_combo.currentText())
-
-        if len(self._job_queue) >= n:
-            QMessageBox.warning(self, "Queue Full",
-                f"Queue already has {n} jobs.\n"
-                "Increase the job count or clear the queue first.")
-            return
-
-        if not title:
-            QMessageBox.critical(self, "Missing Info", "Song title is required.")
-            return
-
-        # If the URL field is empty but the song is cached, use the cached URL
-        cached = self.song_db.get_song(title)
-        effective_url = url or (cached['youtube_url'] if cached else "")
-
-        errors = self._validate_song_record(effective_url, start, end)
-        if errors:
-            QMessageBox.critical(self, "Invalid Job Data",
-                "Fix the following before adding this job to the queue:\n\n• " +
-                "\n• ".join(errors))
-            return
-
-        self._job_queue.append(
-            {'title': title, 'url': effective_url, 'start': start, 'end': end})
-        self._rebuild_queue_list()
-        self._update_queue_counter()
-        self._update_generate_btn_state()
-
-        # Clear fields and highlights for next entry
-        self.title_edit.clear()
-        self.url_edit.clear()
-        self.start_edit.setText("00:00")
-        self.end_edit.setText("01:01")
-        self.db_match_label.setText("")
-        for f in (self.url_edit, self.start_edit, self.end_edit):
-            self._highlight_field(f, False)
+        job_creation_tab.add_job_to_queue(self)
 
     def _remove_from_queue(self):
-        row = self.queue_list.currentRow()
-        if row < 0:
-            return
-        self._job_queue.pop(row)
-        self._rebuild_queue_list()
-        self._update_queue_counter()
-        self._update_generate_btn_state()
+        job_creation_tab.remove_from_queue(self)
 
     def _clear_queue(self):
-        if not self._job_queue:
-            return
-        reply = QMessageBox.question(
-            self, "Clear Queue",
-            f"Are you sure you want to delete all {len(self._job_queue)} job(s) from the queue?\n\nThis cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        self._job_queue.clear()
-        self._rebuild_queue_list()
-        self._update_queue_counter()
-        self._update_generate_btn_state()
+        job_creation_tab.clear_queue(self)
 
     def _rebuild_queue_list(self):
-        self.queue_list.clear()
-        for i, job in enumerate(self._job_queue, 1):
-            self.queue_list.addItem(
-                f"{i:2}. {job['title'][:35]:<35}  {job['start']} → {job['end']}")
-        self.clear_queue_btn.setEnabled(bool(self._job_queue))
-        self.remove_job_btn.setEnabled(False)
+        job_creation_tab.rebuild_queue_list(self)
 
     def _job_template(self):
-        btn = self.job_tpl_group.checkedButton()
-        return btn.property("tval") if btn else "aurora"
-
-    def _inject_template(self):
-        btn = self.inject_tpl_group.checkedButton()
-        return btn.property("tval") if btn else "aurora"
-
-    # ── Smart Picker ──────────────────────────────────────────────────────────
+        return job_creation_tab.job_template(self)
 
     def _refresh_smart_picker_stats(self):
-        try:
-            picker = self.smart_picker
-            stats  = picker.get_database_stats()
-            if stats['total_songs'] == 0:
-                _set_label_style(self.smart_stats_label, "warning")
-                self.smart_stats_label.setText(
-                    "📊 Database is empty. Add songs via Manual Entry first.")
-                self.smart_warning_label.setText(
-                    "⚠️ No songs available. Use Manual Entry to add songs.")
-                self.smart_listbox.clear()
-                return
-
-            self.smart_stats_label.setText(
-                f"📊 Total: {stats['total_songs']} | Unused: {stats['unused_songs']} | "
-                f"Uses: {stats['min_uses']}–{stats['max_uses']} (avg {stats['avg_uses']})")
-
-            num_jobs = int(self.jobs_combo.currentText())
-            songs    = picker.get_available_songs(num_songs=num_jobs)
-            self._smart_songs = songs
-            self.smart_listbox.clear()
-            for i, s in enumerate(songs, 1):
-                tag = "🆕 new" if s['use_count'] == 1 else f"📊 {s['use_count']}x"
-                self.smart_listbox.addItem(
-                    f"{i:2}. {s['song_title'][:45]:<45} ({tag})")
-            if len(songs) < num_jobs:
-                self.smart_warning_label.setText(
-                    f"⚠️ Only {len(songs)} songs available, {num_jobs} requested.")
-            else:
-                self.smart_warning_label.setText("")
-        except Exception as e:
-            _set_label_style(self.smart_stats_label, "error")
-            self.smart_stats_label.setText(f"❌ Error: {e}")
+        job_creation_tab.refresh_smart_picker_stats(self)
 
     def _reset_use_counts(self):
-        """Reset all song use counts back to unused after confirmation."""
-        reply = QMessageBox.question(
-            self, "Reset Use Counts",
-            "This will mark ALL songs as unused (use_count → 1).\n\nContinue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        try:
-            picker = self.smart_picker
-            affected = picker.reset_all_use_counts()
-            self._refresh_smart_picker_stats()
-            QMessageBox.information(self, "Done",
-                f"Reset use counts for {affected} songs.")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to reset uses: {e}")
+        job_creation_tab.reset_use_counts(self)
 
     def _reshuffle_songs(self):
-        """Re-pick songs with randomization within each use_count tier."""
-        try:
-            picker = self.smart_picker
-            stats  = picker.get_database_stats()
-            if stats['total_songs'] == 0:
-                return
-
-            self.smart_stats_label.setText(
-                f"📊 Total: {stats['total_songs']} | Unused: {stats['unused_songs']} | "
-                f"Uses: {stats['min_uses']}–{stats['max_uses']} (avg {stats['avg_uses']})")
-
-            num_jobs = int(self.jobs_combo.currentText())
-            songs    = picker.get_available_songs(num_songs=num_jobs, shuffle=True)
-            self._smart_songs = songs
-            self.smart_listbox.clear()
-            for i, s in enumerate(songs, 1):
-                tag = "🆕 new" if s['use_count'] == 1 else f"📊 {s['use_count']}x"
-                self.smart_listbox.addItem(
-                    f"{i:2}. {s['song_title'][:45]:<45} ({tag})")
-            if len(songs) < num_jobs:
-                self.smart_warning_label.setText(
-                    f"⚠️ Only {len(songs)} songs available, {num_jobs} requested.")
-            else:
-                self.smart_warning_label.setText("")
-        except Exception as e:
-            _set_label_style(self.smart_stats_label, "error")
-            self.smart_stats_label.setText(f"❌ Error: {e}")
-
-    # ── Discover ──────────────────────────────────────────────────────────────
+        job_creation_tab.reshuffle_songs(self)
 
     def _check_lastfm_configured(self):
-        """Show/hide the not-configured label based on env vars."""
-        key = os.getenv("LASTFM_API_KEY", "").strip() or self.settings.get('lastfm_api_key', '')
-        configured = bool(key)
-        self.discover_not_configured.setVisible(not configured)
-        self.discover_fetch_btn.setEnabled(configured and not self._discovery_in_progress)
+        job_creation_tab.check_lastfm_configured(self)
 
     def _start_discovery(self):
-        """Validate inputs, disable controls, start background discovery thread."""
-        if self._discovery_in_progress:
-            return
-
-        source_name = self.discover_source_combo.currentText()
-        limit = int(self.discover_limit_combo.currentText())
-        skip_existing = self.discover_skip_existing.isChecked()
-
-        self._discover_cancel_event.clear()
-        self._discovery_in_progress = True
-        self.discover_fetch_btn.setEnabled(False)
-        self.discover_cancel_btn.setEnabled(True)
-        self.discover_progress_bar.setVisible(True)
-        self.discover_progress_bar.setValue(0)
-        self.discover_phase_label.setVisible(True)
-        self.discover_phase_label.setText("Starting...")
-        self.discover_table.setVisible(False)
-        self.discover_action_row.setVisible(False)
-        self.discover_summary_label.setVisible(False)
-
-        t = threading.Thread(
-            target=self._run_discovery_pipeline,
-            args=(source_name, limit, skip_existing),
-            daemon=True)
-        t.start()
+        job_creation_tab.start_discovery(self)
 
     def _cancel_discovery(self):
-        """Set cancel flag — thread checks this between each song."""
-        self._discover_cancel_event.set()
-        self.discover_cancel_btn.setEnabled(False)
-        self.discover_phase_label.setText("Cancelling...")
-
-    def _run_discovery_pipeline(self, source_name, limit, skip_existing):
-        """Background thread: fetch Last.fm tracks -> find YouTube URLs -> detect chorus."""
-        from scripts.lastfm_discovery import fetch_tracks
-        from scripts.youtube_finder import find_youtube_url
-        from scripts.chorus_detector import detect_chorus, _heuristic_fallback
-
-        # Ensure env vars reflect current settings (user may not have saved yet)
-        key = self.settings.get('lastfm_api_key', '').strip()
-        if key:
-            os.environ["LASTFM_API_KEY"] = key
-
-        results = []
-
-        # Step 1: Fetch Last.fm tracks
-        self.signals.discovery_progress.emit("lastfm", 0, limit, "Fetching chart data...")
-        try:
-            tracks = fetch_tracks(
-                source_name=source_name,
-                limit=limit,
-                fetch_durations=True,
-                progress_cb=lambda cur, tot, title: self.signals.discovery_progress.emit(
-                    "lastfm", cur, tot, title)
-            )
-        except Exception as e:
-            self.signals.discovery_error.emit(str(e))
-            return
-
-        # Filter songs already in DB
-        if skip_existing:
-            existing = {s[0].lower() for s in self.song_db.list_all_songs()}
-            tracks = [t for t in tracks
-                      if t.db_title.lower() not in existing
-                      and t.title.lower() not in existing]
-
-        total = len(tracks)
-        if total == 0:
-            self.signals.discovery_error.emit(
-                "No new songs found. All tracks are already in your database."
-                if skip_existing else "No tracks found for this source.")
-            return
-
-        for i, track in enumerate(tracks):
-            if self._discover_cancel_event.is_set():
-                break
-
-            song_label = track.db_title
-            self.signals.discovery_progress.emit("youtube", i + 1, total, song_label)
-
-            # Step 2: Find YouTube URL
-            try:
-                yt_result = find_youtube_url(
-                    title=track.title,
-                    artist=track.artist,
-                    duration_sec=track.duration_sec_safe
-                )
-            except Exception:
-                yt_result = None
-
-            if not yt_result:
-                results.append(DiscoveryResult(
-                    track=track,
-                    youtube_url=None,
-                    youtube_confidence="none",
-                    start_mmss="00:00",
-                    end_mmss="01:00",
-                    chorus_confidence=0.0,
-                    status="no_youtube",
-                ))
-                continue
-
-            # Step 3: Download audio + detect chorus
-            self.signals.discovery_progress.emit("chorus", i + 1, total, song_label)
-            chorus = None
-            try:
-                with tempfile.TemporaryDirectory() as tmpdir:
-                    audio_path = download_audio(yt_result.url, tmpdir)
-                    chorus = detect_chorus(audio_path)
-            except Exception:
-                chorus = _heuristic_fallback(track.duration_sec_safe, 60, "download_failed")
-
-            results.append(DiscoveryResult(
-                track=track,
-                youtube_url=yt_result.url,
-                youtube_confidence=yt_result.confidence,
-                start_mmss=chorus.start_mmss,
-                end_mmss=chorus.end_mmss,
-                chorus_confidence=chorus.confidence,
-                status="ready",
-            ))
-
-        self.signals.discovery_results.emit(results)
+        job_creation_tab.cancel_discovery(self)
 
     def _on_discovery_progress(self, step, current, total, title):
-        """Update progress bar and phase label from signal."""
-        if total > 0:
-            if step == "lastfm":
-                pct = int(current / total * 30)
-            elif step == "youtube":
-                pct = 30 + int(current / total * 35)
-            else:
-                pct = 65 + int(current / total * 35)
-            self.discover_progress_bar.setValue(pct)
-
-        phase_map = {
-            "lastfm":  "Fetching chart data",
-            "youtube": "Finding YouTube URLs",
-            "chorus":  "Detecting choruses",
-        }
-        phase = phase_map.get(step, step)
-        self.discover_phase_label.setText(
-            f"{phase}: {title[:50]} ({current}/{total})")
+        job_creation_tab.on_discovery_progress(self, step, current, total, title)
 
     def _on_discovery_results(self, results):
-        """Populate table and re-enable controls."""
-        self._discovery_in_progress = False
-        self._discovery_results = results
-        self.discover_fetch_btn.setEnabled(True)
-        self.discover_cancel_btn.setEnabled(False)
-        self.discover_progress_bar.setVisible(False)
-        self.discover_phase_label.setVisible(False)
-
-        if not results:
-            self.discover_phase_label.setText("No results found.")
-            self.discover_phase_label.setVisible(True)
-            return
-
-        self._populate_discover_table(results)
-        self.discover_table.setVisible(True)
-        self.discover_action_row.setVisible(True)
-        self._update_discover_add_btn()
+        job_creation_tab.on_discovery_results(self, results)
 
     def _on_discovery_error(self, error_msg):
-        """Show error message, re-enable controls."""
-        self._discovery_in_progress = False
-        self.discover_fetch_btn.setEnabled(True)
-        self.discover_cancel_btn.setEnabled(False)
-        self.discover_progress_bar.setVisible(False)
-        _set_label_style(self.discover_phase_label, "error")
-        self.discover_phase_label.setText(f"Error: {error_msg}")
-        self.discover_phase_label.setVisible(True)
-
-    def _populate_discover_table(self, results):
-        """Fill QTableWidget rows with results."""
-        self.discover_table.setRowCount(len(results))
-        for row, r in enumerate(results):
-            # #
-            num_item = QTableWidgetItem(str(row + 1))
-            num_item.setFlags(num_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.discover_table.setItem(row, 0, num_item)
-
-            # Checkbox
-            chk_item = QTableWidgetItem()
-            if r.status == "no_youtube":
-                chk_item.setFlags(chk_item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
-            else:
-                chk_item.setFlags(chk_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-                if r.youtube_confidence == "low":
-                    chk_item.setCheckState(Qt.CheckState.Unchecked)
-                else:
-                    chk_item.setCheckState(Qt.CheckState.Checked)
-            self.discover_table.setItem(row, 1, chk_item)
-
-            # Title
-            title_item = QTableWidgetItem(r.track.title)
-            title_item.setFlags(title_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.discover_table.setItem(row, 2, title_item)
-
-            # Artist
-            artist_item = QTableWidgetItem(r.track.artist)
-            artist_item.setFlags(artist_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            self.discover_table.setItem(row, 3, artist_item)
-
-            # Start (editable)
-            start_item = QTableWidgetItem(r.start_mmss)
-            self.discover_table.setItem(row, 4, start_item)
-
-            # End (editable)
-            end_item = QTableWidgetItem(r.end_mmss)
-            self.discover_table.setItem(row, 5, end_item)
-
-            # YouTube URL
-            if r.youtube_url:
-                url_display = r.youtube_url[:35] + "..." if len(r.youtube_url) > 35 else r.youtube_url
-            else:
-                url_display = "Not found"
-            url_item = QTableWidgetItem(url_display)
-            url_item.setFlags(url_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            if r.youtube_url:
-                url_item.setToolTip(r.youtube_url)
-            self.discover_table.setItem(row, 6, url_item)
-
-            # Confidence badge
-            conf = r.youtube_confidence
-            conf_item = QTableWidgetItem(conf.capitalize() if conf != "none" else "None")
-            conf_item.setFlags(conf_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
-            if conf == "high":
-                conf_item.setForeground(Qt.GlobalColor.green)
-            elif conf == "medium":
-                conf_item.setForeground(Qt.GlobalColor.yellow)
-            elif conf == "low":
-                conf_item.setForeground(Qt.GlobalColor.red)
-            else:
-                conf_item.setForeground(Qt.GlobalColor.gray)
-            self.discover_table.setItem(row, 7, conf_item)
-
+        job_creation_tab.on_discovery_error(self, error_msg)
 
     def _discover_select_all(self):
-        for row in range(self.discover_table.rowCount()):
-            item = self.discover_table.item(row, 1)
-            if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
-                item.setCheckState(Qt.CheckState.Checked)
-        self._update_discover_add_btn()
+        job_creation_tab.discover_select_all(self)
 
     def _discover_deselect_all(self):
-        for row in range(self.discover_table.rowCount()):
-            item = self.discover_table.item(row, 1)
-            if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
-                item.setCheckState(Qt.CheckState.Unchecked)
-        self._update_discover_add_btn()
+        job_creation_tab.discover_deselect_all(self)
 
     def _discover_deselect_low(self):
-        for row, r in enumerate(self._discovery_results):
-            if r.youtube_confidence == "low":
-                item = self.discover_table.item(row, 1)
-                if item and (item.flags() & Qt.ItemFlag.ItemIsUserCheckable):
-                    item.setCheckState(Qt.CheckState.Unchecked)
-        self._update_discover_add_btn()
+        job_creation_tab.discover_deselect_low(self)
 
-    def _update_discover_add_btn(self, *_args):
-        """Update the add button text with count of selected songs."""
-        count = 0
-        for row in range(self.discover_table.rowCount()):
-            item = self.discover_table.item(row, 1)
-            if item and item.checkState() == Qt.CheckState.Checked:
-                count += 1
-        self.discover_add_btn.setText(f"Add {count} Selected Songs" if count else "Add Selected Songs")
-        self.discover_add_btn.setEnabled(count > 0)
+    def _update_discover_add_btn(self, *args):
+        job_creation_tab.update_discover_add_btn(self, *args)
 
     def _discover_add_selected(self):
-        """Add all checked rows to the song database."""
-        added = 0
-        skipped = 0
-        for row in range(self.discover_table.rowCount()):
-            chk = self.discover_table.item(row, 1)
-            if not chk or chk.checkState() != Qt.CheckState.Checked:
-                continue
-
-            r = self._discovery_results[row]
-            if not r.youtube_url:
-                skipped += 1
-                continue
-
-            title = r.track.db_title
-            start = self.discover_table.item(row, 4).text().strip()
-            end   = self.discover_table.item(row, 5).text().strip()
-
-            # Validate time format
-            if not _VALID_TIME.match(start):
-                start = r.start_mmss
-            if not _VALID_TIME.match(end):
-                end = r.end_mmss
-
-            self.song_db.add_song(
-                song_title=title,
-                youtube_url=r.youtube_url,
-                start_time=start,
-                end_time=end,
-            )
-            added += 1
-
-        # Show summary
-        self.discover_summary_label.setText(
-            f"{added} songs added to database."
-            + (f" {skipped} skipped (no YouTube URL)." if skipped else ""))
-        self.discover_summary_label.setVisible(True)
-
-        # Clear table
-        self.discover_table.setRowCount(0)
-        self.discover_table.setVisible(False)
-        self.discover_action_row.setVisible(False)
-        self._discovery_results = []
-
-        # Refresh Smart Picker if visible
-        if self.song_tabs.currentIndex() == 1:
-            self._refresh_smart_picker_stats()
-
-    def _test_lastfm_connection(self):
-        """Test Last.fm API connection from Settings tab."""
-        key = self.lastfm_key_edit.text().strip()
-        if not key:
-            _set_label_style(self.lastfm_status_label, "warning")
-            self.lastfm_status_label.setText("Enter your Last.fm API Key first")
-            return
-        try:
-            os.environ["LASTFM_API_KEY"] = key
-            from scripts.lastfm_discovery import test_connection
-            ok, msg = test_connection()
-            if ok:
-                _set_label_style(self.lastfm_status_label, "success")
-            else:
-                _set_label_style(self.lastfm_status_label, "error")
-            self.lastfm_status_label.setText(msg)
-        except Exception as e:
-            _set_label_style(self.lastfm_status_label, "error")
-            self.lastfm_status_label.setText(f"Failed: {e}")
-
-    # ── Field validation helpers ──────────────────────────────────────────────
+        job_creation_tab.discover_add_selected(self)
 
     @staticmethod
-    def _highlight_field(field, has_error: bool):
-        """Apply or clear a red border on an input field."""
-        if has_error:
-            field.setStyleSheet(
-                "border: 1px solid #f38ba8; border-radius: 4px;")
-        else:
-            field.setStyleSheet("")  # revert to global app stylesheet
+    def _highlight_field(field, has_error):
+        job_creation_tab.highlight_field(field, has_error)
 
     def _on_url_changed(self, text):
-        url = text.strip()
-        if url and not _VALID_YT.search(url):
-            self._highlight_field(self.url_edit, True)
-            self.url_error_label.setText("⚠  This is not a valid YouTube URL")
-            self.url_error_label.setVisible(True)
-        else:
-            self._highlight_field(self.url_edit, False)
-            self.url_error_label.setVisible(False)
+        job_creation_tab.on_url_changed(self, text)
 
     def _validate_song_record(self, url, start, end):
-        """
-        Validate a song's core database fields.
-        Returns a list of human-readable error strings (empty = all valid).
-        """
-        errors = []
-
-        # ── URL ──
-        if not url or not url.strip():
-            errors.append("YouTube URL is missing")
-        elif url.strip().lower() == "unknown":
-            errors.append(
-                "YouTube URL is set to 'unknown' — this song was never "
-                "given a real YouTube link")
-        elif not _VALID_YT.search(url):
-            errors.append(
-                f"YouTube URL is not a valid YouTube watch link: '{url[:70]}'")
-
-        # ── Times ──
-        def _parse(val, label):
-            if not val or not val.strip():
-                errors.append(f"{label} is missing")
-                return None
-            if not _VALID_TIME.match(val.strip()):
-                errors.append(
-                    f"{label} '{val}' is not in MM:SS format (e.g. 00:30)")
-                return None
-            try:
-                m, s = val.strip().split(':')
-                return int(m) * 60 + int(s)
-            except ValueError:
-                errors.append(
-                    f"{label} '{val}' contains non-numeric characters")
-                return None
-
-        s_sec = _parse(start, "Start time")
-        e_sec = _parse(end,   "End time")
-        if s_sec is not None and e_sec is not None and s_sec >= e_sec:
-            errors.append(
-                f"Start time ({start}) must be before end time ({end})")
-
-        return errors
-
-    # ── Database check ────────────────────────────────────────────────────────
+        return job_creation_tab.validate_song_record(url, start, end)
 
     def _check_database(self):
-        title = self.title_edit.text().strip()
-        if len(title) < 3:
-            self.db_match_label.setText("")
-            for f in (self.url_edit, self.start_edit, self.end_edit):
-                self._highlight_field(f, False)
-            return
-        cached = self.song_db.get_song(title)
-        if cached:
-            url   = cached['youtube_url'] or ""
-            start = cached['start_time']  or ""
-            end   = cached['end_time']    or ""
-            self.url_edit.setText(url)
-            self.start_edit.setText(start)
-            self.end_edit.setText(end)
-
-            errors = self._validate_song_record(url, start, end)
-
-            # Highlight each field individually so the user knows exactly what to fix
-            self._highlight_field(self.url_edit,
-                                  any("URL" in e for e in errors))
-            self._highlight_field(self.start_edit,
-                                  any("Start" in e for e in errors))
-            self._highlight_field(self.end_edit,
-                                  any("End" in e or "end time" in e.lower()
-                                      for e in errors))
-
-            if errors:
-                _set_label_style(self.db_match_label, "error")
-                self.db_match_label.setText(
-                    "⚠ Found in database but has invalid data — "
-                    "fix the highlighted field(s):  " +
-                    "  |  ".join(errors))
-            else:
-                _set_label_style(self.db_match_label, "success")
-                self.db_match_label.setText(
-                    "✓ Found in database! URL and timestamps loaded.")
-        else:
-            for f in (self.url_edit, self.start_edit, self.end_edit):
-                self._highlight_field(f, False)
-            matches = self.song_db.search_songs(title)
-            if matches:
-                _set_label_style(self.db_match_label, "warning")
-                self.db_match_label.setText(
-                    f"Similar: {', '.join([m[0][:25] for m in matches[:3]])}")
-            else:
-                _set_label_style(self.db_match_label, "muted")
-                self.db_match_label.setText("New song — will be saved to database.")
-
-    # ── Jobs helpers ──────────────────────────────────────────────────────────
+        job_creation_tab.check_database(self)
 
     def _check_existing_jobs(self):
-        t = self._job_template()
-        d = JOBS_DIRS.get(t)
-        if not d or not d.exists():
-            self.job_warning_label.setText("")
-            self.delete_jobs_btn.setVisible(False)
-            return
-        existing = list(d.glob("job_*"))
-        if existing:
-            self.job_warning_label.setText(
-                f"⚠️ {len(existing)} existing job(s) detected")
-            self.delete_jobs_btn.setVisible(True)
-        else:
-            self.job_warning_label.setText("")
-            self.delete_jobs_btn.setVisible(False)
+        job_creation_tab.check_existing_jobs(self)
 
     def _delete_existing_jobs(self):
-        if self.is_processing:
-            QMessageBox.warning(self, "Processing",
-                                "Cannot delete jobs while processing.")
-            return
-        t = self._job_template()
-        d = JOBS_DIRS.get(t)
-        existing = list(d.glob("job_*"))
-        if not existing:
-            return
-        reply = QMessageBox.question(
-            self, "Confirm Deletion",
-            f"Delete {len(existing)} job folder(s) from {t.upper()}?\n\nCannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        for j in existing:
-            shutil.rmtree(j)
-        QMessageBox.information(self, "Deleted",
-                                f"Deleted {len(existing)} job folder(s).")
-        self._check_existing_jobs()
+        job_creation_tab.delete_existing_jobs(self)
 
     def _open_jobs_folder(self):
-        t = self._job_template()
-        d = JOBS_DIRS.get(t)
-        d.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(d))
+        job_creation_tab.open_jobs_folder(self)
 
-    # ── Inject helpers ────────────────────────────────────────────────────────
+    def _test_lastfm_connection(self):
+        job_creation_tab.test_lastfm_connection(self)
+
+    # ── Delegated handlers: JSX Injection tab ─────────────────────────────────
+
+    def _inject_template(self):
+        return jsx_injection_tab.inject_template(self)
 
     def _update_inject_status(self):
-        t    = self._inject_template()
-        d    = JOBS_DIRS.get(t)
-        jobs_ok = template_ok = ae_ok = False
-
-        if d and d.exists():
-            jf = list(d.glob("job_*"))
-            if jf:
-                self.inject_jobs_label.setText(
-                    f"✓ {len(jf)} job(s) found in {d.name}")
-                _set_label_style(self.inject_jobs_label, "success")
-                jobs_ok = True
-            else:
-                self.inject_jobs_label.setText(f"✗ No jobs in {d}")
-                _set_label_style(self.inject_jobs_label, "error")
-        else:
-            self.inject_jobs_label.setText("✗ Folder not found")
-            _set_label_style(self.inject_jobs_label, "error")
-
-        tp = TEMPLATE_PATHS.get(t)
-        if tp and tp.exists():
-            self.inject_template_label.setText(f"✓ {tp.name}")
-            _set_label_style(self.inject_template_label, "success")
-            template_ok = True
-        else:
-            self.inject_template_label.setText(
-                f"✗ Not found: {tp.name if tp else 'Unknown'}")
-            _set_label_style(self.inject_template_label, "error")
-
-        ae = self.settings.get('after_effects_path')
-        if ae and Path(ae).exists():
-            self.inject_ae_label.setText("✓ Found")
-            _set_label_style(self.inject_ae_label, "success")
-            ae_ok = True
-        else:
-            self.inject_ae_label.setText("✗ Not configured — go to Settings")
-            _set_label_style(self.inject_ae_label, "error")
-
-        self.inject_btn.setEnabled(jobs_ok and template_ok and ae_ok)
-
-    def _update_ae_status(self):
-        ae = getattr(self, 'ae_path_edit', None)
-        path = ae.text() if ae else (self.settings.get('after_effects_path') or '')
-        if path and Path(path).exists():
-            self.ae_status_label.setText("✓ After Effects found")
-            _set_label_style(self.ae_status_label, "success")
-        elif path:
-            self.ae_status_label.setText("✗ Path not found")
-            _set_label_style(self.ae_status_label, "error")
-        else:
-            self.ae_status_label.setText("⚠ Not configured")
-            _set_label_style(self.ae_status_label, "warning")
-
-    def _check_ffmpeg(self):
-        try:
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            r = subprocess.run(['ffmpeg', '-version'],
-                               capture_output=True, text=True, timeout=5,
-                               creationflags=flags)
-            if r.returncode == 0:
-                self.ffmpeg_status_label.setText("✓ FFmpeg found in PATH")
-                _set_label_style(self.ffmpeg_status_label, "success")
-            else:
-                self.ffmpeg_status_label.setText("✗ FFmpeg not working properly")
-                _set_label_style(self.ffmpeg_status_label, "error")
-        except FileNotFoundError:
-            self.ffmpeg_status_label.setText(
-                "✗ FFmpeg not found — install and add to PATH")
-            _set_label_style(self.ffmpeg_status_label, "error")
-        except Exception as e:
-            self.ffmpeg_status_label.setText(f"✗ Error: {e}")
-            _set_label_style(self.ffmpeg_status_label, "error")
-
-    def _browse_ae_path(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Select AfterFX.exe",
-            "C:/Program Files/Adobe",
-            "Executable (*.exe);;All files (*.*)")
-        if path:
-            self.ae_path_edit.setText(path)
-            self._update_ae_status()
-
-    def _auto_detect_ae_click(self):
-        detected = self._auto_detect_after_effects()
-        if detected:
-            self.ae_path_edit.setText(detected)
-            self._update_ae_status()
-            QMessageBox.information(self, "Found",
-                                    f"After Effects found:\n{detected}")
-        else:
-            QMessageBox.warning(self, "Not Found",
-                                "Could not auto-detect After Effects.\n\nPlease browse manually.")
-
-    def _save_all_settings(self):
-        self.settings['after_effects_path'] = self.ae_path_edit.text()
-        self.settings['genius_api_token']   = self.genius_edit.text()
-        self.settings['whisper_model']      = self.whisper_combo.currentText()
-        self.settings['image_rotation']     = self.image_rotation_chk.isChecked()
-        self.settings['lastfm_api_key'] = self.lastfm_key_edit.text()
-        Config.GENIUS_API_TOKEN = self.genius_edit.text()
-        Config.WHISPER_MODEL    = self.whisper_combo.currentText()
-        self._save_settings()
-        env = INSTALL_DIR / ".env"
-        with open(env, 'w', encoding='utf-8') as f:
-            f.write(f"GENIUS_API_TOKEN={self.genius_edit.text()}\n")
-            f.write(f"WHISPER_MODEL={self.whisper_combo.currentText()}\n")
-            f.write(f"LASTFM_API_KEY={self.lastfm_key_edit.text()}\n")
-        QMessageBox.information(self, "Saved", "Settings saved successfully!")
-        self._update_inject_status()
-
-    def _toggle_launch_on_startup(self, enabled: bool):
-        """Register/unregister Apollova in the Windows startup registry."""
-        self.settings["launch_on_startup"] = enabled
-        self._save_settings()
-        try:
-            import winreg
-            key = winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Software\Microsoft\Windows\CurrentVersion\Run",
-                0, winreg.KEY_SET_VALUE,
-            )
-            if enabled:
-                exe_path = str(Path(sys.executable))
-                winreg.SetValueEx(key, "Apollova", 0, winreg.REG_SZ,
-                                  f'"{exe_path}" --minimised')
-            else:
-                try:
-                    winreg.DeleteValue(key, "Apollova")
-                except FileNotFoundError:
-                    pass
-            winreg.CloseKey(key)
-        except Exception as e:
-            self._append_log(f"Startup registry update failed: {e}")
-
-    def _regenerate_qr(self):
-        """Regenerate the session token — invalidates all connected phones."""
-        reply = QMessageBox.question(
-            self, "Regenerate QR Code",
-            "This will disconnect all currently paired phones.\n\n"
-            "You will need to re-scan the QR code on your phone.\n\nContinue?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            import secrets
-            self.settings["session_token"] = secrets.token_hex(32)
-            self._save_settings()
-            self._show_mobile_qr()
-
-    # ── JSX Injection ─────────────────────────────────────────────────────────
+        jsx_injection_tab.update_inject_status(self)
 
     def _run_injection(self):
-        t   = self._inject_template()
-        ae  = self.settings.get('after_effects_path')
-        tp  = TEMPLATE_PATHS.get(t)
-        d   = JOBS_DIRS.get(t)
-        jsx = JSX_SCRIPTS.get(t)
-        if self._log:
-            self._log.section(f"JSX injection — template={t.upper()}, jsx={jsx}")
-        try:
-            src = BUNDLED_JSX_DIR / jsx
-            if not src.exists():
-                src = ASSETS_DIR / "scripts" / "JSX" / jsx
-            if not src.exists():
-                if self._log:
-                    self._log.error(f"JSX script not found: {jsx}")
-                QMessageBox.critical(self, "Error",
-                    f"JSX script not found: {jsx}\n\nPlease reinstall.")
-                return
-            tmp = Path(tempfile.gettempdir()) / "Apollova"
-            tmp.mkdir(exist_ok=True)
-            dst = tmp / jsx
-            shutil.copy(src, dst)
-            self._prepare_jsx_with_path(dst, d, tp)
-            if self._log:
-                self._log.info(f"JSX prepared at {dst} | jobs={d} | template={tp}")
-        except Exception as e:
-            tb = traceback.format_exc()
-            if self._log:
-                self._log.error(f"JSX preparation failed: {type(e).__name__}: {e}\n{tb}")
-            QMessageBox.critical(self, "Error", f"Failed to prepare JSX:\n{e}")
-            return
-        try:
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            subprocess.Popen([ae, "-r", str(dst)], creationflags=flags)
-            if self._log:
-                self._log.info(f"After Effects launched: {ae}")
-            QMessageBox.information(self, "Launched",
-                f"After Effects is launching…\n\nTemplate: {tp.name}\nJobs: {d}\n\n"
-                "The script will open the project and inject the jobs.")
-        except Exception as e:
-            tb = traceback.format_exc()
-            if self._log:
-                self._log.error(f"After Effects launch failed: {type(e).__name__}: {e}\n{tb}")
-            QMessageBox.critical(self, "Error",
-                                 f"Failed to launch After Effects:\n{e}")
+        jsx_injection_tab.run_injection(self)
 
-    def _prepare_jsx_with_path(self, jsx_path, jobs_dir,
-                               template_path, auto_render=False):
-        with open(jsx_path, 'r', encoding='utf-8') as f:
-            c = f.read()
-        c = c.replace('{{JOBS_PATH}}',     str(jobs_dir).replace('\\', '/'))
-        c = c.replace('{{TEMPLATE_PATH}}', str(template_path).replace('\\', '/'))
-        c = c.replace('{{AUTO_RENDER}}',   'true' if auto_render else 'false')
-        with open(jsx_path, 'w', encoding='utf-8') as f:
-            f.write(c)
-
-    # ── Batch Render ──────────────────────────────────────────────────────────
+    def _prepare_jsx_with_path(self, jsx_path, jobs_dir, template_path,
+                               auto_render=False):
+        jsx_injection_tab.prepare_jsx_with_path(
+            jsx_path, jobs_dir, template_path, auto_render)
 
     def _update_batch_status(self):
-        ready = []
-        ae    = self.settings.get('after_effects_path')
-        ae_ok = ae and Path(ae).exists()
-        for t in ['aurora', 'mono', 'onyx']:
-            d   = JOBS_DIRS.get(t)
-            tp  = TEMPLATE_PATHS.get(t)
-            jsx = JSX_SCRIPTS.get(t)
-            jobs_ok = d and d.exists() and list(d.glob("job_*"))
-            tpl_ok  = tp and tp.exists()
-            src     = BUNDLED_JSX_DIR / jsx if jsx else None
-            if src and not src.exists():
-                src = ASSETS_DIR / "scripts" / "JSX" / jsx
-            jsx_ok = src and src.exists()
-            lbl = self.batch_status_labels[t]
-            if jobs_ok:
-                cnt = len(list(d.glob("job_*")))
-                if tpl_ok and jsx_ok:
-                    lbl.setText(f"  {t.capitalize()}: {cnt} jobs ready")
-                    _set_label_style(lbl, "success")
-                    ready.append(t)
-                elif not tpl_ok:
-                    lbl.setText(f"  {t.capitalize()}: {cnt} jobs (no template)")
-                    _set_label_style(lbl, "warning")
-                else:
-                    lbl.setText(f"  {t.capitalize()}: {cnt} jobs (JSX missing)")
-                    _set_label_style(lbl, "warning")
-            else:
-                lbl.setText(f"  {t.capitalize()}: No jobs")
-                _set_label_style(lbl, "normal")
-        self.render_all_btn.setEnabled(
-            len(ready) >= 2 and ae_ok and not self.batch_render_active)
-        return ready
+        return jsx_injection_tab.update_batch_status(self)
 
     def _start_batch_render(self):
-        ready = self._update_batch_status()
-        if len(ready) < 2:
-            QMessageBox.critical(self, "Error",
-                "Need at least 2 templates with jobs.")
-            return
-        lines = ["Ready to render:"]
-        for t in ready:
-            lines.append(f"  - {t.capitalize()}: {len(list(JOBS_DIRS[t].glob('job_*')))} jobs")
-        lines += ["", "This will take a while. Continue?"]
-        reply = QMessageBox.question(self, "Confirm Batch Render", "\n".join(lines),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-        self.batch_render_active    = True
-        self.batch_render_cancelled = False
-        self.batch_results          = {}
-        self.render_all_btn.setEnabled(False)
-        self.batch_cancel_btn.setEnabled(True)
-        self.inject_btn.setEnabled(False)
-        threading.Thread(target=self._batch_render_thread,
-                         args=(ready,), daemon=True).start()
+        jsx_injection_tab.start_batch_render(self)
 
     def _cancel_batch_render(self):
-        reply = QMessageBox.question(self, "Cancel",
-            "Cancel batch? Current template will finish first.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            self.batch_render_cancelled = True
-            self.batch_status_label.setText("Status: Cancelling…")
-
-    def _batch_render_thread(self, templates):
-        total = len(templates)
-        for idx, t in enumerate(templates):
-            if self.batch_render_cancelled:
-                self.signals.batch_progress.emit(
-                    "Status: Cancelled", idx / total * 100, "Cancelled")
-                break
-            self.signals.batch_progress.emit(
-                f"Status: Rendering {t.capitalize()} ({idx+1}/{total})",
-                idx / total * 100,
-                f"Launching After Effects for {t.capitalize()}…")
-            ok, err = self._run_batch_template(t)
-            self.batch_results[t] = {'success': ok, 'error': err}
-            if ok:
-                self.signals.batch_template_status.emit(
-                    t, f"  {t.capitalize()}: Complete ✓")
-            else:
-                self.signals.batch_template_status.emit(
-                    t, f"  {t.capitalize()}: Failed — {err}")
-        self.signals.batch_finished.emit(dict(self.batch_results))
-
-    def _run_batch_template(self, t):
-        ae  = self.settings.get('after_effects_path')
-        tp  = TEMPLATE_PATHS.get(t)
-        d   = JOBS_DIRS.get(t)
-        jsx = JSX_SCRIPTS.get(t)
-        try:
-            src = BUNDLED_JSX_DIR / jsx
-            if not src.exists():
-                src = ASSETS_DIR / "scripts" / "JSX" / jsx
-            if not src.exists():
-                return False, f"JSX not found: {jsx}"
-            tmp = Path(tempfile.gettempdir()) / "Apollova"
-            tmp.mkdir(exist_ok=True)
-            dst = tmp / f"batch_{jsx}"
-            shutil.copy(src, dst)
-            self._prepare_jsx_with_path(dst, d, tp, auto_render=True)
-            err_log = d / "batch_error.txt"
-            if err_log.exists():
-                err_log.unlink()
-
-            # Launch AE with -r (run script file).  renderQueue.render()
-            # runs inside JSX in interactive mode.
-            flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-            p = subprocess.Popen([ae, "-r", str(dst)], creationflags=flags)
-            while p.poll() is None:
-                if self.batch_render_cancelled:
-                    p.terminate()
-                    p.wait(timeout=10)
-                    return False, "Cancelled by user"
-                time.sleep(1)
-            # Clean up temp JSX — AE has finished with it
-            try:
-                dst.unlink(missing_ok=True)
-            except Exception:
-                pass
-            if err_log.exists():
-                return False, err_log.read_text().strip()
-            return True, None
-        except Exception as e:
-            return False, str(e)
+        jsx_injection_tab.cancel_batch_render(self)
 
     def _batch_update_progress(self, status, progress, current):
-        self.batch_status_label.setText(status)
-        self.batch_progress_bar.setValue(int(progress))
-        self.batch_current_label.setText(current)
+        jsx_injection_tab.batch_update_progress(self, status, progress, current)
 
     def _batch_update_template_status_slot(self, template, text):
-        lbl = self.batch_status_labels.get(template)
-        if lbl:
-            lbl.setText(text)
-            style = "success" if "Complete" in text else "error"
-            _set_label_style(lbl, style)
+        jsx_injection_tab.batch_update_template_status_slot(self, template, text)
 
     def _batch_render_complete(self, results):
-        self.batch_render_active = False
-        self.render_all_btn.setEnabled(True)
-        self.batch_cancel_btn.setEnabled(False)
-        self.inject_btn.setEnabled(True)
-        self.batch_progress_bar.setValue(100)
-        sc = sum(1 for r in results.values() if r['success'])
-        fc = sum(1 for r in results.values() if not r['success'])
-        if self.batch_render_cancelled:
-            self.batch_status_label.setText("Status: Cancelled")
-            self.batch_current_label.setText(f"Completed {sc} before cancellation")
-        else:
-            self.batch_status_label.setText("Status: Complete")
-            self.batch_current_label.setText(f"Success: {sc}, Failed: {fc}")
-        lines = ["Batch Render Complete\n"]
-        for t, r in results.items():
-            lines.append(
-                f"{t.capitalize()}: {'Success' if r['success'] else 'Failed — ' + str(r['error'])}")
-        if self.batch_render_cancelled:
-            lines.append("\nCancelled by user.")
-        QMessageBox.information(self, "Batch Render Complete", "\n".join(lines))
-        self._update_batch_status()
+        jsx_injection_tab.batch_render_complete(self, results)
 
-    # ── Generation ────────────────────────────────────────────────────────────
+    # ── Delegated handlers: Settings tab ──────────────────────────────────────
 
-    def _validate_inputs(self):
-        errors = []
-        if self.use_smart_picker:
-            picker = self.smart_picker
-            stats  = picker.get_database_stats()
-            if stats['total_songs'] == 0:
-                errors.append("Database empty. Add songs via Manual Entry first.")
-            else:
-                songs = picker.get_available_songs(
-                    num_songs=int(self.jobs_combo.currentText()))
-                if not songs:
-                    errors.append("No songs available in database.")
-                else:
-                    # Validate every song upfront before a single job starts
-                    bad = []
-                    for s in songs:
-                        song_errors = self._validate_song_record(
-                            s['youtube_url'], s['start_time'], s['end_time'])
-                        if song_errors:
-                            bad.append((s['song_title'], song_errors))
-                    if bad:
-                        lines = [
-                            f"{len(bad)} of the {len(songs)} selected song(s) "
-                            f"have invalid data and cannot be processed:\n"]
-                        for song_title, errs in bad:
-                            lines.append(f"• {song_title}:")
-                            for e in errs:
-                                lines.append(f"    – {e}")
-                        lines.append(
-                            "\nFix these entries in your database "
-                            "(Settings → Database Editor) before generating.")
-                        errors.append("\n".join(lines))
-        else:
-            n = int(self.jobs_combo.currentText())
-            if len(self._job_queue) < n:
-                errors.append(
-                    f"Queue has {len(self._job_queue)} / {n} jobs. "
-                    "Add all jobs before generating.")
-        if errors:
-            QMessageBox.critical(self, "Validation Error", "\n\n".join(errors))
-            return False
-        return True
+    def _update_ae_status(self):
+        settings_tab.update_ae_status(self)
 
-    def _lock_inputs(self, lock):
-        for w in [self.title_edit, self.url_edit, self.start_edit,
-                  self.end_edit, self.jobs_combo, self.whisper_combo,
-                  self.add_job_btn, self.reshuffle_btn, self.reset_uses_btn]:
-            w.setEnabled(not lock)
-        for btn in self.job_tpl_group.buttons():
-            btn.setEnabled(not lock)
-        self.remove_job_btn.setEnabled(False)
-        self.clear_queue_btn.setEnabled(not lock and bool(self._job_queue))
+    def _check_ffmpeg(self):
+        settings_tab.check_ffmpeg(self)
 
-    # ── Mobile Server + Tunnel ───────────────────────────────────────────────
+    def _browse_ae_path(self):
+        settings_tab.browse_ae_path(self)
+
+    def _auto_detect_ae_click(self):
+        settings_tab.auto_detect_ae_click(self)
+
+    def _save_all_settings(self):
+        settings_tab.save_all_settings(self)
+
+    def _toggle_launch_on_startup(self, enabled):
+        settings_tab.toggle_launch_on_startup(self, enabled)
+
+    def _regenerate_qr(self):
+        settings_tab.regenerate_qr(self)
+
+    # ── Delegated handlers: Mobile server ─────────────────────────────────────
 
     def _start_mobile_server(self):
-        """Start the FastAPI server and Cloudflare Tunnel in background threads."""
-        if not self.settings.get("mobile_enabled", True):
-            return
-
-        try:
-            import uvicorn
-            from apollova_server import app as fastapi_app, set_gui_ref, emit_progress
-
-            set_gui_ref(self, settings_path=str(SETTINGS_FILE))
-
-            # Bridge GUI progress signals to WebSocket broadcast
-            self._ws_emit_progress = emit_progress
-
-            port = self.settings.get("server_port", 7823)
-            self._server_thread = threading.Thread(
-                target=uvicorn.run,
-                args=(fastapi_app,),
-                kwargs={"host": "127.0.0.1", "port": port, "log_level": "error"},
-                daemon=True,
-            )
-            self._server_thread.start()
-            self._append_log(f"Mobile server started on port {port}")
-
-            # Start tunnel
-            self._start_tunnel(port)
-        except ImportError as e:
-            self._append_log(f"Mobile server unavailable: {e}")
-        except Exception as e:
-            self._append_log(f"Mobile server failed to start: {e}")
-
-    def _start_tunnel(self, port: int = 7823):
-        """Start cloudflared tunnel if available."""
-        try:
-            from apollova_tunnel import TunnelManager
-            self._tunnel_manager = TunnelManager(port=port, assets_dir=ASSETS_DIR)
-
-            if not self._tunnel_manager.is_available():
-                self._append_log("Mobile Connect: cloudflared not installed")
-                self._update_tray_tunnel_status(False)
-                return
-
-            def _tunnel_thread():
-                url = self._tunnel_manager.start()
-                if url:
-                    self.settings["tunnel_url"] = url
-                    self._save_settings()
-                    self._append_log(f"Tunnel active: {url}")
-                    self._update_tray_tunnel_status(True)
-                    # Update Mobile Connect panel if it exists
-                    try:
-                        self.tunnel_status_label.setText(
-                            f"Connected — {url[:50]}...")
-                        from apollova_gui import _set_label_style
-                        _set_label_style(self.tunnel_status_label, "success")
-                    except Exception:
-                        pass
-                else:
-                    self._append_log("Tunnel failed to start")
-                    self._update_tray_tunnel_status(False)
-
-            threading.Thread(target=_tunnel_thread, daemon=True).start()
-        except ImportError:
-            self._append_log("Mobile Connect: tunnel module not available")
-        except Exception as e:
-            self._append_log(f"Tunnel error: {e}")
-
-    def _update_tray_tunnel_status(self, connected: bool):
-        """Update the system tray icon tooltip with tunnel status."""
-        if hasattr(self, 'tray_icon') and self.tray_icon:
-            status = "Connected" if connected else "Offline"
-            self.tray_icon.setToolTip(f"Apollova — Mobile {status}")
-
-    # ── System Tray ──────────────────────────────────────────────────────────
+        mobile_server.start_mobile_server(self)
 
     def _setup_system_tray(self):
-        """Create the system tray icon with context menu."""
-        icon_path = INSTALL_DIR / "assets" / "icon.ico"
-        if not icon_path.exists():
-            icon_path = INSTALL_DIR / "icon.ico"
-
-        icon = QIcon(str(icon_path)) if icon_path.exists() else QIcon()
-        self.tray_icon = QSystemTrayIcon(icon, self)
-
-        tray_menu = QMenu()
-        open_action = tray_menu.addAction("Open Apollova")
-        open_action.triggered.connect(self._tray_show_window)
-        mobile_action = tray_menu.addAction("Mobile Connect")
-        mobile_action.triggered.connect(self._show_mobile_qr)
-        tray_menu.addSeparator()
-        quit_action = tray_menu.addAction("Quit")
-        quit_action.triggered.connect(self._tray_quit)
-
-        self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.activated.connect(self._tray_activated)
-        self.tray_icon.setToolTip("Apollova")
-        self.tray_icon.show()
-
-    def _tray_activated(self, reason):
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self._tray_show_window()
-
-    def _tray_show_window(self):
-        self.showNormal()
-        self.activateWindow()
-
-    def _tray_quit(self):
-        """Actually quit the application (from tray menu)."""
-        self._force_quit = True
-        self._cleanup_and_quit()
-        QApplication.quit()
+        mobile_server.setup_system_tray(self)
 
     def _show_mobile_qr(self):
-        """Show the QR code for mobile pairing in a dialog."""
-        token = self.settings.get("session_token", "")
-        url = self.settings.get("tunnel_url", "")
-        if not token or not url:
-            QMessageBox.warning(self, "Not Ready",
-                "Mobile server is not running or tunnel is not connected.\n\n"
-                "Make sure Apollova is running and has internet access.")
-            return
+        mobile_server.show_mobile_qr(self)
 
-        qr_data = json.dumps({"url": url, "token": token})
-        try:
-            import qrcode
-            from io import BytesIO
-            from PyQt6.QtGui import QPixmap
-            qr = qrcode.QRCode(version=1, box_size=8, border=4)
-            qr.add_data(qr_data)
-            qr.make(fit=True)
-            img = qr.make_image(fill_color="white", back_color="#0D0A18")
-            buf = BytesIO()
-            img.save(buf, format="PNG")
-            pixmap = QPixmap()
-            pixmap.loadFromData(buf.getvalue())
+    # ── Delegated handlers: Job processing ────────────────────────────────────
 
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Mobile Connect — Scan QR Code")
-            dlg.setIconPixmap(pixmap)
-            dlg.setText("Scan this QR code with the Apollova iOS app")
-            dlg.setInformativeText(f"Tunnel: {url[:50]}...")
-            dlg.setStandardButtons(QMessageBox.StandardButton.Ok)
-            dlg.exec()
-        except ImportError:
-            QMessageBox.information(self, "QR Data",
-                f"Install qrcode package for QR display.\n\nManual data:\n{qr_data}")
+    def _validate_inputs(self):
+        return job_processing.validate_inputs(self)
 
-    # ── Window close — minimize to tray ──────────────────────────────────────
-
-    def closeEvent(self, event):
-        """Minimize to system tray instead of quitting. Use tray Quit to exit."""
-        if getattr(self, '_force_quit', False):
-            self._cleanup_and_quit()
-            event.accept()
-            return
-
-        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
-            self.hide()
-            self.tray_icon.showMessage(
-                "Apollova",
-                "Running in the background. Right-click the tray icon to quit.",
-                QSystemTrayIcon.MessageIcon.Information,
-                2000,
-            )
-            event.ignore()
-        else:
-            self._cleanup_and_quit()
-            event.accept()
-
-    def _cleanup_and_quit(self):
-        """Shared cleanup for both tray-quit and window-close."""
-        self.cancel_requested = True
-        self.batch_render_cancelled = True
-        # Stop tunnel
-        if self._tunnel_manager:
-            try:
-                self._tunnel_manager.stop()
-            except Exception:
-                pass
-        # Unload Whisper model
-        try:
-            from scripts.whisper_common import unload_model
-            unload_model()
-        except Exception:
-            pass
-        # Clean up temp JSX directory
-        try:
-            tmp = Path(tempfile.gettempdir()) / "Apollova"
-            if tmp.exists():
-                shutil.rmtree(tmp, ignore_errors=True)
-        except Exception:
-            pass
-        if self._log:
-            self._log.session_end("Apollova GUI",
-                                  success=not self.is_processing)
+    def _lock_inputs(self, lock):
+        job_processing.lock_inputs(self, lock)
 
     def _start_generation(self):
-        if not self._validate_inputs():
-            return
-        t    = self._job_template()
-        d    = JOBS_DIRS.get(t)
-        existing = list(d.glob("job_*")) if d.exists() else []
-
-        if self.use_smart_picker:
-            songs = self._smart_songs
-            if not songs:
-                QMessageBox.warning(self, "No Songs",
-                    "No songs selected. Refresh or reshuffle first.")
-                return
-            sl = "\n".join(
-                [f"  {i+1}. {s['song_title'][:40]}" for i, s in enumerate(songs[:12])])
-            if len(songs) > 12:
-                sl += f"\n  … and {len(songs)-12} more"
-            reply = QMessageBox.question(self, "Smart Picker Confirmation",
-                f"Generate {len(songs)} jobs for {t.upper()}?\n\nSongs:\n{sl}\n\nContinue?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-
-        if existing:
-            complete   = [j for j in existing if (j / "job_data.json").exists()]
-            incomplete = [j for j in existing if not (j / "job_data.json").exists()]
-            detail = f"Found {len(existing)} existing job(s)"
-            if complete:
-                detail += f"\n  • {len(complete)} complete"
-            if incomplete:
-                detail += f"\n  • {len(incomplete)} incomplete / failed"
-
-            dlg = QMessageBox(self)
-            dlg.setWindowTitle("Existing Jobs")
-            dlg.setText("Existing jobs detected")
-            dlg.setInformativeText(
-                detail + "\n\n"
-                "Delete All  —  wipe everything and start fresh\n"
-                "Resume  —  skip completed and failed jobs, continue from where left off\n"
-                "Cancel  —  do nothing"
-            )
-            delete_btn = dlg.addButton("Delete All",
-                                       QMessageBox.ButtonRole.DestructiveRole)
-            resume_btn = dlg.addButton("Resume",
-                                       QMessageBox.ButtonRole.AcceptRole)
-            dlg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-            dlg.setDefaultButton(resume_btn)
-            dlg.exec()
-
-            clicked = dlg.clickedButton()
-            if clicked == delete_btn:
-                for j in existing:
-                    shutil.rmtree(j)
-                self._resume_mode = False
-                self._check_existing_jobs()
-            elif clicked == resume_btn:
-                self._resume_mode = True
-            else:
-                return
-
-        self.is_processing    = True
-        self.cancel_requested = False
-        self._lock_inputs(True)
-        self.generate_btn.setEnabled(False)
-        self.cancel_btn.setEnabled(True)
-        self.log_text.clear()
-        self.progress_bar.setValue(0)
-        threading.Thread(target=self._process_jobs, daemon=True).start()
+        job_processing.start_generation(self)
 
     def _cancel_generation(self):
-        self.cancel_requested = True
-        self.cancel_btn.setEnabled(False)
-        self.signals.log.emit("⚠ Cancelling — stopping current operation…")
+        job_processing.cancel_generation(self)
 
     def _run_step(self, job_number, step_name, fn, *args, **kwargs):
-        """Run a processing step. On failure, logs the full traceback to file
-        and re-raises with the step name prepended so the popup is useful."""
-        try:
-            return fn(*args, **kwargs)
-        except Exception as e:
-            tb = traceback.format_exc()
-            if self._log:
-                self._log.error(
-                    f"[Job {job_number:03}] STEP FAILED — {step_name}\n"
-                    f"  {type(e).__name__}: {e}\n{tb}")
-            raise RuntimeError(f"[{step_name}] {type(e).__name__}: {e}") from None
-
-    def _process_jobs(self):
-        try:
-            batch_t0 = time.time()
-            num   = int(self.jobs_combo.currentText())
-            t     = self._job_template()
-            outd  = JOBS_DIRS.get(t)
-            Config.WHISPER_MODEL = self.whisper_combo.currentText()
-            Config.GENIUS_API_TOKEN = self.settings.get('genius_api_token', '')
-
-            if self._log:
-                mode = "SmartPicker" if self.use_smart_picker else "Manual"
-                self._log.section(
-                    f"Job batch started — {num} job(s) | {t.upper()} | {mode} | "
-                    f"Whisper: {Config.WHISPER_MODEL}")
-                # Log system diagnostics for overnight test debugging
-                try:
-                    disk = shutil.disk_usage(str(outd or "."))
-                    self._log.info(f"System: disk_free={disk.free/(1024**3):.1f}GB  "
-                                   f"python={sys.version.split()[0]}  pid={os.getpid()}")
-                except Exception:
-                    pass
-
-            if self.use_smart_picker:
-                songs = list(self._smart_songs)   # snapshot the pre-selected list
-                self.signals.log.emit(f"🤖 Smart Picker: {len(songs)} songs | {t.upper()}")
-                picker   = self.smart_picker
-                outd.mkdir(parents=True, exist_ok=True)
-
-                start_idx = 1
-                if self._resume_mode:
-                    all_existing = list(outd.glob("job_*"))
-                    done = [j for j in all_existing if (j / "job_data.json").exists()]
-                    failed = [j for j in all_existing if not (j / "job_data.json").exists()]
-                    nums = [int(j.name.split("_")[1]) for j in all_existing
-                            if j.name.startswith("job_") and j.name.split("_")[1].isdigit()]
-                    start_idx = (max(nums) + 1) if nums else 1
-                    remaining = num - len(all_existing)
-                    if remaining <= 0:
-                        self.signals.log.emit("All jobs already complete — nothing to do.")
-                        self.signals.finished.emit()
-                        return
-                    self.signals.log.emit(
-                        f"  Resuming from job {start_idx} "
-                        f"({len(done)} complete, {len(failed)} failed/skipped, {remaining} remaining)")
-                    songs = songs[:remaining]
-
-                skipped = []
-                for i, s in enumerate(songs):
-                    idx = start_idx + i
-                    if self.cancel_requested:
-                        raise Exception("Cancelled by user")
-                    self.signals.log.emit(
-                        f"\n{'='*40}\n📀 Job {idx}/{num}: {s['song_title'][:40]}")
-                    try:
-                        self._process_single_song(
-                            idx, s['song_title'], s['youtube_url'],
-                            s['start_time'], s['end_time'], t, outd)
-                        picker.mark_song_used(s['song_title'])
-                    except Exception as song_err:
-                        if str(song_err) == "Cancelled by user":
-                            raise
-                        self.signals.log.emit(
-                            f"  ⚠ Skipping song — {song_err}")
-                        skipped.append(s['song_title'])
-                    self.signals.progress.emit(idx / num * 100)
-                completed = len(songs) - len(skipped)
-                skip_note = (f"\n⚠ {len(skipped)} song(s) skipped: "
-                             + ", ".join(skipped)) if skipped else ""
-                self.signals.log.emit(
-                    f"\n{'='*40}\n🎉 Done! {completed}/{num} job(s) created!{skip_note}\n📂 {outd}\n"
-                    "Next: Go to JSX Injection tab")
-            else:
-                total = len(self._job_queue)
-                self.signals.log.emit(f"Starting {total} queued job(s) | {t.upper()}")
-                outd.mkdir(parents=True, exist_ok=True)
-                skipped = []
-                for idx, job in enumerate(self._job_queue, 1):
-                    if self.cancel_requested:
-                        raise Exception("Cancelled by user")
-                    if self._resume_mode and (outd / f"job_{idx:03}").exists():
-                        job_folder_status = (
-                            "complete" if (outd / f"job_{idx:03}" / "job_data.json").exists()
-                            else "previously failed — skipping"
-                        )
-                        self.signals.log.emit(
-                            f"\n{'='*40}\n⏭ Job {idx}/{total}: {job['title'][:40]} — {job_folder_status}")
-                        self.signals.progress.emit(idx / total * 100)
-                        continue
-                    self.signals.log.emit(
-                        f"\n{'='*40}\n📀 Job {idx}/{total}: {job['title'][:40]}")
-                    try:
-                        self._process_single_song(
-                            idx, job['title'], job['url'],
-                            job['start'], job['end'], t, outd)
-                    except Exception as song_err:
-                        if str(song_err) == "Cancelled by user":
-                            raise
-                        self.signals.log.emit(
-                            f"  ⚠ Skipping song — {song_err}")
-                        skipped.append(job['title'])
-                    self.signals.progress.emit(idx / total * 100)
-                    # ETA display
-                    elapsed = time.time() - batch_t0
-                    avg_per_job = elapsed / idx
-                    remaining = avg_per_job * (total - idx)
-                    rem_min, rem_sec = divmod(int(remaining), 60)
-                    if idx < total:
-                        self.signals.log.emit(
-                            f"  ⏱ ETA: ~{rem_min}m {rem_sec}s remaining ({total - idx} jobs left)")
-                completed = total - len(skipped)
-                skip_note = (f"\n⚠ {len(skipped)} song(s) skipped: "
-                             + ", ".join(skipped)) if skipped else ""
-                self.signals.log.emit(
-                    f"\n{'='*40}\n🎉 Done! {completed}/{total} job(s) created!{skip_note}\n📂 {outd}\n"
-                    "Next: Go to JSX Injection tab")
-
-            # Batch completion summary
-            batch_elapsed = time.time() - batch_t0
-            batch_min, batch_sec = divmod(int(batch_elapsed), 60)
-            device_str = "unknown"
-            try:
-                from scripts.whisper_common import get_device_info
-                device_str = get_device_info()
-            except Exception:
-                pass
-            completed_count = num - len(skipped)
-            avg_time = batch_elapsed / max(completed_count, 1)
-            avg_min, avg_sec = divmod(int(avg_time), 60)
-            self.signals.log.emit(
-                f"\n{'─'*40}\n"
-                f"BATCH SUMMARY\n"
-                f"  Total time:  {batch_min}m {batch_sec:02d}s\n"
-                f"  Per job avg: {avg_min}m {avg_sec:02d}s\n"
-                f"  Succeeded:   {completed_count}\n"
-                f"  Failed:      {len(skipped)}\n"
-                f"  Device:      {device_str}\n"
-                f"{'─'*40}")
-            if self._log:
-                self._log.performance_summary(
-                    {"Batch total": batch_elapsed},
-                    total_time=batch_elapsed,
-                    device=device_str)
-
-            # Free GPU memory now that all transcription is done
-            try:
-                from scripts.whisper_common import unload_model
-                unload_model()
-                self.signals.log.emit("  ♻ Whisper model unloaded")
-            except Exception:
-                pass
-
-            self.signals.stats_refresh.emit()
-            self.signals.finished.emit()
-        except Exception as e:
-            tb = traceback.format_exc()
-            self.signals.log.emit(f"❌ Error: {e}")
-            self.signals.log.emit(f"─── Traceback ───\n{tb}")
-            if self._log:
-                self._log.error(f"Job batch failed: {type(e).__name__}: {e}\n{tb}")
-            self.signals.error.emit(str(e))
-
-    def _on_generation_finished(self):
-        self.is_processing  = False
-        self._resume_mode   = False
-        self._smart_songs   = []
-        self._job_queue.clear()
-        self._rebuild_queue_list()
-        self._update_queue_counter()
-        self._lock_inputs(False)
-        self._update_generate_btn_state()
-        self.cancel_btn.setEnabled(False)
-        self._check_existing_jobs()
-        if self.use_smart_picker:
-            self._refresh_smart_picker_stats()
-        QMessageBox.information(self, "Complete!",
-            f"Jobs created for {self._job_template().upper()}!\n\n"
-            "Go to JSX Injection tab to inject into After Effects.")
-
-    def _on_generation_error(self, msg):
-        self.is_processing = False
-        self._resume_mode  = False
-        self._smart_songs  = []
-        self._lock_inputs(False)
-        self._update_generate_btn_state()
-        self.cancel_btn.setEnabled(False)
-        self._check_existing_jobs()
-
-        # Append actionable fix suggestion based on error type
-        fix = ""
-        lower = msg.lower()
-        if "cancelled" in lower:
-            fix = ""  # User-initiated, no fix needed
-        elif "youtube" in lower or "yt_dlp" in lower or "pytubefix" in lower or "video" in lower:
-            fix = ("\n\nFix: Check the YouTube URL is correct and the video is public.\n"
-                   "If YouTube is blocking downloads, try updating: pip install -U yt-dlp")
-        elif "whisper" in lower or "transcri" in lower or "torch" in lower or "cuda" in lower:
-            fix = ("\n\nFix: Whisper transcription failed. Try:\n"
-                   "  1. Re-run Setup.exe to reinstall PyTorch\n"
-                   "  2. Try a smaller Whisper model (tiny/base)\n"
-                   "  3. Check that audio_trimmed.wav exists in the job folder")
-        elif "genius" in lower or "lyrics" in lower or "api" in lower:
-            fix = ("\n\nFix: Genius API issue. Check your API token in Settings.\n"
-                   "Get a token at: https://genius.com/api-clients")
-        elif "permission" in lower or "access" in lower or "denied" in lower:
-            fix = ("\n\nFix: Permission error. Try:\n"
-                   "  1. Run Apollova as Administrator\n"
-                   "  2. Check the install folder is not read-only")
-        elif "no module" in lower or "import" in lower:
-            fix = "\n\nFix: A required package is missing. Re-run Setup.exe to reinstall."
-
-        QMessageBox.critical(self, "Error", msg + fix)
-
-    def _broadcast_progress(self, percent: float):
-        """Forward progress updates to connected WebSocket clients."""
-        if hasattr(self, '_ws_emit_progress') and self._ws_emit_progress:
-            msg = self.status_label.text() if hasattr(self, 'status_label') else ""
-            self._ws_emit_progress(percent, msg)
-
-    def _append_log(self, msg):
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.log_text.append(f"[{ts}] {msg}")
-        self.status_label.setText(msg[:80])
-        if self._log:
-            if "❌" in msg or "error" in msg.lower() or "fail" in msg.lower():
-                self._log.error(msg)
-            elif "⚠" in msg or "warning" in msg.lower():
-                self._log.warning(msg)
-            else:
-                self._log.info(msg)
-
-    def _refresh_stats_label(self):
-        s = self.song_db.get_stats()
-        self.stats_label.setText(
-            f"📊 {s['total_songs']} songs | {s['cached_lyrics']} with lyrics")
-
-    # ── Transcription progress ticker ──────────────────────────────────────────
-
-    def _run_with_ticker(self, fn, *args, **kwargs):
-        """Run a long function (e.g. Whisper) with periodic log updates.
-        Captures stdout/stderr to show pass-level progress and tqdm bars.
-        Checks cancel_requested every second and force-kills the worker."""
-        import ctypes
-        result = [None]
-        error  = [None]
-        done   = threading.Event()
-        last_pct = [None]       # track tqdm percentage
-        last_pass = [""]        # track which pass is running
-        signals = self.signals  # capture for thread
-
-        class _LogCapture:
-            """Intercepts print() output from scripts, extracts progress."""
-            def __init__(self, signals_ref, pct_ref, pass_ref):
-                self._sig = signals_ref
-                self._pct = pct_ref
-                self._pass = pass_ref
-            def write(self, s):
-                if not s or not s.strip():
-                    return len(s) if s else 0
-                line = s.strip()
-                # tqdm progress line: "Transcribe:  45%|████      | 5.8/13.0"
-                if "Transcribe:" in line and "%" in line:
-                    try:
-                        pct = line.split("%")[0].split()[-1]
-                        pct_val = int(float(pct))
-                        # Only emit at meaningful intervals
-                        if self._pct[0] is None or abs(pct_val - self._pct[0]) >= 10:
-                            self._pct[0] = pct_val
-                            pass_label = self._pass[0]
-                            self._sig.log.emit(
-                                f"    {pass_label} {pct_val}%")
-                    except (ValueError, IndexError):
-                        pass
-                    return len(s)
-                # Pass labels from whisper_common
-                if line.startswith("Pass ") or line.startswith("  Pass "):
-                    self._pass[0] = line.strip()
-                    self._pct[0] = None  # reset for new pass
-                    self._sig.log.emit(f"    {line.strip()}")
-                    return len(s)
-                # Segment counts
-                if "segments" in line and ("→" in line or "✓" in line or "⚠" in line):
-                    self._sig.log.emit(f"    {line.strip()}")
-                    return len(s)
-                # Loading model
-                if "Loading" in line and ("GPU" in line or "CPU" in line):
-                    self._sig.log.emit(f"    {line.strip()}")
-                    return len(s)
-                # Reusing cached model
-                if "Reusing cached" in line:
-                    self._sig.log.emit(f"    {line.strip()}")
-                    return len(s)
-                return len(s)
-            def flush(self):
-                pass
-            def fileno(self):
-                raise io.UnsupportedOperation("fileno")
-
-        def _worker():
-            # Redirect stdout+stderr so we capture print() and tqdm output
-            capture = _LogCapture(signals, last_pct, last_pass)
-            old_out, old_err = sys.stdout, sys.stderr
-            sys.stdout = capture
-            sys.stderr = capture
-            try:
-                result[0] = fn(*args, **kwargs)
-            except Exception as e:
-                error[0] = e
-            finally:
-                sys.stdout = old_out
-                sys.stderr = old_err
-                done.set()
-
-        t = threading.Thread(target=_worker, daemon=True)
-        t.start()
-
-        elapsed = 0
-        while not done.wait(timeout=1):
-            elapsed += 1
-            # ── Instant cancel: force-kill the worker thread ──
-            if self.cancel_requested:
-                self.signals.log.emit("  Cancelling transcription…")
-                # Force-raise SystemExit in the worker thread
-                tid = t.ident
-                if tid is not None:
-                    ctypes.pythonapi.PyThreadState_SetAsyncExc(
-                        ctypes.c_ulong(tid),
-                        ctypes.py_object(SystemExit))
-                # Give it a moment to die, then move on regardless
-                done.wait(timeout=3)
-                # Clean up GPU memory if whisper left things allocated
-                try:
-                    from scripts.whisper_common import unload_model
-                    unload_model()
-                except Exception:
-                    pass
-                raise Exception("Cancelled by user")
-            # Show elapsed time every 15 seconds if no tqdm progress
-            if elapsed % 15 == 0 and last_pct[0] is None:
-                m, s = divmod(elapsed, 60)
-                self.signals.log.emit(
-                    f"    Transcribing... ({m}m {s:02d}s elapsed)")
-
-        if error[0] is not None:
-            raise error[0]
-        return result[0]
-
-    # ── Single song processing ────────────────────────────────────────────────
+        return job_processing.run_step(self, job_number, step_name, fn, *args, **kwargs)
 
     def _process_single_song(self, job_number, song_title, youtube_url,
                               start_time, end_time, template, output_dir,
                               return_data=False):
-        job_t0 = time.time()
-        job_folder  = output_dir / f"job_{job_number:03}"
-        job_folder.mkdir(parents=True, exist_ok=True)
-        needs_image = template in ['aurora', 'onyx']
-        cached      = self.song_db.get_song(song_title)
+        return job_processing.process_single_song(
+            self, job_number, song_title, youtube_url,
+            start_time, end_time, template, output_dir, return_data)
 
-        # ── Test diagnostics: log system state at job start ──
-        try:
-            disk = shutil.disk_usage(str(output_dir))
-            disk_free_gb = disk.free / (1024 ** 3)
-            self.signals.log.emit(f"  [diag] Disk free: {disk_free_gb:.1f} GB")
-            if disk_free_gb < 1.0:
-                self.signals.log.emit("  ⚠ LOW DISK: less than 1 GB free!")
-                if self._log:
-                    self._log.warning(f"Low disk space at job {job_number}: {disk_free_gb:.1f} GB")
-        except Exception:
-            pass
+    def _on_generation_finished(self):
+        job_processing.on_generation_finished(self)
 
-        if cached:
-            self.signals.log.emit("  ✓ Using cached data")
-            youtube_url = cached['youtube_url']
-            start_time  = cached['start_time']
-            end_time    = cached['end_time']
+    def _on_generation_error(self, msg):
+        job_processing.on_generation_error(self, msg)
 
-        def chk():
-            if self.cancel_requested:
-                raise Exception("Cancelled by user")
+    def _broadcast_progress(self, percent):
+        job_processing.broadcast_progress(self, percent)
 
-        # Audio download
-        chk()
-        audio_path = job_folder / "audio_source.mp3"
-        if not audio_path.exists():
-            self.signals.log.emit("  Downloading audio…")
-            self._run_step(job_number, "Audio download", download_audio, youtube_url, str(job_folder))
-            if not audio_path.exists():
-                raise FileNotFoundError(f"Audio download produced no file: {audio_path}")
-            size_mb = audio_path.stat().st_size / (1024 * 1024)
-            self.signals.log.emit(f"  ✓ Audio downloaded ({size_mb:.1f} MB)")
-        else:
-            self.signals.log.emit("  ✓ Audio exists")
+    def _append_log(self, msg):
+        job_processing.append_log(self, msg)
 
-        # Trim
-        chk()
-        trimmed = job_folder / "audio_trimmed.wav"
-        if not trimmed.exists():
-            self.signals.log.emit(f"  Trimming ({start_time} → {end_time})…")
-            self._run_step(job_number, "Audio trim", trim_audio, str(job_folder), start_time, end_time)
-            if not trimmed.exists():
-                raise FileNotFoundError(f"Trim produced no file: {trimmed}")
-            trim_mb = trimmed.stat().st_size / (1024 * 1024)
-            self.signals.log.emit(f"  ✓ Trimmed ({trim_mb:.1f} MB)")
-        else:
-            self.signals.log.emit("  ✓ Trimmed audio exists")
+    def _refresh_stats_label(self):
+        job_processing.refresh_stats_label(self)
 
-        # Verify trimmed audio duration matches expected clip length
-        try:
-            from pydub import AudioSegment as _AS
-            actual_dur = len(_AS.from_file(str(trimmed))) / 1000.0
-            s_parts = start_time.split(':')
-            e_parts = end_time.split(':')
-            expected_dur = (int(e_parts[0])*60 + int(e_parts[1])) - (int(s_parts[0])*60 + int(s_parts[1]))
-            self.signals.log.emit(f"  📏 Clip: {actual_dur:.1f}s (expected {expected_dur}s)")
-            if actual_dur > expected_dur + 5:
-                self.signals.log.emit(f"  ⚠ audio_trimmed.wav too long ({actual_dur:.1f}s) — re-trimming")
-                trimmed.unlink()
-                self._run_step(job_number, "Audio re-trim", trim_audio, str(job_folder), start_time, end_time)
-                actual_dur = len(_AS.from_file(str(trimmed))) / 1000.0
-                self.signals.log.emit(f"  ✓ Re-trimmed: {actual_dur:.1f}s")
-        except Exception as dur_err:
-            self.signals.log.emit(f"  ⚠ Duration check failed: {dur_err}")
+    def _run_with_ticker(self, fn, *args, **kwargs):
+        return job_processing.run_with_ticker(self, fn, *args, **kwargs)
 
-        # Delete audio_source.mp3 — no longer needed after trim
-        source_mp3 = job_folder / "audio_source.mp3"
-        if source_mp3.exists():
-            try:
-                source_mp3.unlink()
-            except Exception:
-                pass
+    def _cleanup_and_quit(self):
+        job_processing.cleanup_and_quit(self)
 
-        # Log Whisper device (GPU/CPU)
-        try:
-            from scripts.whisper_common import get_device_info
-            self.signals.log.emit(f"  🖥 Whisper device: {get_device_info()}")
-        except Exception:
-            pass
-
-        # Beats (Aurora only)
-        beats = []
-        if template == 'aurora':
-            chk()
-            beats_path = job_folder / "beats.json"
-            if cached and cached.get('beats'):
-                beats = cached['beats']
-                with open(beats_path, 'w', encoding='utf-8') as f:
-                    json.dump(beats, f, indent=4)
-                self.signals.log.emit("  ✓ Cached beats")
-            elif not beats_path.exists():
-                self.signals.log.emit("  Detecting beats…")
-                beats = self._run_step(job_number, "Beat detection", detect_beats, str(job_folder))
-                with open(beats_path, 'w', encoding='utf-8') as f:
-                    json.dump(beats, f, indent=4)
-                self.signals.log.emit(f"  ✓ {len(beats)} beats")
-            else:
-                with open(beats_path) as f:
-                    beats = json.load(f)
-                self.signals.log.emit("  ✓ Beats exist")
-
-        # Transcribe (per-template)
-        chk()
-        lyrics_path = job_folder / "lyrics.txt"
-        lyrics_was_transcribed = False
-        if template == 'aurora':
-            if cached and cached.get('transcribed_lyrics'):
-                with open(lyrics_path, 'w', encoding='utf-8') as f:
-                    json.dump(cached['transcribed_lyrics'], f, indent=4, ensure_ascii=False)
-                self.signals.log.emit(
-                    f"  ✓ Cached lyrics ({len(cached['transcribed_lyrics'])} segs)")
-            elif not lyrics_path.exists():
-                self.signals.log.emit(f"  Transcribing ({Config.WHISPER_MODEL})…")
-                t0 = time.time()
-                self._run_with_ticker(
-                    self._run_step, job_number, "Whisper transcription (Aurora)",
-                    transcribe_audio, str(job_folder), song_title)
-                elapsed = time.time() - t0
-                self.signals.log.emit(
-                    f"  ✓ Transcribed ({elapsed:.0f}s)")
-                lyrics_was_transcribed = True
-                # Validate transcription output
-                if not lyrics_path.exists():
-                    self.signals.log.emit("  ⚠ ASSERT: lyrics.txt missing after transcription!")
-                elif lyrics_path.stat().st_size < 10:
-                    self.signals.log.emit(f"  ⚠ ASSERT: lyrics.txt suspiciously small ({lyrics_path.stat().st_size} bytes)")
-            else:
-                self.signals.log.emit("  ✓ Lyrics exist")
-            lyrics_data = lyrics_path.read_text() if lyrics_path.exists() else ""
-
-        elif template == 'mono':
-            mono_path = job_folder / "mono_data.json"
-            cached_mono = self.song_db.get_mono_lyrics(song_title)
-            if cached_mono:
-                with open(mono_path, 'w', encoding='utf-8') as f:
-                    json.dump(cached_mono, f, indent=4, ensure_ascii=False)
-                self.signals.log.emit("  ✓ Cached mono lyrics")
-            elif not mono_path.exists():
-                self.signals.log.emit(f"  Transcribing mono ({Config.WHISPER_MODEL})…")
-                t0 = time.time()
-                mono_result = self._run_with_ticker(
-                    self._run_step, job_number, "Whisper transcription (Mono)",
-                    transcribe_audio_mono, str(job_folder), song_title)
-                elapsed = time.time() - t0
-                # transcribe_audio_mono returns data but doesn't write to disk
-                if mono_result:
-                    with open(mono_path, 'w', encoding='utf-8') as f:
-                        json.dump(mono_result, f, indent=4, ensure_ascii=False)
-                self.signals.log.emit(
-                    f"  ✓ Transcribed mono ({elapsed:.0f}s)")
-                lyrics_was_transcribed = True
-                if not mono_path.exists():
-                    self.signals.log.emit("  ⚠ ASSERT: mono_data.json missing after transcription!")
-                elif mono_path.stat().st_size < 10:
-                    self.signals.log.emit(f"  ⚠ ASSERT: mono_data.json suspiciously small ({mono_path.stat().st_size} bytes)")
-            else:
-                self.signals.log.emit("  ✓ Mono data exists")
-            lyrics_data = mono_path.read_text() if mono_path.exists() else "{}"
-
-        elif template == 'onyx':
-            onyx_path = job_folder / "onyx_data.json"
-            cached_onyx = self.song_db.get_onyx_lyrics(song_title)
-            if cached_onyx:
-                with open(onyx_path, 'w', encoding='utf-8') as f:
-                    json.dump(cached_onyx, f, indent=4, ensure_ascii=False)
-                self.signals.log.emit("  ✓ Cached onyx lyrics")
-            elif not onyx_path.exists():
-                self.signals.log.emit(f"  Transcribing onyx ({Config.WHISPER_MODEL})…")
-                t0 = time.time()
-                onyx_result = self._run_with_ticker(
-                    self._run_step, job_number, "Whisper transcription (Onyx)",
-                    transcribe_audio_onyx, str(job_folder), song_title)
-                elapsed = time.time() - t0
-                # transcribe_audio_onyx returns data but doesn't write to disk
-                if onyx_result:
-                    with open(onyx_path, 'w', encoding='utf-8') as f:
-                        json.dump(onyx_result, f, indent=4, ensure_ascii=False)
-                self.signals.log.emit(
-                    f"  ✓ Transcribed onyx ({elapsed:.0f}s)")
-                lyrics_was_transcribed = True
-                if not onyx_path.exists():
-                    self.signals.log.emit("  ⚠ ASSERT: onyx_data.json missing after transcription!")
-                elif onyx_path.stat().st_size < 10:
-                    self.signals.log.emit(f"  ⚠ ASSERT: onyx_data.json suspiciously small ({onyx_path.stat().st_size} bytes)")
-            else:
-                self.signals.log.emit("  ✓ Onyx data exists")
-            lyrics_data = onyx_path.read_text() if onyx_path.exists() else "{}"
-
-        else:
-            lyrics_data = ""
-
-        # Image / colors
-        image_path = job_folder / "cover.png"
-        colors     = ['#ffffff', '#000000']
-        rotation_enabled = self.settings.get('image_rotation', False)
-        rotated_url = None
-        if needs_image:
-            chk()
-            if rotation_enabled and Config.GENIUS_API_TOKEN:
-                # Image rotation: always fetch a new image different from DB
-                current_url = cached.get('genius_image_url') if cached else None
-                self.signals.log.emit("  Rotating cover image…")
-                if image_path.exists():
-                    image_path.unlink()
-                _, rotated_url = self._run_step(
-                    job_number, "Image rotation",
-                    fetch_genius_image_rotated,
-                    song_title, str(job_folder), current_url)
-                if image_path.exists():
-                    self.signals.log.emit("  ✓ Rotated cover")
-                else:
-                    # Rotation failed — fall back to standard fetch
-                    self.signals.log.emit("  ⚠ Rotation failed, using standard fetch")
-                    ok = self._run_step(job_number, "Genius image fetch",
-                                        fetch_genius_image, song_title, str(job_folder))
-                    self.signals.log.emit("  ✓ Cover" if ok else "  ⚠ No cover")
-            elif cached and cached.get('genius_image_url'):
-                if not image_path.exists():
-                    self.signals.log.emit("  Downloading cached image…")
-                    self._run_step(job_number, "Image download", download_image, str(job_folder), cached['genius_image_url'])
-                self.signals.log.emit("  ✓ Cached image")
-            elif not image_path.exists():
-                self.signals.log.emit("  Fetching cover…")
-                ok = self._run_step(job_number, "Genius image fetch", fetch_genius_image, song_title, str(job_folder))
-                self.signals.log.emit("  ✓ Cover" if ok else "  ⚠ No cover")
-            else:
-                self.signals.log.emit("  ✓ Cover exists")
-            chk()
-            if image_path.exists():
-                if cached and cached.get('colors') and not rotation_enabled:
-                    colors = cached['colors']
-                    self.signals.log.emit("  ✓ Cached colors")
-                else:
-                    self.signals.log.emit("  Extracting colors…")
-                    colors = self._run_step(job_number, "Color extraction", extract_colors, str(job_folder))
-                    self.signals.log.emit(f"  ✓ Colors: {', '.join(colors)}")
-
-        data_file = {
-            'aurora': job_folder / "lyrics.txt",
-            'mono':   job_folder / "mono_data.json",
-            'onyx':   job_folder / "onyx_data.json",
-        }.get(template, job_folder / "lyrics.txt")
-
-        job_data = {
-            "job_id": job_number, "song_title": song_title,
-            "youtube_url": youtube_url, "start_time": start_time,
-            "end_time": end_time, "template": template,
-            "audio_trimmed": str(job_folder / "audio_trimmed.wav"),
-            "cover_image": str(image_path) if image_path.exists() else None,
-            "colors": colors, "lyrics_file": str(data_file),
-            "beats": beats, "created_at": datetime.now().isoformat(),
-        }
-        # Validate job_data before writing
-        _missing = [k for k in ("job_id", "song_title", "audio_trimmed", "lyrics_file")
-                    if not job_data.get(k)]
-        if _missing:
-            self.signals.log.emit(f"  ⚠ ASSERT: job_data missing fields: {_missing}")
-        if not Path(job_data["audio_trimmed"]).exists():
-            self.signals.log.emit("  ⚠ ASSERT: audio_trimmed path in job_data does not exist!")
-
-        with open(job_folder / "job_data.json", 'w', encoding='utf-8') as f:
-            json.dump(job_data, f, indent=4)
-
-        if not cached and not self.use_smart_picker:
-            self.signals.log.emit("  Saving to database…")
-            self.song_db.add_song(
-                song_title=song_title, youtube_url=youtube_url,
-                start_time=start_time, end_time=end_time,
-                genius_image_url=None, colors=colors, beats=beats)
-        elif cached and not self.use_smart_picker:
-            self.song_db.mark_song_used(song_title)
-        # Update DB with rotated image URL and fresh colors
-        if rotated_url:
-            self.song_db.update_image_url(song_title, rotated_url)
-            self.song_db.update_colors_and_beats(song_title, colors, None)
-        if lyrics_was_transcribed:
-            # lyrics_data is a raw JSON string from .read_text() — parse it
-            # so the DB methods (which call json.dumps) don't double-encode
-            try:
-                lyrics_parsed = json.loads(lyrics_data) if lyrics_data else None
-            except (json.JSONDecodeError, TypeError):
-                lyrics_parsed = None
-            if lyrics_parsed is not None:
-                if template == 'aurora':
-                    self.song_db.update_lyrics(song_title, lyrics_parsed)
-                elif template == 'mono':
-                    self.song_db.update_mono_lyrics(song_title, lyrics_parsed)
-                elif template == 'onyx':
-                    self.song_db.update_onyx_lyrics(song_title, lyrics_parsed)
-                if self.use_smart_picker:
-                    self.signals.log.emit("  ✓ Lyrics cached to database")
-            else:
-                self.signals.log.emit("  ⚠ No lyrics data to cache")
-
-        job_elapsed = time.time() - job_t0
-        jm, js = divmod(int(job_elapsed), 60)
-        self.signals.log.emit(f"  ✓ Job {job_number} complete ({jm}m {js:02d}s)")
-        if self._log:
-            self._log.info(f"Job {job_number} [{song_title[:30]}] finished in {job_elapsed:.1f}s")
-        return (job_data, job_folder) if return_data else None
-
+    def closeEvent(self, event):
+        job_processing.close_event(self, event)
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -3266,7 +519,6 @@ def main():
     app.setStyleSheet(APP_STYLE)
     win = AppolovaApp()
     if "--minimised" in sys.argv:
-        # Start hidden in system tray (launch-on-startup mode)
         win.hide()
     else:
         win.show()

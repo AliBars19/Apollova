@@ -2,7 +2,6 @@
 JSX validation via the AE MCP bridge.
 Falls back to basic file checks if the bridge is unavailable.
 """
-import json
 import os
 
 
@@ -59,6 +58,7 @@ def validate_jsx_file(jsx_path: str, bridge_port: int = 9741) -> dict:
 
 def _try_bridge_validation(jsx_path: str, port: int) -> dict | None:
     """Attempt validation via the MCP bridge WebSocket. Returns None if unavailable."""
+    ws = None
     try:
         import websocket  # websocket-client library
         import json as _json
@@ -75,7 +75,6 @@ def _try_bridge_validation(jsx_path: str, port: int) -> dict | None:
             ws.send(_json.dumps({"type": "auth", "token": token}))
             auth_resp = _json.loads(ws.recv())
             if not auth_resp.get("success"):
-                ws.close()
                 return None
 
         # Send validate request
@@ -86,13 +85,18 @@ def _try_bridge_validation(jsx_path: str, port: int) -> dict | None:
             "params": {"path": jsx_path, "dryRun": False}
         }))
         resp = _json.loads(ws.recv())
-        ws.close()
 
         if resp.get("result"):
             return resp["result"]
         return None
     except Exception:
         return None
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
 
 
 def render_preflight(template: str, jobs_dir: str, bridge_port: int = 9741) -> dict:

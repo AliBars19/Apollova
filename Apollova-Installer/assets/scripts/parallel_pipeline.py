@@ -14,23 +14,26 @@ whisper_lock = threading.Lock()
 
 # Thread pool for I/O-bound prefetch (download audio, images, Demucs)
 _pool: ThreadPoolExecutor | None = None
+_pool_lock = threading.Lock()
 _MAX_WORKERS = 3
 
 
 def get_pool() -> ThreadPoolExecutor:
     """Get or create the shared thread pool for I/O prefetch."""
     global _pool
-    if _pool is None:
-        _pool = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="prefetch")
-    return _pool
+    with _pool_lock:
+        if _pool is None:
+            _pool = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="prefetch")
+        return _pool
 
 
 def shutdown_pool() -> None:
     """Shut down the thread pool (call on app exit)."""
     global _pool
-    if _pool is not None:
-        _pool.shutdown(wait=False, cancel_futures=True)
-        _pool = None
+    with _pool_lock:
+        if _pool is not None:
+            _pool.shutdown(wait=False, cancel_futures=True)
+            _pool = None
 
 
 def submit_prefetch(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Future:

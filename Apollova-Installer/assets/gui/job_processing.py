@@ -14,7 +14,7 @@ from pathlib import Path
 from PyQt6.QtWidgets import QMessageBox, QSystemTrayIcon
 
 from assets.gui.constants import JOBS_DIRS
-from assets.gui.helpers import _set_label_style
+from assets.gui.helpers import _set_label_style  # noqa: F401 — used in delegating methods
 
 
 def validate_inputs(app) -> bool:

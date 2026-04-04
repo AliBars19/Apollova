@@ -1,5 +1,4 @@
 """GPU VRAM detection and Whisper model recommendation."""
-import os
 
 
 def detect_gpu_vram() -> int | None:

@@ -1,6 +1,5 @@
 """Settings tab — AE path, Genius/Last.fm tokens, FFmpeg, mobile, paths."""
 
-import json
 import subprocess
 import sys
 from pathlib import Path
@@ -13,7 +12,7 @@ from PyQt6.QtGui import QFont
 
 from assets.gui.constants import (
     INSTALL_DIR, TEMPLATES_DIR, AURORA_JOBS_DIR, MONO_JOBS_DIR,
-    ONYX_JOBS_DIR, DATABASE_DIR, SETTINGS_FILE,
+    ONYX_JOBS_DIR, DATABASE_DIR,
 )
 from assets.gui.helpers import _label, _set_label_style, _scrollable
 

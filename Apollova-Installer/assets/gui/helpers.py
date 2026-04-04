@@ -65,8 +65,8 @@ def _scrollable(widget):
 
 
 # ── Safe startup error dialog ─────────────────────────────────────────────────
-def _show_startup_error(title: str, message: str, fix: str = None) -> None:
-    app = QApplication.instance() or QApplication(sys.argv)
+def _show_startup_error(title: str, message: str, fix: str | None = None) -> None:
+    _app = QApplication.instance() or QApplication(sys.argv)  # noqa: F841 — needed to init Qt
     dlg = QMessageBox()
     dlg.setWindowTitle(f"Apollova \u2014 {title}")
     dlg.setIcon(QMessageBox.Icon.Critical)

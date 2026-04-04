@@ -944,6 +944,59 @@ def fix_marker_gaps(markers):
 
 
 # ============================================================================
+# CLUSTERED WORD SPREAD (#31: Fix Genius alignment timestamp bunching)
+# ============================================================================
+
+def spread_clustered_words(markers):
+    """
+    Fix words with identical or near-identical start timestamps.
+    Genius alignment often collapses multiple words to the same point in time.
+    Spreads clustered words evenly across the available span so the JSX
+    word-reveal expression shows them one at a time.
+
+    Returns the same markers list (words modified in-place for consistency
+    with fix_marker_gaps which also mutates in-place).
+    """
+    CLUSTER_THRESHOLD = 0.025  # words within 25ms are "clustered"
+
+    for m in markers:
+        words = m.get("words", [])
+        if len(words) < 2:
+            continue
+
+        seg_end = m.get("end_time", m.get("time", 0) + 5.0)
+
+        i = 0
+        while i < len(words):
+            cluster_time = words[i]["start"]
+
+            # Find all words in this cluster
+            j = i + 1
+            while j < len(words) and abs(words[j]["start"] - cluster_time) <= CLUSTER_THRESHOLD:
+                j += 1
+
+            cluster_size = j - i
+            if cluster_size > 1:
+                # Determine available span
+                if j < len(words):
+                    span_end = words[j]["start"]
+                else:
+                    span_end = seg_end
+
+                span = span_end - cluster_time
+                # Only spread if there's enough room (avoid creating impossible timestamps)
+                if 0.05 < span < 30.0:
+                    word_dur = span / cluster_size
+                    for k in range(cluster_size):
+                        words[i + k]["start"] = round(cluster_time + k * word_dur, 3)
+                        words[i + k]["end"] = round(cluster_time + (k + 1) * word_dur, 3)
+
+            i = j
+
+    return markers
+
+
+# ============================================================================
 # MERGE SHORT MARKERS (#19: Combine lonely single-word markers)
 # ============================================================================
 
@@ -1333,6 +1386,7 @@ def transcribe_word_level(job_folder, song_title, template_name,
         markers = merge_short_markers(markers)
         assign_colors(markers)
         fix_marker_gaps(markers)
+        spread_clustered_words(markers)  # #31: Fix Genius alignment bunching
 
         passed, issues = quality_gate(markers, audio_duration)
         if not passed:

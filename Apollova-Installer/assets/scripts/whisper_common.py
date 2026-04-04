@@ -1111,6 +1111,60 @@ def quality_gate(markers, clip_duration):
 
 
 # ============================================================================
+# WHISPER QUALITY SCORING (#20b: Per-song quality metrics)
+# ============================================================================
+
+def compute_quality_score(markers, genius_text=None):
+    """
+    Compute quality metrics for a transcription result.
+
+    Returns dict with:
+        - coverage_pct: ratio of clip covered by markers (0.0-1.0)
+        - avg_prob: mean word probability across all words
+        - zero_time_words: count of words where end - start < MIN_WORD_DUR
+        - total_words: total word count
+    """
+    if not markers:
+        return {"coverage_pct": 0.0, "avg_prob": 0.0, "zero_time_words": 0, "total_words": 0}
+
+    all_probs = []
+    zero_time = 0
+    total_words = 0
+
+    for m in markers:
+        for w in m.get("words", []):
+            total_words += 1
+            prob = w.get("probability")
+            if prob is not None:
+                all_probs.append(float(prob))
+            start = float(w.get("start", 0))
+            end = float(w.get("end", 0))
+            if end - start < MIN_WORD_DUR:
+                zero_time += 1
+
+    avg_prob = sum(all_probs) / len(all_probs) if all_probs else 0.0
+
+    # Coverage: total marker time / clip time
+    if len(markers) >= 2:
+        first_start = markers[0]["time"]
+        last_end = markers[-1].get("end_time", markers[-1]["time"])
+        covered = sum(m.get("end_time", m["time"]) - m["time"] for m in markers)
+        span = last_end - first_start
+        coverage_pct = covered / span if span > 0 else 0.0
+    elif len(markers) == 1:
+        coverage_pct = 1.0
+    else:
+        coverage_pct = 0.0
+
+    return {
+        "coverage_pct": round(min(coverage_pct, 1.0), 4),
+        "avg_prob": round(avg_prob, 4),
+        "zero_time_words": zero_time,
+        "total_words": total_words,
+    }
+
+
+# ============================================================================
 # WHISPER CACHE (#11)
 # ============================================================================
 
@@ -1391,6 +1445,24 @@ def transcribe_word_level(job_folder, song_title, template_name,
         passed, issues = quality_gate(markers, audio_duration)
         if not passed:
             print(f"  \u26a0 QUALITY WARNING: {'; '.join(issues)}")
+
+        # Compute and save quality score
+        score = compute_quality_score(markers)
+        print(f"  Quality: coverage={score['coverage_pct']:.0%}, "
+              f"avg_prob={score['avg_prob']:.2f}, "
+              f"zero_time={score['zero_time_words']}/{score['total_words']}")
+
+        if song_title:
+            try:
+                from scripts.song_database import SongDatabase
+                _score_db = SongDatabase(db_path=os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(job_folder))),
+                    "database", "songs.db"))
+                _score_db.save_whisper_quality(
+                    song_title, score["coverage_pct"], score["avg_prob"],
+                    score["zero_time_words"], Config.WHISPER_MODEL)
+            except Exception as e:
+                print(f"  Warning: could not save quality score: {e}")
 
         print(f"\u2713 {template_name} transcription complete: {len(markers)} markers")
 

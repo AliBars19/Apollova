@@ -61,6 +61,22 @@ class SongDatabase:
 
             conn.commit()
 
+        self._ensure_quality_columns()
+
+    def _ensure_quality_columns(self):
+        """Add whisper quality columns if they don't exist (backward compat)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT whisper_coverage_pct FROM songs LIMIT 1")
+            except sqlite3.OperationalError:
+                cursor.execute("ALTER TABLE songs ADD COLUMN whisper_coverage_pct REAL")
+                cursor.execute("ALTER TABLE songs ADD COLUMN whisper_avg_prob REAL")
+                cursor.execute("ALTER TABLE songs ADD COLUMN whisper_zero_time_words INTEGER")
+                cursor.execute("ALTER TABLE songs ADD COLUMN whisper_quality_model TEXT")
+                cursor.execute("ALTER TABLE songs ADD COLUMN whisper_scored_at TIMESTAMP")
+                conn.commit()
+
     # ========================================================================
     # CORE CRUD
     # ========================================================================
@@ -340,6 +356,73 @@ class SongDatabase:
                 "UPDATE songs SET genius_text = ? WHERE LOWER(song_title) = LOWER(?)",
                 (genius_text, song_title))
             conn.commit()
+
+    # ========================================================================
+    # WHISPER QUALITY SCORING
+    # ========================================================================
+
+    def save_whisper_quality(self, song_title: str, coverage_pct: float, avg_prob: float,
+                            zero_time_words: int, model: str) -> None:
+        """Save whisper transcription quality metrics for a song."""
+        self._ensure_quality_columns()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("""
+                UPDATE songs SET
+                    whisper_coverage_pct = ?,
+                    whisper_avg_prob = ?,
+                    whisper_zero_time_words = ?,
+                    whisper_quality_model = ?,
+                    whisper_scored_at = CURRENT_TIMESTAMP
+                WHERE song_title = ?
+            """, (coverage_pct, avg_prob, zero_time_words, model, song_title))
+            conn.commit()
+
+    def get_whisper_quality(self, song_title: str) -> dict | None:
+        """Get whisper quality metrics for a song."""
+        self._ensure_quality_columns()
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT whisper_coverage_pct, whisper_avg_prob, whisper_zero_time_words,
+                       whisper_quality_model, whisper_scored_at
+                FROM songs WHERE song_title = ?
+            """, (song_title,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return {
+                "coverage_pct": row[0],
+                "avg_prob": row[1],
+                "zero_time_words": row[2],
+                "model": row[3],
+                "scored_at": row[4],
+            }
+        finally:
+            conn.close()
+
+    def get_low_quality_songs(self, min_coverage: float = 0.5, min_avg_prob: float = 0.3) -> list:
+        """Get songs with low whisper quality scores for re-processing."""
+        self._ensure_quality_columns()
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT song_title, whisper_coverage_pct, whisper_avg_prob, whisper_zero_time_words
+                FROM songs
+                WHERE whisper_coverage_pct IS NOT NULL
+                  AND (whisper_coverage_pct < ? OR whisper_avg_prob < ?)
+                ORDER BY whisper_avg_prob ASC
+            """, (min_coverage, min_avg_prob))
+            return [{"song_title": r[0], "coverage_pct": r[1], "avg_prob": r[2],
+                     "zero_time_words": r[3]}
+                    for r in cursor.fetchall()]
+        finally:
+            conn.close()
+
+    # ========================================================================
+    # STATISTICS
+    # ========================================================================
 
     def get_stats(self):
         """Get database statistics"""

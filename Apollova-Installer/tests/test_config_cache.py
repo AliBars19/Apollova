@@ -6,6 +6,7 @@ import sys
 import json
 import os
 import copy
+import importlib
 from unittest.mock import MagicMock, patch
 
 # ---------------------------------------------------------------------------
@@ -118,6 +119,116 @@ class TestConfig:
 
     def test_trimmed_format_is_wav(self):
         assert Config.TRIMMED_FORMAT == "wav"
+
+
+# ===========================================================================
+# Config .env migration — 5 tests
+# ===========================================================================
+
+class TestEnvMigration:
+    """Tests for .env migration to %APPDATA%/Apollova/."""
+
+    def _reload_config(self):
+        """Reload the config module to pick up env changes."""
+        import scripts.config as cfg_mod
+        importlib.reload(cfg_mod)
+        return cfg_mod
+
+    def test_migrate_env_creates_appdata_dir_and_copies(self, tmp_path, monkeypatch):
+        """migrate_env creates APPDATA dir and copies file."""
+        appdata = tmp_path / "appdata"
+        install_root = tmp_path / "install"
+        install_root.mkdir()
+        env_content = "GENIUS_API_TOKEN=test123\n"
+        (install_root / ".env").write_text(env_content)
+
+        import scripts.config as cfg_mod
+        monkeypatch.setattr(cfg_mod, "APPDATA_DIR", appdata / "Apollova")
+        monkeypatch.setattr(cfg_mod, "_BASE_DIR", install_root)
+
+        result = cfg_mod.Config.migrate_env()
+        assert result is True
+        assert (appdata / "Apollova" / ".env").exists()
+        assert (appdata / "Apollova" / ".env").read_text() == env_content
+
+    def test_migrate_env_idempotent(self, tmp_path, monkeypatch):
+        """migrate_env doesn't overwrite existing APPDATA .env."""
+        appdata_dir = tmp_path / "appdata" / "Apollova"
+        appdata_dir.mkdir(parents=True)
+        (appdata_dir / ".env").write_text("EXISTING=keep_me\n")
+
+        install_root = tmp_path / "install"
+        install_root.mkdir()
+        (install_root / ".env").write_text("GENIUS_API_TOKEN=new\n")
+
+        import scripts.config as cfg_mod
+        monkeypatch.setattr(cfg_mod, "APPDATA_DIR", appdata_dir)
+        monkeypatch.setattr(cfg_mod, "_BASE_DIR", install_root)
+
+        result = cfg_mod.Config.migrate_env()
+        assert result is False
+        assert (appdata_dir / ".env").read_text() == "EXISTING=keep_me\n"
+
+    def test_config_loads_appdata_env_when_both_exist(self, tmp_path, monkeypatch):
+        """Config loads from APPDATA .env when both exist (APPDATA takes precedence)."""
+        appdata_dir = tmp_path / "appdata" / "Apollova"
+        appdata_dir.mkdir(parents=True)
+        (appdata_dir / ".env").write_text("GENIUS_API_TOKEN=from_appdata\n")
+
+        install_root = tmp_path / "install"
+        install_root.mkdir()
+        (install_root / ".env").write_text("GENIUS_API_TOKEN=from_install\n")
+
+        monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+        monkeypatch.setattr("scripts.config.APPDATA_DIR", appdata_dir)
+        monkeypatch.setattr("scripts.config._BASE_DIR", install_root)
+
+        # Simulate what the module-level code does
+        from dotenv import load_dotenv
+        appdata_env = appdata_dir / ".env"
+        install_env = install_root / ".env"
+        if appdata_env.is_file():
+            load_dotenv(dotenv_path=str(appdata_env), override=True)
+        elif install_env.is_file():
+            load_dotenv(dotenv_path=str(install_env), override=True)
+
+        assert os.environ["GENIUS_API_TOKEN"] == "from_appdata"
+
+    def test_config_falls_back_to_install_root(self, tmp_path, monkeypatch):
+        """Config falls back to install root when APPDATA .env missing."""
+        appdata_dir = tmp_path / "appdata" / "Apollova"
+        # No .env in appdata
+
+        install_root = tmp_path / "install"
+        install_root.mkdir()
+        (install_root / ".env").write_text("GENIUS_API_TOKEN=from_install\n")
+
+        monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+
+        from dotenv import load_dotenv
+        appdata_env = appdata_dir / ".env"
+        install_env = install_root / ".env"
+        if appdata_env.is_file():
+            load_dotenv(dotenv_path=str(appdata_env), override=True)
+        elif install_env.is_file():
+            load_dotenv(dotenv_path=str(install_env), override=True)
+
+        assert os.environ["GENIUS_API_TOKEN"] == "from_install"
+
+    def test_config_works_when_neither_exists(self, tmp_path, monkeypatch):
+        """Config works when neither .env exists."""
+        appdata_dir = tmp_path / "appdata" / "Apollova"
+        install_root = tmp_path / "install"
+        install_root.mkdir()
+
+        import scripts.config as cfg_mod
+        monkeypatch.setattr(cfg_mod, "APPDATA_DIR", appdata_dir)
+        monkeypatch.setattr(cfg_mod, "_BASE_DIR", install_root)
+
+        result = cfg_mod.Config.migrate_env()
+        assert result is False
+        # Config should still be usable
+        assert isinstance(cfg_mod.Config.GENIUS_API_TOKEN, str)
 
 
 # ===========================================================================

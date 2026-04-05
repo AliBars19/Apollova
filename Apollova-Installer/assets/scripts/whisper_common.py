@@ -1117,21 +1117,91 @@ def quality_gate(markers, clip_duration):
 # LYRICS QUALITY VALIDATION (#32: Catch visual errors before rendering)
 # ============================================================================
 
-def validate_lyrics_quality(markers: list) -> tuple[bool, list[str]]:
+def _parse_genius_lines(genius_text: str) -> list[str]:
+    """
+    Parse Genius lyrics into individual lines, stripping section headers
+    like [Chorus], [Verse 1], (Hook), etc. Returns lowercased cleaned lines
+    with parenthesized adlibs removed for matching purposes.
+    """
+    raw_lines = [ln.strip() for ln in genius_text.splitlines() if ln.strip()]
+    result = []
+    for ln in raw_lines:
+        # Skip section headers: [Chorus], [Verse 1], (Bridge), etc.
+        stripped = ln.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            continue
+        if stripped.startswith("(") and stripped.endswith(")"):
+            inner = stripped[1:-1].lower()
+            section_words = {"chorus", "verse", "bridge", "intro", "outro",
+                             "hook", "pre-chorus", "refrain", "interlude",
+                             "break", "produced"}
+            if any(inner.startswith(sw) for sw in section_words):
+                continue
+        # Strip parenthesized adlibs for matching: "line (yeah)" -> "line"
+        clean = re.sub(r"\s*\([^)]*\)\s*", " ", stripped).strip()
+        if clean:
+            result.append(clean.lower())
+    return result
+
+
+def _count_genius_occurrences(line: str, genius_lines: list[str],
+                              threshold: int = LYRICS_DUPLICATE_THRESHOLD) -> int:
+    """
+    Count how many Genius lines fuzzy-match the given line.
+    Genius is treated as ground truth — occurrence count is authoritative.
+    """
+    clean = re.sub(r"\s*\([^)]*\)\s*", " ", line).strip().lower()
+    if not clean:
+        return 0
+    count = 0
+    for gl in genius_lines:
+        if fuzz.ratio(clean, gl) >= threshold:
+            count += 1
+    return count
+
+
+def _count_whisper_occurrences(line: str, all_texts: list[str],
+                               threshold: int = LYRICS_DUPLICATE_THRESHOLD) -> int:
+    """Count how many times a line appears in the Whisper output."""
+    clean = line.lower().replace("\\r", " ")
+    if not clean:
+        return 0
+    count = 0
+    for t in all_texts:
+        if fuzz.ratio(clean, t.lower().replace("\\r", " ")) >= threshold:
+            count += 1
+    return count
+
+
+def validate_lyrics_quality(
+    markers: list,
+    genius_text: str | None = None,
+) -> tuple[bool, list[str]]:
     """
     Validate lyrics for visual quality issues that would be visible in the
     rendered video. Catches problems that only a human would normally spot.
 
+    When genius_text is provided, it is treated as ground truth — duplicate
+    warnings are only raised when Whisper has MORE occurrences of a line
+    than Genius does. Legitimate repetitions confirmed by Genius are skipped.
+
     Returns (passed, warnings) where warnings is a list of issue strings.
     Does NOT modify markers — purely diagnostic.
     """
+
     warnings = []
     if not markers:
         return True, warnings
 
     texts = [m.get("text", "").strip() for m in markers]
 
+    # Parse Genius lines once if available
+    genius_lines = _parse_genius_lines(genius_text) if genius_text else []
+    has_genius = len(genius_lines) > 0
+
     # 1. Fuzzy duplicate detection — consecutive near-identical lines
+    #    With Genius: only flag if Whisper count exceeds Genius count
+    #    Without Genius: flag all consecutive duplicates (conservative)
     for i in range(1, len(texts)):
         if not texts[i] or not texts[i - 1]:
             continue
@@ -1140,32 +1210,66 @@ def validate_lyrics_quality(markers: list) -> tuple[bool, list[str]]:
             texts[i - 1].lower().replace("\\r", " "),
         )
         if ratio >= LYRICS_DUPLICATE_THRESHOLD:
-            warnings.append(
-                f"Consecutive duplicate (line {i}/{i + 1}, {ratio}% match): "
-                f"'{texts[i - 1][:40]}' ~ '{texts[i][:40]}'"
-            )
+            if has_genius:
+                genius_count = _count_genius_occurrences(texts[i], genius_lines)
+                whisper_count = _count_whisper_occurrences(texts[i], texts)
+                if whisper_count <= genius_count:
+                    continue  # Genius confirms this repetition — skip
+                warnings.append(
+                    f"[CONFIRMED] Consecutive duplicate (line {i}/{i + 1}, "
+                    f"{ratio}% match, Whisper={whisper_count}x vs Genius={genius_count}x): "
+                    f"'{texts[i - 1][:40]}' ~ '{texts[i][:40]}'"
+                )
+            else:
+                warnings.append(
+                    f"[UNVERIFIED] Consecutive duplicate (line {i}/{i + 1}, "
+                    f"{ratio}% match): "
+                    f"'{texts[i - 1][:40]}' ~ '{texts[i][:40]}'"
+                )
 
     # 2. Non-consecutive fuzzy duplicates (chorus echo)
+    #    With Genius: only flag if total Whisper occurrences exceed Genius count
+    #    Without Genius: flag all non-consecutive duplicates
+    already_checked = set()
     for i in range(len(texts)):
+        if not texts[i]:
+            continue
+        line_key = texts[i].lower().replace("\\r", " ")
+        if line_key in already_checked:
+            continue
         for j in range(i + 2, len(texts)):
-            if not texts[i] or not texts[j]:
+            if not texts[j]:
                 continue
             ratio = fuzz.ratio(
-                texts[i].lower().replace("\\r", " "),
+                line_key,
                 texts[j].lower().replace("\\r", " "),
             )
             if ratio >= LYRICS_DUPLICATE_THRESHOLD:
-                warnings.append(
-                    f"Repeated line (line {i + 1} & {j + 1}, {ratio}% match): "
-                    f"'{texts[i][:40]}'"
-                )
+                if has_genius:
+                    genius_count = _count_genius_occurrences(texts[i], genius_lines)
+                    whisper_count = _count_whisper_occurrences(texts[i], texts)
+                    if whisper_count <= genius_count:
+                        already_checked.add(line_key)
+                        break  # Genius confirms — skip all pairs for this line
+                    warnings.append(
+                        f"[CONFIRMED] Repeated line (line {i + 1} & {j + 1}, "
+                        f"{ratio}% match, Whisper={whisper_count}x vs Genius={genius_count}x): "
+                        f"'{texts[i][:40]}'"
+                    )
+                else:
+                    warnings.append(
+                        f"[UNVERIFIED] Repeated line (line {i + 1} & {j + 1}, "
+                        f"{ratio}% match): "
+                        f"'{texts[i][:40]}'"
+                    )
+                already_checked.add(line_key)
+                break  # One warning per unique line is enough
 
     # 3. Truncated lines — ends mid-word or with incomplete phrase
     for i, text in enumerate(texts):
         clean = text.replace("\\r", " ").rstrip()
         if not clean:
             continue
-        # Ends with a dangling preposition/article suggesting cut-off
         trailing = clean.split()[-1].lower() if clean.split() else ""
         dangling_words = {"a", "an", "the", "to", "of", "in", "at", "is",
                           "on", "and", "but", "or", "with", "that", "this"}
@@ -1479,8 +1583,8 @@ def transcribe_word_level(job_folder, song_title, template_name,
         print(f"  After cleanup: {len(markers)} markers")
 
         # Genius alignment — check database cache first
+        genius_text = None
         if song_title and Config.GENIUS_API_TOKEN:
-            genius_text = None
             try:
                 from scripts.song_database import SongDatabase
                 _db = SongDatabase(db_path=os.path.join(
@@ -1539,8 +1643,8 @@ def transcribe_word_level(job_folder, song_title, template_name,
         if not passed:
             print(f"  \u26a0 QUALITY WARNING: {'; '.join(issues)}")
 
-        # #32: Validate lyrics for visual quality issues
-        validate_lyrics_quality(markers)
+        # #32: Validate lyrics for visual quality issues (Genius = ground truth)
+        validate_lyrics_quality(markers, genius_text=genius_text)
 
         # Compute and save quality score
         score = compute_quality_score(markers)

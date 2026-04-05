@@ -914,6 +914,7 @@ class TestValidateLyricsQuality:
         passed, w = validate_lyrics_quality(markers)
         assert not passed
         assert any("Consecutive duplicate" in x for x in w)
+        assert any("UNVERIFIED" in x for x in w)
 
     def test_consecutive_near_duplicate(self):
         markers = [self._m("When we shared a bed"), self._m("When we shared a bed yeah")]
@@ -933,6 +934,7 @@ class TestValidateLyricsQuality:
         passed, w = validate_lyrics_quality(markers)
         assert not passed
         assert any("Repeated line" in x for x in w)
+        assert any("UNVERIFIED" in x for x in w)
 
     def test_sombr_back_to_friends_real_case(self):
         """Real case: duplicate chorus from Job 5."""
@@ -1051,3 +1053,126 @@ class TestValidateLyricsQuality:
         original = copy.deepcopy(markers)
         validate_lyrics_quality(markers)
         assert markers == original
+
+    # --- Genius cross-reference: duplicates suppressed when Genius confirms ---
+
+    def test_genius_confirms_consecutive_repeat_suppressed(self):
+        """Genius has the line twice — consecutive duplicate is legitimate."""
+        genius = "How can we go back to being friends\nSomething else\nHow can we go back to being friends"
+        markers = [
+            self._m("How can we go back to being friends"),
+            self._m("How can we go back to being friends"),
+        ]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        # No duplicate warnings — Genius says 2x, Whisper has 2x
+        assert not any("duplicate" in x.lower() or "Repeated" in x for x in w)
+
+    def test_genius_denies_consecutive_repeat_flagged(self):
+        """Genius has the line once — consecutive duplicate is hallucination."""
+        genius = "How can we go back to being friends\nWhen we just shared a bed\nI'm someone you never met"
+        markers = [
+            self._m("How can we go back to being friends"),
+            self._m("How can we go back to being friends"),
+        ]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        assert not passed
+        assert any("CONFIRMED" in x for x in w)
+
+    def test_genius_confirms_chorus_echo_suppressed(self):
+        """Non-consecutive repeat confirmed by Genius chorus."""
+        genius = "[Verse]\nI love the night\nStars are bright\n[Chorus]\nI love the night"
+        markers = [
+            self._m("I love the night"),
+            self._m("Stars are bright"),
+            self._m("I love the night"),
+        ]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        # Genius has "I love the night" 2x, Whisper has 2x — no warning
+        assert not any("Repeated" in x for x in w)
+
+    def test_genius_denies_chorus_echo_flagged(self):
+        """Whisper has 3 occurrences, Genius only 2 — flag the excess."""
+        genius = "I love the night\nStars are bright\nI love the night"
+        markers = [
+            self._m("I love the night"),
+            self._m("Stars are bright"),
+            self._m("I love the night"),
+            self._m("More lyrics here"),
+            self._m("I love the night"),
+        ]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        assert not passed
+        assert any("CONFIRMED" in x and "Repeated" in x for x in w)
+
+    def test_genius_with_adlibs_stripped_for_matching(self):
+        """Genius line with (yeah) adlib still matches Whisper without it."""
+        genius = "Feel the beat (yeah)\nDance all night (oh)\nFeel the beat (yeah)"
+        markers = [
+            self._m("Feel the beat"),
+            self._m("Dance all night"),
+            self._m("Feel the beat"),
+        ]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        assert not any("Repeated" in x for x in w)
+
+    def test_genius_section_headers_ignored(self):
+        """[Chorus] headers are stripped — only lyric lines counted."""
+        genius = "[Chorus]\nHello world\n[Verse 1]\nSomething else\n[Chorus]\nHello world"
+        markers = [
+            self._m("Hello world"),
+            self._m("Something else"),
+            self._m("Hello world"),
+        ]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        # "Hello world" appears 2x in Genius lyrics (headers excluded), 2x in Whisper
+        assert not any("Repeated" in x for x in w)
+
+    def test_genius_empty_string_treated_as_absent(self):
+        """Empty genius_text should behave like None — unverified warnings."""
+        markers = [self._m("Same line"), self._m("Same line")]
+        passed, w = validate_lyrics_quality(markers, genius_text="")
+        assert not passed
+        assert any("UNVERIFIED" in x for x in w)
+
+    def test_genius_none_gives_unverified_warnings(self):
+        """Without Genius, duplicate warnings are tagged UNVERIFIED."""
+        markers = [self._m("Same line"), self._m("Same line")]
+        passed, w = validate_lyrics_quality(markers, genius_text=None)
+        assert not passed
+        assert any("UNVERIFIED" in x for x in w)
+
+    def test_genius_does_not_affect_truncation_checks(self):
+        """Genius cross-ref only affects duplicate checks, not truncation."""
+        genius = "I wanna be the\nBest in the world"
+        markers = [self._m("I wanna be the")]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        assert not passed
+        assert any("truncation" in x.lower() for x in w)
+
+    def test_genius_does_not_affect_orphan_checks(self):
+        """Genius cross-ref only affects duplicate checks, not orphans."""
+        genius = "X\nReal lyrics here"
+        markers = [self._m("X")]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        assert not passed
+        assert any("Orphan" in x for x in w)
+
+    def test_genius_real_case_sombr_with_genius(self):
+        """Real case: Job 5 — Genius only has the line once, Whisper doubled it."""
+        genius = (
+            "How can we go back to being friends\n"
+            "When we just shared a bed?\n"
+            "I'm someone you've never met\n"
+            "I'll never let you forget"
+        )
+        markers = [
+            self._m("How can we go back to being friends"),
+            self._m("When we just shared a bed?"),
+            self._m("How can we go back to being friends"),
+            self._m("When we just shared a bed? (Yeah)"),
+            self._m("I'm someone you've never met?"),
+        ]
+        passed, w = validate_lyrics_quality(markers, genius_text=genius)
+        assert not passed
+        # Should flag the duplicate with CONFIRMED since Genius only has it 1x
+        assert any("CONFIRMED" in x for x in w)

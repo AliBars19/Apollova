@@ -5,11 +5,10 @@ No external API required — runs entirely on the local audio file.
 """
 
 import logging
-import tempfile
 import os
 from pathlib import Path
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 
 import numpy as np
 

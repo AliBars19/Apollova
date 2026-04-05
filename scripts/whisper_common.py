@@ -199,6 +199,12 @@ def separate_vocals(audio_path, job_folder):
     Uses a shared cache so the same audio doesn't run Demucs multiple times
     across Aurora/Mono/Onyx.
     """
+    # Validate audio_path is within expected directory
+    resolved = os.path.realpath(audio_path)
+    if not resolved.endswith(('.wav', '.mp3', '.m4a', '.flac')):
+        print(f"  \u26a0 Unexpected audio file extension: {audio_path}")
+        return audio_path
+
     vocals_path = os.path.join(job_folder, "vocals.wav")
 
     # Use cached vocals if already separated in this job folder
@@ -1383,7 +1389,7 @@ def validate_lyrics_quality(
 # WHISPER QUALITY SCORING (#20b: Per-song quality metrics)
 # ============================================================================
 
-def compute_quality_score(markers, genius_text=None):
+def compute_quality_score(markers):
     """
     Compute quality metrics for a transcription result.
 
@@ -1480,9 +1486,19 @@ def load_whisper_cache(job_folder):
         else:
             # Old format: bare list — use it but it can't be validated
             data = raw
-        if data:
-            print(f"  \u267b Loaded {len(data)} segments from Whisper cache")
-            return data
+        # Validate each segment has required fields
+        validated = []
+        for seg in data:
+            if (isinstance(seg, dict)
+                    and isinstance(seg.get("start"), (int, float))
+                    and isinstance(seg.get("end"), (int, float))
+                    and isinstance(seg.get("text"), str)):
+                validated.append(seg)
+        if validated:
+            if len(validated) < len(data):
+                print(f"  \u26a0 Dropped {len(data) - len(validated)} malformed cache segments")
+            print(f"  \u267b Loaded {len(validated)} segments from Whisper cache")
+            return validated
     except Exception as e:
         print(f"  \u26a0 Failed to load Whisper cache: {e}")
     return None

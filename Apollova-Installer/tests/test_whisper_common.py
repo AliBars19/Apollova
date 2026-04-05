@@ -33,6 +33,7 @@ from scripts.whisper_common import (
     remove_non_target_script,
     build_initial_prompt,
     spread_clustered_words,
+    validate_lyrics_quality,
 )
 
 
@@ -880,3 +881,173 @@ class TestSpreadClusteredWords:
         spread_clustered_words(markers)
         # span = (1.0 + 5.0) - 1.0 = 5.0 → should spread
         assert markers[0]["words"][1]["start"] > 1.0
+
+
+# ===========================================================================
+# validate_lyrics_quality — #32: Visual QA checks
+# ===========================================================================
+
+class TestValidateLyricsQuality:
+    """Tests for the lyrics visual quality validator."""
+
+    def _m(self, text: str, t: float = 0.0) -> dict:
+        """Helper to build a minimal marker dict."""
+        return {"text": text, "time": t}
+
+    # --- Empty / clean input ---
+
+    def test_empty_markers_passes(self):
+        passed, warnings = validate_lyrics_quality([])
+        assert passed is True
+        assert warnings == []
+
+    def test_clean_unique_lyrics_passes(self):
+        markers = [self._m("First line of song"), self._m("Second unique line"), self._m("Third different one")]
+        passed, warnings = validate_lyrics_quality(markers)
+        assert passed is True
+        assert warnings == []
+
+    # --- Consecutive duplicates ---
+
+    def test_consecutive_exact_duplicate(self):
+        markers = [self._m("Hello world"), self._m("Hello world")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Consecutive duplicate" in x for x in w)
+
+    def test_consecutive_near_duplicate(self):
+        markers = [self._m("When we shared a bed"), self._m("When we shared a bed yeah")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Consecutive duplicate" in x or "Repeated line" in x for x in w)
+
+    def test_consecutive_different_lines_no_flag(self):
+        markers = [self._m("Completely different"), self._m("Not similar at all")]
+        passed, _ = validate_lyrics_quality(markers)
+        assert passed
+
+    # --- Non-consecutive duplicates (chorus echo) ---
+
+    def test_non_consecutive_duplicate(self):
+        markers = [self._m("Chorus line"), self._m("A bridge"), self._m("Chorus line")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Repeated line" in x for x in w)
+
+    def test_sombr_back_to_friends_real_case(self):
+        """Real case: duplicate chorus from Job 5."""
+        markers = [
+            self._m("How can we go back to being friends"),
+            self._m("When we just shared a bed?"),
+            self._m("How can we go back to being friends"),
+            self._m("When we just shared a bed? (Yeah)"),
+            self._m("I'm someone you've never met?"),
+        ]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert len(w) >= 2  # At least 2 duplicate warnings
+
+    # --- Truncation detection ---
+
+    def test_truncated_line_ends_with_at(self):
+        markers = [self._m("But she's lookin' at")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("truncation" in x.lower() for x in w)
+
+    def test_truncated_line_ends_with_the(self):
+        markers = [self._m("I wanna be the")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("truncation" in x.lower() for x in w)
+
+    def test_line_ending_with_normal_word_no_flag(self):
+        markers = [self._m("She ride the carnival")]
+        passed, _ = validate_lyrics_quality(markers)
+        assert passed
+
+    def test_line_ending_with_her_no_flag(self):
+        """'her' was removed from dangling list — valid line ending."""
+        markers = [self._m("Everybody's watchin' her")]
+        passed, _ = validate_lyrics_quality(markers)
+        assert passed
+
+    def test_line_ending_with_for_no_flag(self):
+        """'for' was removed from dangling list — valid line ending."""
+        markers = [self._m("This is what you came for")]
+        passed, _ = validate_lyrics_quality(markers)
+        assert passed
+
+    # --- Run-on lines ---
+
+    def test_run_on_line_flagged(self):
+        long_text = "A" * 81
+        markers = [self._m(long_text)]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Run-on" in x for x in w)
+
+    def test_exactly_at_limit_no_flag(self):
+        text = "A" * 80
+        markers = [self._m(text)]
+        passed, w = validate_lyrics_quality(markers)
+        # Should not flag run-on at exactly the limit
+        assert not any("Run-on" in x for x in w)
+
+    def test_future_young_metro_real_case(self):
+        """Real case: massive run-on line from Job 10."""
+        markers = [
+            self._m("Evel Knievel, Pluto tote his heater, leave nigga in the freezer, I am big as a Beatle (Okay, okay)"),
+            self._m("Yeah, yeah"),
+        ]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Run-on" in x for x in w)
+
+    # --- Orphan fragments ---
+
+    def test_single_char_orphan(self):
+        markers = [self._m("X")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Orphan" in x for x in w)
+
+    def test_two_char_orphan(self):
+        markers = [self._m("Oh")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Orphan" in x for x in w)
+
+    def test_short_word_no_orphan_if_longer(self):
+        markers = [self._m("Yeah yeah")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not any("Orphan" in x for x in w)
+
+    # --- Line breaks handled correctly ---
+
+    def test_line_breaks_stripped_for_comparison(self):
+        markers = [self._m("Hello\\rworld"), self._m("Hello\\rworld")]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert any("Consecutive duplicate" in x for x in w)
+
+    # --- Mixed issues ---
+
+    def test_multiple_issue_types_combined(self):
+        markers = [
+            self._m("Oh"),  # orphan
+            self._m("A very long line that just keeps going and going way past the limit of what should be displayed"),  # run-on
+            self._m("Same line"), self._m("Different"), self._m("Same line"),  # non-consecutive dup
+        ]
+        passed, w = validate_lyrics_quality(markers)
+        assert not passed
+        assert len(w) >= 3
+
+    # --- Does not modify input ---
+
+    def test_does_not_mutate_markers(self):
+        markers = [self._m("Test line"), self._m("Test line")]
+        import copy
+        original = copy.deepcopy(markers)
+        validate_lyrics_quality(markers)
+        assert markers == original

@@ -68,6 +68,9 @@ STUTTER_SIMILARITY = 90
 REPETITION_SIMILARITY = 85
 MARKER_GAP_THRESHOLD_SEC = 4.0
 QUALITY_GATE_NON_LATIN_THRESHOLD = 0.5
+LYRICS_DUPLICATE_THRESHOLD = 85
+LYRICS_MAX_LINE_LENGTH = 80
+LYRICS_MIN_LINE_LENGTH = 2
 
 
 # ============================================================================
@@ -944,6 +947,59 @@ def fix_marker_gaps(markers):
 
 
 # ============================================================================
+# CLUSTERED WORD SPREAD (#31: Fix Genius alignment timestamp bunching)
+# ============================================================================
+
+def spread_clustered_words(markers):
+    """
+    Fix words with identical or near-identical start timestamps.
+    Genius alignment often collapses multiple words to the same point in time.
+    Spreads clustered words evenly across the available span so the JSX
+    word-reveal expression shows them one at a time.
+
+    Returns the same markers list (words modified in-place for consistency
+    with fix_marker_gaps which also mutates in-place).
+    """
+    CLUSTER_THRESHOLD = 0.025  # words within 25ms are "clustered"
+
+    for m in markers:
+        words = m.get("words", [])
+        if len(words) < 2:
+            continue
+
+        seg_end = m.get("end_time", m.get("time", 0) + 5.0)
+
+        i = 0
+        while i < len(words):
+            cluster_time = words[i]["start"]
+
+            # Find all words in this cluster
+            j = i + 1
+            while j < len(words) and abs(words[j]["start"] - cluster_time) <= CLUSTER_THRESHOLD:
+                j += 1
+
+            cluster_size = j - i
+            if cluster_size > 1:
+                # Determine available span
+                if j < len(words):
+                    span_end = words[j]["start"]
+                else:
+                    span_end = seg_end
+
+                span = span_end - cluster_time
+                # Only spread if there's enough room (avoid creating impossible timestamps)
+                if 0.05 < span < 30.0:
+                    word_dur = span / cluster_size
+                    for k in range(cluster_size):
+                        words[i + k]["start"] = round(cluster_time + k * word_dur, 3)
+                        words[i + k]["end"] = round(cluster_time + (k + 1) * word_dur, 3)
+
+            i = j
+
+    return markers
+
+
+# ============================================================================
 # MERGE SHORT MARKERS (#19: Combine lonely single-word markers)
 # ============================================================================
 
@@ -1055,6 +1111,150 @@ def quality_gate(markers, clip_duration):
         for iss in issues:
             print(f"   ⚠ Quality gate: {iss}")
     return passed, issues
+
+
+# ============================================================================
+# LYRICS QUALITY VALIDATION (#32: Catch visual errors before rendering)
+# ============================================================================
+
+def validate_lyrics_quality(markers: list) -> tuple[bool, list[str]]:
+    """
+    Validate lyrics for visual quality issues that would be visible in the
+    rendered video. Catches problems that only a human would normally spot.
+
+    Returns (passed, warnings) where warnings is a list of issue strings.
+    Does NOT modify markers — purely diagnostic.
+    """
+    warnings = []
+    if not markers:
+        return True, warnings
+
+    texts = [m.get("text", "").strip() for m in markers]
+
+    # 1. Fuzzy duplicate detection — consecutive near-identical lines
+    for i in range(1, len(texts)):
+        if not texts[i] or not texts[i - 1]:
+            continue
+        ratio = fuzz.ratio(
+            texts[i].lower().replace("\\r", " "),
+            texts[i - 1].lower().replace("\\r", " "),
+        )
+        if ratio >= LYRICS_DUPLICATE_THRESHOLD:
+            warnings.append(
+                f"Consecutive duplicate (line {i}/{i + 1}, {ratio}% match): "
+                f"'{texts[i - 1][:40]}' ~ '{texts[i][:40]}'"
+            )
+
+    # 2. Non-consecutive fuzzy duplicates (chorus echo)
+    for i in range(len(texts)):
+        for j in range(i + 2, len(texts)):
+            if not texts[i] or not texts[j]:
+                continue
+            ratio = fuzz.ratio(
+                texts[i].lower().replace("\\r", " "),
+                texts[j].lower().replace("\\r", " "),
+            )
+            if ratio >= LYRICS_DUPLICATE_THRESHOLD:
+                warnings.append(
+                    f"Repeated line (line {i + 1} & {j + 1}, {ratio}% match): "
+                    f"'{texts[i][:40]}'"
+                )
+
+    # 3. Truncated lines — ends mid-word or with incomplete phrase
+    for i, text in enumerate(texts):
+        clean = text.replace("\\r", " ").rstrip()
+        if not clean:
+            continue
+        # Ends with a dangling preposition/article suggesting cut-off
+        trailing = clean.split()[-1].lower() if clean.split() else ""
+        dangling_words = {"a", "an", "the", "to", "of", "in", "at", "is",
+                          "on", "and", "but", "or", "with", "that", "this"}
+        if trailing in dangling_words and len(clean.split()) > 1:
+            warnings.append(
+                f"Possible truncation (line {i + 1}): ends with '{trailing}' "
+                f"— '{clean[-40:]}'"
+            )
+
+    # 4. Run-on lines — too many characters for comfortable display
+    for i, text in enumerate(texts):
+        clean = text.replace("\\r", " ")
+        if len(clean) > LYRICS_MAX_LINE_LENGTH:
+            warnings.append(
+                f"Run-on line (line {i + 1}, {len(clean)} chars): "
+                f"'{clean[:50]}...'"
+            )
+
+    # 5. Orphan lines — very short single-word non-lyric fragments
+    for i, text in enumerate(texts):
+        clean = text.replace("\\r", " ").strip()
+        word_count = len(clean.split())
+        if 0 < len(clean) <= LYRICS_MIN_LINE_LENGTH and word_count <= 1:
+            warnings.append(
+                f"Orphan fragment (line {i + 1}): '{clean}'"
+            )
+
+    passed = len(warnings) == 0
+    if not passed:
+        print(f"  ⚠ Lyrics quality: {len(warnings)} issue(s) found:")
+        for w in warnings:
+            print(f"    - {w}")
+    else:
+        print("  ✓ Lyrics quality: no issues detected")
+    return passed, warnings
+
+
+# ============================================================================
+# WHISPER QUALITY SCORING (#20b: Per-song quality metrics)
+# ============================================================================
+
+def compute_quality_score(markers, genius_text=None):
+    """
+    Compute quality metrics for a transcription result.
+
+    Returns dict with:
+        - coverage_pct: ratio of clip covered by markers (0.0-1.0)
+        - avg_prob: mean word probability across all words
+        - zero_time_words: count of words where end - start < MIN_WORD_DUR
+        - total_words: total word count
+    """
+    if not markers:
+        return {"coverage_pct": 0.0, "avg_prob": 0.0, "zero_time_words": 0, "total_words": 0}
+
+    all_probs = []
+    zero_time = 0
+    total_words = 0
+
+    for m in markers:
+        for w in m.get("words", []):
+            total_words += 1
+            prob = w.get("probability")
+            if prob is not None:
+                all_probs.append(float(prob))
+            start = float(w.get("start", 0))
+            end = float(w.get("end", 0))
+            if end - start < MIN_WORD_DUR:
+                zero_time += 1
+
+    avg_prob = sum(all_probs) / len(all_probs) if all_probs else 0.0
+
+    # Coverage: total marker time / clip time
+    if len(markers) >= 2:
+        first_start = markers[0]["time"]
+        last_end = markers[-1].get("end_time", markers[-1]["time"])
+        covered = sum(m.get("end_time", m["time"]) - m["time"] for m in markers)
+        span = last_end - first_start
+        coverage_pct = covered / span if span > 0 else 0.0
+    elif len(markers) == 1:
+        coverage_pct = 1.0
+    else:
+        coverage_pct = 0.0
+
+    return {
+        "coverage_pct": round(min(coverage_pct, 1.0), 4),
+        "avg_prob": round(avg_prob, 4),
+        "zero_time_words": zero_time,
+        "total_words": total_words,
+    }
 
 
 # ============================================================================
@@ -1333,10 +1533,32 @@ def transcribe_word_level(job_folder, song_title, template_name,
         markers = merge_short_markers(markers)
         assign_colors(markers)
         fix_marker_gaps(markers)
+        spread_clustered_words(markers)  # #31: Fix Genius alignment bunching
 
         passed, issues = quality_gate(markers, audio_duration)
         if not passed:
             print(f"  \u26a0 QUALITY WARNING: {'; '.join(issues)}")
+
+        # #32: Validate lyrics for visual quality issues
+        validate_lyrics_quality(markers)
+
+        # Compute and save quality score
+        score = compute_quality_score(markers)
+        print(f"  Quality: coverage={score['coverage_pct']:.0%}, "
+              f"avg_prob={score['avg_prob']:.2f}, "
+              f"zero_time={score['zero_time_words']}/{score['total_words']}")
+
+        if song_title:
+            try:
+                from scripts.song_database import SongDatabase
+                _score_db = SongDatabase(db_path=os.path.join(
+                    os.path.dirname(os.path.dirname(os.path.abspath(job_folder))),
+                    "database", "songs.db"))
+                _score_db.save_whisper_quality(
+                    song_title, score["coverage_pct"], score["avg_prob"],
+                    score["zero_time_words"], Config.WHISPER_MODEL)
+            except Exception as e:
+                print(f"  Warning: could not save quality score: {e}")
 
         print(f"\u2713 {template_name} transcription complete: {len(markers)} markers")
 

@@ -68,6 +68,9 @@ STUTTER_SIMILARITY = 90
 REPETITION_SIMILARITY = 85
 MARKER_GAP_THRESHOLD_SEC = 4.0
 QUALITY_GATE_NON_LATIN_THRESHOLD = 0.5
+LYRICS_DUPLICATE_THRESHOLD = 85
+LYRICS_MAX_LINE_LENGTH = 80
+LYRICS_MIN_LINE_LENGTH = 2
 
 
 # ============================================================================
@@ -1111,6 +1114,96 @@ def quality_gate(markers, clip_duration):
 
 
 # ============================================================================
+# LYRICS QUALITY VALIDATION (#32: Catch visual errors before rendering)
+# ============================================================================
+
+def validate_lyrics_quality(markers: list) -> tuple[bool, list[str]]:
+    """
+    Validate lyrics for visual quality issues that would be visible in the
+    rendered video. Catches problems that only a human would normally spot.
+
+    Returns (passed, warnings) where warnings is a list of issue strings.
+    Does NOT modify markers — purely diagnostic.
+    """
+    warnings = []
+    if not markers:
+        return True, warnings
+
+    texts = [m.get("text", "").strip() for m in markers]
+
+    # 1. Fuzzy duplicate detection — consecutive near-identical lines
+    for i in range(1, len(texts)):
+        if not texts[i] or not texts[i - 1]:
+            continue
+        ratio = fuzz.ratio(
+            texts[i].lower().replace("\\r", " "),
+            texts[i - 1].lower().replace("\\r", " "),
+        )
+        if ratio >= LYRICS_DUPLICATE_THRESHOLD:
+            warnings.append(
+                f"Consecutive duplicate (line {i}/{i + 1}, {ratio}% match): "
+                f"'{texts[i - 1][:40]}' ~ '{texts[i][:40]}'"
+            )
+
+    # 2. Non-consecutive fuzzy duplicates (chorus echo)
+    for i in range(len(texts)):
+        for j in range(i + 2, len(texts)):
+            if not texts[i] or not texts[j]:
+                continue
+            ratio = fuzz.ratio(
+                texts[i].lower().replace("\\r", " "),
+                texts[j].lower().replace("\\r", " "),
+            )
+            if ratio >= LYRICS_DUPLICATE_THRESHOLD:
+                warnings.append(
+                    f"Repeated line (line {i + 1} & {j + 1}, {ratio}% match): "
+                    f"'{texts[i][:40]}'"
+                )
+
+    # 3. Truncated lines — ends mid-word or with incomplete phrase
+    for i, text in enumerate(texts):
+        clean = text.replace("\\r", " ").rstrip()
+        if not clean:
+            continue
+        # Ends with a dangling preposition/article suggesting cut-off
+        trailing = clean.split()[-1].lower() if clean.split() else ""
+        dangling_words = {"a", "an", "the", "to", "of", "in", "at", "is",
+                          "on", "and", "but", "or", "with", "that", "this"}
+        if trailing in dangling_words and len(clean.split()) > 1:
+            warnings.append(
+                f"Possible truncation (line {i + 1}): ends with '{trailing}' "
+                f"— '{clean[-40:]}'"
+            )
+
+    # 4. Run-on lines — too many characters for comfortable display
+    for i, text in enumerate(texts):
+        clean = text.replace("\\r", " ")
+        if len(clean) > LYRICS_MAX_LINE_LENGTH:
+            warnings.append(
+                f"Run-on line (line {i + 1}, {len(clean)} chars): "
+                f"'{clean[:50]}...'"
+            )
+
+    # 5. Orphan lines — very short single-word non-lyric fragments
+    for i, text in enumerate(texts):
+        clean = text.replace("\\r", " ").strip()
+        word_count = len(clean.split())
+        if 0 < len(clean) <= LYRICS_MIN_LINE_LENGTH and word_count <= 1:
+            warnings.append(
+                f"Orphan fragment (line {i + 1}): '{clean}'"
+            )
+
+    passed = len(warnings) == 0
+    if not passed:
+        print(f"  ⚠ Lyrics quality: {len(warnings)} issue(s) found:")
+        for w in warnings:
+            print(f"    - {w}")
+    else:
+        print("  ✓ Lyrics quality: no issues detected")
+    return passed, warnings
+
+
+# ============================================================================
 # WHISPER QUALITY SCORING (#20b: Per-song quality metrics)
 # ============================================================================
 
@@ -1445,6 +1538,9 @@ def transcribe_word_level(job_folder, song_title, template_name,
         passed, issues = quality_gate(markers, audio_duration)
         if not passed:
             print(f"  \u26a0 QUALITY WARNING: {'; '.join(issues)}")
+
+        # #32: Validate lyrics for visual quality issues
+        validate_lyrics_quality(markers)
 
         # Compute and save quality score
         score = compute_quality_score(markers)

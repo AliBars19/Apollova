@@ -306,8 +306,12 @@ def _extract_from_preloaded_state(html):
                     raw = raw.replace('\\\\', '\\')
                     raw = raw.encode().decode('unicode_escape')
                 
+                # Reject oversized blobs to prevent memory exhaustion
+                if len(raw) > 5_000_000:  # 5 MB
+                    continue
+
                 state_data = json.loads(raw)
-                
+
                 # Try multiple paths through the JSON structure
                 lyrics_text = _traverse_state_for_lyrics(state_data)
                 if lyrics_text and len(lyrics_text.strip()) > 10:
@@ -589,6 +593,13 @@ def _clean_lyrics(text):
             r"^see\s+.*\s+live\s*$",  # #6: Anchored — only whole-line "See X Live"
             r"^\d+$",                  # Just numbers
             r"^\s*genius\s*$",         # #6: Whole-line only — don't strip lyrics containing "genius"
+            r"read more$",             # Genius editorial "... Read More" suffixes
+            r"^\d+\s*contributor",     # "1 Contributor", "5 Contributors"
+            r"^(this|the) (track|song) (saw|leaked|was|is|debuted|features?|samples?)",  # Editorial descriptions
+            r"^(many|some) fans (speculate|believe|think)",  # Fan commentary
+            r"^(on|in) (january|february|march|april|may|june|july|august|september|october|november|december)",  # Date-prefixed editorial
+            r"announced the (lead |first )?(single|album|track)",  # Release announcements
+            r"^today'?s top hits",     # Playlist metadata
         ]
         
         should_skip = False

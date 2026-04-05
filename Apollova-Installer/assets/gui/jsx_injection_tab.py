@@ -222,6 +222,15 @@ def run_injection(app) -> None:
                 f"JSX preparation failed: {type(e).__name__}: {e}\n{tb}")
         QMessageBox.critical(app, "Error", f"Failed to prepare JSX:\n{e}")
         return
+    # Validate AE path points to AfterFX.exe under an Adobe directory
+    ae_path = Path(ae)
+    if ae_path.name.lower() != "afterfx.exe" or "adobe" not in str(ae_path).lower():
+        if app._log:
+            app._log.error(f"Invalid AE path rejected: {ae}")
+        QMessageBox.critical(app, "Error",
+            f"Invalid After Effects path:\n{ae}\n\n"
+            "Expected AfterFX.exe inside an Adobe installation folder.")
+        return
     try:
         flags = (subprocess.CREATE_NO_WINDOW
                  if sys.platform == "win32" else 0)
@@ -241,13 +250,23 @@ def run_injection(app) -> None:
                              f"Failed to launch After Effects:\n{e}")
 
 
+def _escape_jsx_path(path_str: str) -> str:
+    """Escape a path for safe embedding in a JSX string literal."""
+    return (path_str
+            .replace('\\', '/')
+            .replace("'", "\\'")
+            .replace('"', '\\"')
+            .replace('\n', '')
+            .replace('\r', ''))
+
+
 def prepare_jsx_with_path(jsx_path, jobs_dir, template_path,
                           auto_render: bool = False) -> None:
     with open(jsx_path, 'r', encoding='utf-8') as f:
         c = f.read()
-    c = c.replace('{{JOBS_PATH}}', str(jobs_dir).replace('\\', '/'))
+    c = c.replace('{{JOBS_PATH}}', _escape_jsx_path(str(jobs_dir)))
     c = c.replace('{{TEMPLATE_PATH}}',
-                  str(template_path).replace('\\', '/'))
+                  _escape_jsx_path(str(template_path)))
     c = c.replace('{{AUTO_RENDER}}', 'true' if auto_render else 'false')
     with open(jsx_path, 'w', encoding='utf-8') as f:
         f.write(c)

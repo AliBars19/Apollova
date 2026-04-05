@@ -153,13 +153,14 @@ async def _capture_loop():
 # ---------------------------------------------------------------------------
 async def _broadcast(event: dict):
     dead = []
-    for ws in active_ws_clients:
+    for ws in list(active_ws_clients):
         try:
             await ws.send_json(event)
         except Exception:
             dead.append(ws)
     for ws in dead:
-        active_ws_clients.remove(ws)
+        if ws in active_ws_clients:
+            active_ws_clients.remove(ws)
 
 
 def emit_progress(percent: float, message: str):
@@ -230,6 +231,18 @@ async def database_add(request: Request):
 
     if not title or not url:
         raise HTTPException(400, "title and url are required")
+
+    # Validate YouTube URL format
+    import re as _re
+    _yt_pattern = _re.compile(
+        r'^https?://(www\.)?(youtube\.com/watch\?v=|youtu\.be/|music\.youtube\.com/watch\?v=)')
+    if not _yt_pattern.match(url):
+        raise HTTPException(400, "Invalid YouTube URL")
+
+    # Validate timing format (M:SS or MM:SS)
+    _time_pattern = _re.compile(r'^\d{1,2}:\d{2}$')
+    if not _time_pattern.match(start) or not _time_pattern.match(end):
+        raise HTTPException(400, "start/end must be in M:SS or MM:SS format")
 
     gui.song_db.add_song(
         song_title=title, youtube_url=url,
@@ -444,7 +457,7 @@ async def ws_progress(websocket: WebSocket):
     token_param = websocket.query_params.get("token", "")
     expected = _get_session_token()
 
-    if auth != f"Bearer {expected}" and token_param != expected:
+    if not hmac.compare_digest(auth, f"Bearer {expected}") and not hmac.compare_digest(token_param, expected):
         await websocket.close(code=4001, reason="Unauthorized")
         return
 

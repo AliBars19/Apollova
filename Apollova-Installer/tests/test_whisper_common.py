@@ -34,6 +34,7 @@ from scripts.whisper_common import (
     build_initial_prompt,
     spread_clustered_words,
     validate_lyrics_quality,
+    remove_genius_confirmed_duplicates,
 )
 
 
@@ -1176,3 +1177,187 @@ class TestValidateLyricsQuality:
         assert not passed
         # Should flag the duplicate with CONFIRMED since Genius only has it 1x
         assert any("CONFIRMED" in x for x in w)
+
+
+# ===========================================================================
+# remove_genius_confirmed_duplicates — auto-fix tests
+# ===========================================================================
+
+class TestRemoveGeniusConfirmedDuplicates:
+    """Test the auto-removal of Genius-confirmed duplicate hallucinations."""
+
+    @staticmethod
+    def _m(text, t=0.0):
+        return {"text": text, "time": t, "end_time": t + 3.0, "words": [], "color": ""}
+
+    # --- No-op cases ---
+
+    def test_no_markers_returns_empty(self):
+        result = remove_genius_confirmed_duplicates([], "Some lyrics")
+        assert result == []
+
+    def test_no_genius_returns_copy(self):
+        markers = [self._m("Hello")]
+        result = remove_genius_confirmed_duplicates(markers, None)
+        assert result == markers
+        assert result is not markers  # new list
+
+    def test_empty_genius_returns_copy(self):
+        markers = [self._m("Hello")]
+        result = remove_genius_confirmed_duplicates(markers, "")
+        assert result == markers
+
+    def test_no_duplicates_unchanged(self):
+        genius = "Line one\nLine two\nLine three"
+        markers = [self._m("Line one"), self._m("Line two"), self._m("Line three")]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        assert len(result) == 3
+
+    # --- Core removal logic ---
+
+    def test_removes_consecutive_hallucination(self):
+        """Genius has line once, Whisper has it twice — remove the second."""
+        genius = "Hello world\nGoodbye world"
+        markers = [self._m("Hello world"), self._m("Hello world"), self._m("Goodbye world")]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        assert len(result) == 2
+        assert result[0]["text"] == "Hello world"
+        assert result[1]["text"] == "Goodbye world"
+
+    def test_keeps_legitimate_repeat(self):
+        """Genius has line twice — both Whisper occurrences are kept."""
+        genius = "Hello world\nSomething else\nHello world"
+        markers = [
+            self._m("Hello world", 0),
+            self._m("Something else", 3),
+            self._m("Hello world", 6),
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        assert len(result) == 3
+
+    def test_removes_excess_only(self):
+        """Genius has line 2x, Whisper has 4x — remove 2 extras."""
+        genius = "Chorus line\nVerse line\nChorus line"
+        markers = [
+            self._m("Chorus line", 0),
+            self._m("Verse line", 3),
+            self._m("Chorus line", 6),
+            self._m("Chorus line", 9),
+            self._m("Chorus line", 12),
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        assert len(result) == 3
+        texts = [m["text"] for m in result]
+        assert texts.count("Chorus line") == 2
+        assert texts.count("Verse line") == 1
+
+    def test_removes_line_absent_from_genius(self):
+        """Line doesn't exist in Genius at all — genius_count=0, remove all."""
+        genius = "Real line one\nReal line two"
+        markers = [
+            self._m("Real line one"),
+            self._m("Hallucinated garbage"),
+            self._m("Real line two"),
+            self._m("Hallucinated garbage"),
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        assert len(result) == 2
+        assert all(m["text"] != "Hallucinated garbage" for m in result)
+
+    def test_adlibs_stripped_for_matching(self):
+        """Genius has 'Feel the beat (yeah)' — Whisper 'Feel the beat' matches."""
+        genius = "Feel the beat (yeah)\nDance all night"
+        markers = [
+            self._m("Feel the beat"),
+            self._m("Feel the beat"),
+            self._m("Dance all night"),
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        # Genius has "Feel the beat" 1x (after adlib strip), so keep 1
+        assert len(result) == 2
+
+    def test_section_headers_ignored(self):
+        """[Chorus] headers don't count as lyric lines."""
+        genius = "[Chorus]\nHello world\n[Verse]\nOther line"
+        markers = [self._m("Hello world"), self._m("Hello world")]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        # Genius has "Hello world" 1x, Whisper 2x — remove 1
+        assert len(result) == 1
+
+    def test_real_case_sombr_job5(self):
+        """Real case: Job 5 duplicate hallucination auto-fixed."""
+        genius = (
+            "How can we go back to being friends\n"
+            "When we just shared a bed?\n"
+            "I'm someone you've never met\n"
+            "I'll never let you forget"
+        )
+        markers = [
+            self._m("How can we go back to being friends", 0),
+            self._m("When we just shared a bed?", 3),
+            self._m("How can we go back to being friends", 6),
+            self._m("When we just shared a bed?", 9),
+            self._m("I'm someone you've never met?", 12),
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        # Each line appears 1x in Genius, so duplicates removed
+        texts = [m["text"] for m in result]
+        assert texts.count("How can we go back to being friends") == 1
+        assert texts.count("When we just shared a bed?") == 1
+        assert len(result) == 3
+
+    def test_does_not_mutate_input(self):
+        genius = "One line"
+        markers = [self._m("One line"), self._m("One line")]
+        original = copy.deepcopy(markers)
+        remove_genius_confirmed_duplicates(markers, genius)
+        assert markers == original
+
+    def test_preserves_marker_fields(self):
+        """Kept markers retain all their original fields."""
+        genius = "Hello world\nGoodbye world"
+        markers = [
+            {"text": "Hello world", "time": 1.5, "end_time": 4.0, "words": [{"w": "hello"}], "color": "white"},
+            {"text": "Goodbye world", "time": 5.0, "end_time": 8.0, "words": [{"w": "bye"}], "color": "black"},
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        assert result[0]["time"] == 1.5
+        assert result[0]["words"] == [{"w": "hello"}]
+        assert result[0]["color"] == "white"
+
+    def test_keeps_first_n_occurrences(self):
+        """When removing excess, the FIRST N by order are kept."""
+        genius = "Yo\nOther\nYo"
+        markers = [
+            self._m("Yo", 0),
+            self._m("Other", 3),
+            self._m("Yo", 6),
+            self._m("Yo", 9),
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        # Genius has "Yo" 2x — keep first 2, remove the 3rd (at t=9)
+        assert len(result) == 3
+        assert result[0]["time"] == 0
+        assert result[2]["time"] == 6
+
+    def test_fuzzy_match_catches_near_duplicates(self):
+        """Whisper 'bein friends' fuzzy-matches Genius 'being friends'."""
+        genius = "How can we go back to being friends"
+        markers = [
+            self._m("How can we go back to bein friends"),
+            self._m("How can we go back to bein friends"),
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius)
+        # Genius 1x, Whisper 2x — remove 1
+        assert len(result) == 1
+
+    def test_custom_text_key(self):
+        """Works with Aurora's 'lyric_current' key."""
+        genius = "Hello\nWorld"
+        markers = [
+            {"lyric_current": "Hello", "time": 0},
+            {"lyric_current": "Hello", "time": 3},
+            {"lyric_current": "World", "time": 6},
+        ]
+        result = remove_genius_confirmed_duplicates(markers, genius, text_key="lyric_current")
+        assert len(result) == 2

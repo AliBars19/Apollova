@@ -1117,6 +1117,78 @@ def quality_gate(markers, clip_duration):
 # LYRICS QUALITY VALIDATION (#32: Catch visual errors before rendering)
 # ============================================================================
 
+
+def remove_genius_confirmed_duplicates(
+    markers: list,
+    genius_text: str | None = None,
+    text_key: str = "text",
+) -> list:
+    """
+    Auto-remove duplicate markers that Genius confirms are hallucinations.
+
+    Genius is treated as ground truth. For each unique line, we count how
+    many times it appears in Genius vs Whisper. If Whisper has more
+    occurrences than Genius, the excess are removed (keeping the first N
+    where N = Genius count).
+
+    Returns a new list — does NOT mutate the input.
+    """
+    if not markers or not genius_text or not genius_text.strip():
+        return list(markers)
+
+    genius_lines = _parse_genius_lines(genius_text)
+    if not genius_lines:
+        return list(markers)
+
+    # Build a map: normalized line -> genius count
+    # Process each unique line in Whisper output
+    seen_lines: dict[str, dict] = {}
+    for i, m in enumerate(markers):
+        text = m.get(text_key, "").strip()
+        if not text:
+            continue
+        normalized = re.sub(r"\s*\([^)]*\)\s*", " ", text).strip().lower()
+        if not normalized:
+            continue
+
+        if normalized not in seen_lines:
+            genius_count = _count_genius_occurrences(text, genius_lines)
+            seen_lines[normalized] = {
+                "genius_count": genius_count,
+                "indices": [],
+            }
+        seen_lines[normalized]["indices"].append(i)
+
+    # Determine which indices to remove
+    remove_indices = set()
+    removed_lines = []
+    for normalized, info in seen_lines.items():
+        genius_count = info["genius_count"]
+        whisper_indices = info["indices"]
+        whisper_count = len(whisper_indices)
+
+        if whisper_count > genius_count and genius_count >= 0:
+            # Keep the first genius_count occurrences, remove the rest
+            to_remove = whisper_indices[genius_count:]
+            remove_indices.update(to_remove)
+            if to_remove:
+                sample_text = markers[whisper_indices[0]].get(text_key, "")[:40]
+                removed_lines.append(
+                    f"'{sample_text}' (Whisper={whisper_count}x, "
+                    f"Genius={genius_count}x, removed {len(to_remove)})"
+                )
+
+    if remove_indices:
+        result = [m for i, m in enumerate(markers) if i not in remove_indices]
+        print(f"  \u2702 Auto-removed {len(remove_indices)} Genius-confirmed "
+              f"hallucination(s):")
+        for desc in removed_lines:
+            print(f"    - {desc}")
+        return result
+
+    return list(markers)
+
+
 def _parse_genius_lines(genius_text: str) -> list[str]:
     """
     Parse Genius lyrics into individual lines, stripping section headers
@@ -1634,6 +1706,14 @@ def transcribe_word_level(job_folder, song_title, template_name,
         # Final cleanup
         markers = [m for m in markers if m["text"].strip()]
         markers = remove_non_target_script(markers, "text", song_title)
+
+        # #32: Auto-remove Genius-confirmed hallucinations before formatting
+        before_count = len(markers)
+        markers = remove_genius_confirmed_duplicates(markers, genius_text, "text")
+        if len(markers) < before_count:
+            print(f"  After auto-fix: {len(markers)} markers "
+                  f"(removed {before_count - len(markers)})")
+
         markers = merge_short_markers(markers)
         assign_colors(markers)
         fix_marker_gaps(markers)
@@ -1643,7 +1723,7 @@ def transcribe_word_level(job_folder, song_title, template_name,
         if not passed:
             print(f"  \u26a0 QUALITY WARNING: {'; '.join(issues)}")
 
-        # #32: Validate lyrics for visual quality issues (Genius = ground truth)
+        # #32: Validate remaining lyrics for visual quality issues
         validate_lyrics_quality(markers, genius_text=genius_text)
 
         # Compute and save quality score

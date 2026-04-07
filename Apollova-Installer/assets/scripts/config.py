@@ -1,9 +1,5 @@
-import logging
 import os
-import shutil
 from pathlib import Path
-
-logger = logging.getLogger(__name__)
 
 # Resolve the base install directory (assets/../)
 # This file lives at: <install>/assets/scripts/config.py
@@ -11,22 +7,11 @@ _SCRIPTS_DIR = Path(__file__).parent          # .../assets/scripts
 _ASSETS_DIR  = _SCRIPTS_DIR.parent            # .../assets
 _BASE_DIR    = _ASSETS_DIR.parent             # .../  (install root)
 
-# Preferred .env location: %APPDATA%/Apollova/
-APPDATA_DIR = Path(os.environ.get("APPDATA", "")) / "Apollova"
-
-# Load .env — check APPDATA first, fall back to install root
+# Load .env from install root so Genius API token etc. are picked up
 try:
     from dotenv import load_dotenv
-    _appdata_env = APPDATA_DIR / ".env"
-    _install_env = _BASE_DIR / ".env"
-    if _appdata_env.is_file():
-        _env_file = _appdata_env
-    elif _install_env.is_file():
-        _env_file = _install_env
-    else:
-        _env_file = None
-    if _env_file is not None:
-        load_dotenv(dotenv_path=str(_env_file))
+    _env_file = _BASE_DIR / ".env"
+    load_dotenv(dotenv_path=str(_env_file))
 except ImportError:
     pass
 
@@ -67,23 +52,6 @@ class Config:
         'tiny', 'base', 'small', 'medium',
         'large', 'large-v2', 'large-v3',
     ]
-
-    @classmethod
-    def migrate_env(cls) -> bool:
-        """Copy install-root .env to APPDATA if APPDATA version doesn't exist yet.
-
-        Returns True if migration was performed, False otherwise.
-        """
-        appdata_env = APPDATA_DIR / ".env"
-        install_env = _BASE_DIR / ".env"
-        if appdata_env.is_file():
-            return False
-        if not install_env.is_file():
-            return False
-        APPDATA_DIR.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(str(install_env), str(appdata_env))
-        logger.info("Migrated .env from %s to %s", install_env, appdata_env)
-        return True
 
     @classmethod
     def set_max_line_length(cls, length):

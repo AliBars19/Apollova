@@ -559,6 +559,79 @@ def _cloudflare_html_to_text(html_fragment):
 
 
 # ============================================================================
+# TEXT NORMALIZATION HELPERS
+# ============================================================================
+
+def _fix_mojibake(text: str) -> str:
+    """
+    Repair UTF-8 text that was incorrectly decoded as Latin-1.
+    Common in Genius scraping: 'â€"' -> '—', 'â€™' -> ''', etc.
+    Returns the original text unchanged if repair fails or isn't needed.
+    """
+    try:
+        repaired = text.encode('latin-1').decode('utf-8')
+        if repaired != text:
+            return repaired
+    except (UnicodeDecodeError, UnicodeEncodeError):
+        pass
+    return text
+
+
+_CYRILLIC_TO_LATIN: dict[str, str] = {
+    '\u0430': 'a', '\u0435': 'e', '\u043e': 'o', '\u0440': 'p',
+    '\u0441': 'c', '\u0443': 'y', '\u0445': 'x',
+    '\u0410': 'A', '\u0412': 'B', '\u0415': 'E', '\u041a': 'K',
+    '\u041c': 'M', '\u041d': 'H', '\u041e': 'O', '\u0420': 'P',
+    '\u0421': 'C', '\u0422': 'T', '\u0423': 'Y', '\u0425': 'X',
+}
+
+
+def _normalize_homoglyphs(text: str) -> str:
+    """
+    Replace Cyrillic lookalike characters with Latin equivalents.
+    Only applied when the line is predominantly Latin (>80% Latin alpha chars),
+    so actual Cyrillic lyrics are not modified.
+    """
+    alpha_chars = [c for c in text if c.isalpha()]
+    if not alpha_chars:
+        return text
+    latin_count = sum(1 for c in alpha_chars if ord(c) < 0x0250)
+    if latin_count / len(alpha_chars) <= 0.80:
+        return text
+    return "".join(_CYRILLIC_TO_LATIN.get(c, c) for c in text)
+
+
+_ARTIST_TITLE_RE = re.compile(
+    r"^[A-Z][\w\s&+.'\u2019]+ - [A-Z][\w\s&+.'\u2019()]+$"
+)
+
+
+def _is_artist_title_line(line: str) -> bool:
+    """Detect 'Artist - Song Title' metadata lines from Genius related-songs sections."""
+    stripped = line.strip()
+    if ' - ' not in stripped or '\u2014' in stripped:
+        return False
+    return bool(_ARTIST_TITLE_RE.match(stripped))
+
+
+def _remove_consecutive_artist_titles(lines: list[str]) -> list[str]:
+    """Remove runs of 2+ consecutive 'Artist - Title' lines."""
+    result: list[str] = []
+    run: list[str] = []
+    for ln in lines:
+        if ln and _is_artist_title_line(ln):
+            run.append(ln)
+        else:
+            if len(run) < 2:
+                result.extend(run)
+            run = []
+            result.append(ln)
+    if len(run) < 2:
+        result.extend(run)
+    return result
+
+
+# ============================================================================
 # LYRICS CLEANUP
 # ============================================================================
 def _clean_lyrics(text):
@@ -571,14 +644,23 @@ def _clean_lyrics(text):
     """
     if not text:
         return None
-    
+
+    # Pre-clean: fix encoding issues on the entire block
+    text = _fix_mojibake(text)
+
     lines = []
+    after_ymal = False  # "you might also like" flag
+
     for ln in text.splitlines():
         ln = ln.strip()
         if not ln:
             lines.append("")  # Preserve blank lines (section breaks)
+            after_ymal = False
             continue
-        
+
+        # Normalize Cyrillic homoglyphs per line
+        ln = _normalize_homoglyphs(ln)
+
         # Skip known metadata/junk lines
         lower = ln.lower()
         skip_patterns = [
@@ -590,29 +672,39 @@ def _clean_lyrics(text):
             r"^\d+$",                  # Just numbers
             r"^\s*genius\s*$",         # #6: Whole-line only — don't strip lyrics containing "genius"
         ]
-        
+
         should_skip = False
         for pattern in skip_patterns:
             if re.search(pattern, lower):
                 should_skip = True
+                if "you might also like" in lower:
+                    after_ymal = True
                 break
-        
+
         if should_skip:
             continue
-        
+
+        # After "you might also like", skip artist-title metadata lines
+        if after_ymal and _is_artist_title_line(ln):
+            continue
+        after_ymal = False  # non-matching line resets
+
         lines.append(ln)
-    
+
+    # Second pass: remove runs of 2+ consecutive artist-title lines
+    lines = _remove_consecutive_artist_titles(lines)
+
     # Remove leading/trailing blank lines
     while lines and not lines[0].strip():
         lines.pop(0)
     while lines and not lines[-1].strip():
         lines.pop()
-    
+
     result = "\n".join(lines)
-    
+
     # Remove excessive blank lines (more than 2 consecutive)
     result = re.sub(r'\n{3,}', '\n\n', result)
-    
+
     return result if result.strip() else None
 
 

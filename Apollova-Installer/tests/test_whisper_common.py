@@ -27,6 +27,7 @@ import pytest
 from scripts.whisper_common import (
     detect_language,
     remove_hallucinations,
+    remove_genius_mismatches,
     remove_junk,
     remove_repetition_loops,
     remove_stutter_duplicates,
@@ -1361,3 +1362,81 @@ class TestRemoveGeniusConfirmedDuplicates:
         ]
         result = remove_genius_confirmed_duplicates(markers, genius, text_key="lyric_current")
         assert len(result) == 2
+
+
+# ===========================================================================
+# remove_genius_mismatches — 10 tests (#33)
+# ===========================================================================
+
+class TestRemoveGeniusMismatches:
+    """Tests for the Genius cross-reference hallucination detector."""
+
+    def test_empty_items_returns_empty(self):
+        assert remove_genius_mismatches([], "text", "some lyrics") == []
+
+    def test_none_genius_returns_items_unchanged(self):
+        items = [{"text": "hello world foo bar"}]
+        result = remove_genius_mismatches(items, "text", None)
+        assert len(result) == 1
+
+    def test_empty_genius_returns_items_unchanged(self):
+        items = [{"text": "hello world foo bar"}]
+        result = remove_genius_mismatches(items, "text", "")
+        assert len(result) == 1
+
+    def test_matching_segment_is_kept(self):
+        genius = "Close to you, close to you\nJust like me, they long to be"
+        items = [{"text": "Close to you, close to you"}]
+        result = remove_genius_mismatches(items, "text", genius)
+        assert len(result) == 1
+
+    def test_hallucination_is_removed(self):
+        genius = "Close to you, close to you\nJust like me, they long to be"
+        items = [{"text": "Of Daleks, Dalek, but who else?"}]
+        result = remove_genius_mismatches(items, "text", genius)
+        assert len(result) == 0
+
+    def test_short_segment_exempt(self):
+        """Segments with <=2 words are kept regardless of overlap."""
+        genius = "Completely unrelated lyrics about something else"
+        items = [{"text": "Oh yeah"}]
+        result = remove_genius_mismatches(items, "text", genius)
+        assert len(result) == 1
+
+    def test_mixed_keep_and_remove(self):
+        genius = "I run back to the dark\nMy friends are saying shut up Kevin"
+        items = [
+            {"text": "I run back to the dark"},
+            {"text": "Of Daleks, Dalek, but who else?"},
+            {"text": "My friends are saying shut up Kevin"},
+        ]
+        result = remove_genius_mismatches(items, "text", genius)
+        assert len(result) == 2
+        assert result[0]["text"] == "I run back to the dark"
+        assert result[1]["text"] == "My friends are saying shut up Kevin"
+
+    def test_returns_new_list(self):
+        """Immutability check — original list is not modified."""
+        genius = "hello world testing lyrics here"
+        items = [{"text": "hello world testing lyrics here"}]
+        original_len = len(items)
+        result = remove_genius_mismatches(items, "text", genius)
+        assert result is not items
+        assert len(items) == original_len
+
+    def test_custom_threshold(self):
+        """Higher threshold removes more."""
+        genius = "Walking barefoot feel the grass between my toes"
+        items = [{"text": "Walking barefoot through the morning dew drops"}]
+        # At 20% threshold, partial overlap keeps it
+        result_low = remove_genius_mismatches(items, "text", genius, threshold=0.20)
+        # At 80% threshold, partial overlap removes it
+        result_high = remove_genius_mismatches(items, "text", genius, threshold=0.80)
+        assert len(result_low) >= len(result_high)
+
+    def test_lyric_current_key(self):
+        """Works with Aurora's 'lyric_current' text key."""
+        genius = "Everything lit its fire everything big its fire"
+        items = [{"lyric_current": "Everything lit its fire everything big"}]
+        result = remove_genius_mismatches(items, "lyric_current", genius)
+        assert len(result) == 1

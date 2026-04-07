@@ -124,6 +124,11 @@ def transcribe_audio(job_folder, song_title=None):
                 with open(genius_path, "w", encoding="utf-8") as f:
                     f.write(genius_text)
 
+                # #33: Remove hallucinated segments that don't match Genius
+                segments = whisper_common.remove_genius_mismatches(
+                    segments, "lyric_current", genius_text
+                )
+
                 # Re-detect language with Genius text for better accuracy
                 language = whisper_common.detect_language(song_title, genius_text)
 
@@ -174,8 +179,11 @@ def transcribe_audio(job_folder, song_title=None):
 # AURORA-SPECIFIC: Line wrapping for After Effects
 # ============================================================================
 
-def _wrap_line(text, limit=None):
-    """Wrap long lines for After Effects text display."""
+def _wrap_line(text: str, limit: int | None = None) -> str:
+    """
+    Wrap long lines for After Effects text display.
+    Splits at the nearest space to the midpoint for balanced halves.
+    """
     if limit is None:
         limit = Config.MAX_LINE_LENGTH
     text = text.strip()
@@ -183,9 +191,26 @@ def _wrap_line(text, limit=None):
         return text
     if len(text) <= limit:
         return text
-    cut = text.rfind(" ", 0, limit)
-    if cut == -1:
-        cut = limit
-    first = text[:cut].strip()
-    rest = text[cut:].strip()
+
+    first, rest = _split_at_midpoint(text)
     return f"{first} \\r {rest}"
+
+
+def _split_at_midpoint(text: str) -> tuple[str, str]:
+    """Split text at the space nearest to the midpoint."""
+    mid = len(text) // 2
+
+    left = text.rfind(" ", 0, mid + 1)
+    right = text.find(" ", mid)
+
+    if left == -1 and right == -1:
+        return text[:mid].strip(), text[mid:].strip()
+
+    if left == -1:
+        cut = right
+    elif right == -1:
+        cut = left
+    else:
+        cut = left if (mid - left) <= (right - mid) else right
+
+    return text[:cut].strip(), text[cut:].strip()

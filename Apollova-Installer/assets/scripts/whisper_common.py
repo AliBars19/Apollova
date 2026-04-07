@@ -420,6 +420,67 @@ def remove_hallucinations(items, text_key, initial_prompt):
 
 
 # ============================================================================
+# GENIUS CROSS-REFERENCE HALLUCINATION DETECTION (#33)
+# ============================================================================
+
+GENIUS_MISMATCH_THRESHOLD = 0.20
+
+def remove_genius_mismatches(
+    items: list[dict],
+    text_key: str,
+    genius_text: str,
+    threshold: float = GENIUS_MISMATCH_THRESHOLD,
+) -> list[dict]:
+    """
+    Remove segments that don't match ANY line in the Genius lyrics.
+
+    For each segment, compute max word overlap with every Genius line.
+    If the best overlap is below threshold, the segment is likely a
+    Whisper hallucination. Returns a new list (immutable).
+
+    Short segments (<=2 words) are exempt — too short for reliable scoring.
+    """
+    if not items or not genius_text or not genius_text.strip():
+        return list(items)
+
+    genius_lines = _parse_genius_lines(genius_text)
+    if not genius_lines:
+        return list(items)
+
+    genius_word_sets = [set(gl.split()) for gl in genius_lines]
+
+    filtered = []
+    removed = 0
+    for item in items:
+        text = item.get(text_key, "").strip()
+        if not text:
+            continue
+
+        words = set(re.sub(r"[^\w\s]", "", text.lower()).split())
+        if len(words) <= 2:
+            filtered.append(item)
+            continue
+
+        best_overlap = 0.0
+        for gws in genius_word_sets:
+            if not gws:
+                continue
+            overlap = len(words & gws) / len(words)
+            if overlap > best_overlap:
+                best_overlap = overlap
+
+        if best_overlap < threshold:
+            print(f"   \U0001f5d1 Genius mismatch ({best_overlap:.0%}): '{text[:60]}'")
+            removed += 1
+        else:
+            filtered.append(item)
+
+    if removed:
+        print(f"   Removed {removed} Genius-mismatched segment(s)")
+    return filtered
+
+
+# ============================================================================
 # JUNK REMOVAL
 # ============================================================================
 

@@ -5,9 +5,16 @@ Minimal text-only lyric videos with word-by-word reveal
 """
 import os
 import sys
+import io
 import json
 import traceback
 from pathlib import Path
+
+# Fix Windows terminal UTF-8 encoding so emoji/unicode don't crash
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from rich.console import Console
 
 # Add parent directory so we can import from shared scripts/
@@ -157,7 +164,7 @@ def process_single_job(job_id):
 def batch_generate_jobs():
     """Generate all Mono jobs"""
     run_batch("Mono", process_single_job, console, song_db,
-              "🎵 Apollova Mono - Minimal Lyric Videos", color="magenta")
+              "Apollova Mono - Minimal Lyric Videos", color="magenta")
     console.print("\n[magenta]Next:[/magenta] Run the After Effects JSX script")
     console.print("[dim]File → Scripts → Run Script File... → scripts/JSX/automateMV_mono.jsx[/dim]\n")
 

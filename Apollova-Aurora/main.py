@@ -5,8 +5,15 @@ Full visual effects with cover art, gradients, beat-synced lighting
 """
 import os
 import sys
+import io
 import json
 from pathlib import Path
+
+# Fix Windows terminal UTF-8 encoding so emoji/unicode don't crash
+if hasattr(sys.stdout, 'buffer'):
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 from rich.console import Console
 
 # Add parent directory so we can import from shared scripts/
@@ -228,7 +235,7 @@ def process_single_job(job_id):
 def batch_generate_jobs():
     """Generate all Aurora jobs"""
     run_batch("Aurora", process_single_job, console, song_db,
-              "🎬 Apollova Aurora - Music Video Automation", color="cyan")
+              "Apollova Aurora - Music Video Automation", color="cyan")
     console.print("\n[cyan]Next:[/cyan] Run the After Effects JSX script")
     console.print("[dim]File → Scripts → Run Script File... → scripts/JSX/automateMV_batch.jsx[/dim]\n")
 

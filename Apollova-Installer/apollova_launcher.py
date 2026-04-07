@@ -57,7 +57,7 @@ from PyQt6.QtGui import QFont, QIcon
 
 # Logger setup
 _ASSETS = (Path(sys.executable).parent if getattr(sys, "frozen", False)
-           else Path(__file__).parent.parent) / "assets"
+           else Path(__file__).parent) / "assets"
 if _ASSETS.exists():
     sys.path.insert(0, str(_ASSETS))
 try:
@@ -595,7 +595,7 @@ class LoadingScreen(QMainWindow):
             log.info(f"Launching: {' '.join(cmd)}")
             proc = subprocess.Popen(
                 cmd,
-                cwd=str(self.root / "assets"),
+                cwd=str(self.root),
                 env=env,
                 creationflags=flags)
             self.hide()
@@ -720,9 +720,24 @@ def main():
     app.setStyleSheet(STYLE)
 
     # ── License check ──────────────────────────────────────────────────────────
+    # Frozen PyInstaller exes use a custom importer that may not fall through
+    # to filesystem paths added via sys.path.  Explicitly load from disk.
+    assets_dir = root / "assets"
     try:
-        from apollova_license import check_license
-        from apollova_activation_dialog import ActivationDialog
+        import importlib.util
+        _spec = importlib.util.spec_from_file_location(
+            "apollova_license", str(assets_dir / "apollova_license.py"))
+        _lic_mod = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_lic_mod)
+        check_license = _lic_mod.check_license
+
+        _spec2 = importlib.util.spec_from_file_location(
+            "apollova_activation_dialog",
+            str(assets_dir / "apollova_activation_dialog.py"))
+        _act_mod = importlib.util.module_from_spec(_spec2)
+        _spec2.loader.exec_module(_act_mod)
+        ActivationDialog = _act_mod.ActivationDialog
+
         valid, reason = check_license()
         if not valid:
             dlg = ActivationDialog(reason)

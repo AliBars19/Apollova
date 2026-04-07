@@ -32,7 +32,14 @@ if hasattr(sys.stderr, "reconfigure"):
     except Exception:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QTabWidget, QFrame
+from pathlib import Path as _Path
+# Ensure the install root (parent of assets/) is on sys.path so
+# `from assets.gui.*` imports resolve correctly.
+_install_root = str(_Path(__file__).resolve().parent.parent)
+if _install_root not in sys.path:
+    sys.path.insert(0, _install_root)
+
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QFrame
 from PyQt6.QtGui import QIcon
 
 from assets.gui.constants import (

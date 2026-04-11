@@ -201,7 +201,10 @@ function main() {
 
         // Add markers to AUDIO layer in LYRIC FONT comp
         addOnyxMarkersToAudio(lyricComp, markers);
-        
+
+        // Ensure LYRIC CONTROL has the marker-index expression (self-contained, no template dependency)
+        setupLyricControl(lyricComp);
+
         // Inject word-by-word segments into LYRIC_TEXT expression (3 words per line)
         injectOnyxSegmentsToLyricText(lyricComp, markers);
 
@@ -276,6 +279,44 @@ function writeErrorLog(message) {
 // -----------------------------
 // ONYX-SPECIFIC FUNCTIONS
 // -----------------------------
+
+function setupLyricControl(lyricComp) {
+    // Set the "Lyric Data" Point Control expression on LYRIC CONTROL so it
+    // always returns the current segment index from AUDIO markers.
+    // This makes injection self-contained — the template doesn't need it pre-baked.
+    var ctrl = null;
+    try { ctrl = lyricComp.layer("LYRIC CONTROL"); } catch (e) {}
+    if (!ctrl) { $.writeln("LYRIC CONTROL layer not found in " + lyricComp.name); return; }
+
+    var fx = ctrl.property("ADBE Effect Parade");
+    var lyricDataFx = null;
+    for (var i = 1; i <= fx.numProperties; i++) {
+        if (fx.property(i).name === "Lyric Data") { lyricDataFx = fx.property(i); break; }
+    }
+    if (!lyricDataFx) {
+        // Add Point Control effect if missing
+        lyricDataFx = fx.addProperty("ADBE Point Control");
+        lyricDataFx.name = "Lyric Data";
+    }
+
+    var ptProp = lyricDataFx.property("ADBE Point Control-0001");
+    if (!ptProp) { $.writeln("Could not find Point property on Lyric Data"); return; }
+
+    ptProp.expression =
+        'var m = thisComp.layer("AUDIO").marker;\n' +
+        'if (m.numKeys === 0) {\n' +
+        '    [0, 0];\n' +
+        '} else {\n' +
+        '    var idx = 0;\n' +
+        '    for (var i = 1; i <= m.numKeys; i++) {\n' +
+        '        if (m.key(i).time <= time) idx = i;\n' +
+        '    }\n' +
+        '    [idx, 0];\n' +
+        '}';
+
+    $.writeln("LYRIC CONTROL expression set in " + lyricComp.name);
+}
+
 
 function addOnyxMarkersToAudio(lyricComp, markers) {
     // Add markers to AUDIO layer for timing triggers

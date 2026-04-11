@@ -293,7 +293,16 @@ function setupLyricControl(lyricComp) {
     // This makes injection self-contained — the template doesn't need it pre-baked.
     var ctrl = null;
     try { ctrl = lyricComp.layer("LYRIC CONTROL"); } catch (e) {}
-    if (!ctrl) { $.writeln("LYRIC CONTROL layer not found in " + lyricComp.name); return; }
+    if (!ctrl) {
+        try {
+            ctrl = lyricComp.layers.addNull();
+            ctrl.name = "LYRIC CONTROL";
+            $.writeln("Created LYRIC CONTROL null layer in " + lyricComp.name);
+        } catch (e) {
+            $.writeln("Could not create LYRIC CONTROL layer: " + e.toString());
+            return;
+        }
+    }
 
     var fx = ctrl.property("ADBE Effect Parade");
     var lyricDataFx = null;
@@ -310,16 +319,18 @@ function setupLyricControl(lyricComp) {
     if (!ptProp) { $.writeln("Could not find Point property on Lyric Data"); return; }
 
     ptProp.expression =
-        'var m = thisComp.layer("AUDIO").marker;\n' +
-        'if (m.numKeys === 0) {\n' +
-        '    [0, 0];\n' +
-        '} else {\n' +
-        '    var idx = 0;\n' +
-        '    for (var i = 1; i <= m.numKeys; i++) {\n' +
-        '        if (m.key(i).time <= time) idx = i;\n' +
+        'try {\n' +
+        '    var m = thisComp.layer("AUDIO").marker;\n' +
+        '    if (m.numKeys === 0) {\n' +
+        '        [0, 0];\n' +
+        '    } else {\n' +
+        '        var idx = 0;\n' +
+        '        for (var i = 1; i <= m.numKeys; i++) {\n' +
+        '            if (m.key(i).time <= time) idx = i;\n' +
+        '        }\n' +
+        '        [idx, 0];\n' +
         '    }\n' +
-        '    [idx, 0];\n' +
-        '}';
+        '} catch(e) { [0, 0]; }';
 
     $.writeln("LYRIC CONTROL expression set in " + lyricComp.name);
 }
@@ -427,7 +438,8 @@ function addMonoMarkersToBackground(bgComp, markers) {
 
 function injectMonoSegmentsToLyricText(lyricComp, markers) {
     // Find LYRIC_TEXT layer
-    var lyricText = lyricComp.layer("LYRIC_TEXT");
+    var lyricText = null;
+    try { lyricText = lyricComp.layer("LYRIC_TEXT"); } catch(e) {}
     if (!lyricText) {
         $.writeln("LYRIC_TEXT layer not found in " + lyricComp.name);
         return;
@@ -447,8 +459,11 @@ function injectMonoSegmentsToLyricText(lyricComp, markers) {
         '// Mono: Word-by-word reveal',
         segmentsArray,
         '',
-        'var ctrl = thisComp.layer("LYRIC CONTROL");',
-        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var segIndex = 0;',
+        'try {',
+        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
+        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '} catch(e) {}',
         'var wordsPerLine = 4;',
         '',
         'if (segIndex < 1 || segIndex > segments.length) {',
@@ -501,7 +516,7 @@ function buildSegmentsArrayStringWithEnds(markers) {
         var wordStrings = [];
         for (var j = 0; j < words.length; j++) {
             var word = words[j];
-            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029").replace(/\0/g, "");
             var s = Number(word.start) || 0;
             wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
         }
@@ -546,8 +561,11 @@ function addGaussianBlurToLyricText(lyricText, markers) {
         '// Gaussian blur on word reveal',
         segmentsArray,
         '',
-        'var ctrl = thisComp.layer("LYRIC CONTROL");',
-        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var segIndex = 0;',
+        'try {',
+        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
+        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '} catch(e) {}',
         'var wordBlurMax = 15;',
         'var wordFadeTime = 0.12;',
         '',
@@ -589,8 +607,11 @@ function addLyricTextOpacity(lyricText, markers) {
         '// Opacity - fade out at end, stay hidden until next segment starts',
         segmentsArray,
         '',
-        'var ctrl = thisComp.layer("LYRIC CONTROL");',
-        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var segIndex = 0;',
+        'try {',
+        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
+        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '} catch(e) {}',
         'var fadeDur = 0.15;  // Fast fade out',
         '',
         'if (segIndex < 1 || segIndex > segments.length) {',
@@ -789,33 +810,6 @@ function setupTagLayer(lyricComp, markers) {
             $.writeln("Could not set TAG blur expression: " + e.toString());
         }
     }
-}
-
-
-function buildSegmentsArrayString(markers) {
-    // Build: var segments = [{t:0.18, words:[{w:"It",s:0.18},{w:"ain't",s:0.64}]}, ...];
-    
-    var segmentStrings = [];
-    
-    for (var i = 0; i < markers.length; i++) {
-        var m = markers[i];
-        var t = Number(m.time) || 0;
-        var words = m.words || [];
-        
-        // Build words array string
-        var wordStrings = [];
-        for (var j = 0; j < words.length; j++) {
-            var word = words[j];
-            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
-            var s = Number(word.start) || 0;
-            wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
-        }
-        
-        var segStr = '{t:' + t.toFixed(3) + ',words:[' + wordStrings.join(',') + ']}';
-        segmentStrings.push(segStr);
-    }
-    
-    return 'var segments = [\n    ' + segmentStrings.join(',\n    ') + '\n];';
 }
 
 

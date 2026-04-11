@@ -286,7 +286,16 @@ function setupLyricControl(lyricComp) {
     // This makes injection self-contained — the template doesn't need it pre-baked.
     var ctrl = null;
     try { ctrl = lyricComp.layer("LYRIC CONTROL"); } catch (e) {}
-    if (!ctrl) { $.writeln("LYRIC CONTROL layer not found in " + lyricComp.name); return; }
+    if (!ctrl) {
+        try {
+            ctrl = lyricComp.layers.addNull();
+            ctrl.name = "LYRIC CONTROL";
+            $.writeln("Created LYRIC CONTROL null layer in " + lyricComp.name);
+        } catch (e) {
+            $.writeln("Could not create LYRIC CONTROL layer: " + e.toString());
+            return;
+        }
+    }
 
     var fx = ctrl.property("ADBE Effect Parade");
     var lyricDataFx = null;
@@ -303,16 +312,18 @@ function setupLyricControl(lyricComp) {
     if (!ptProp) { $.writeln("Could not find Point property on Lyric Data"); return; }
 
     ptProp.expression =
-        'var m = thisComp.layer("AUDIO").marker;\n' +
-        'if (m.numKeys === 0) {\n' +
-        '    [0, 0];\n' +
-        '} else {\n' +
-        '    var idx = 0;\n' +
-        '    for (var i = 1; i <= m.numKeys; i++) {\n' +
-        '        if (m.key(i).time <= time) idx = i;\n' +
+        'try {\n' +
+        '    var m = thisComp.layer("AUDIO").marker;\n' +
+        '    if (m.numKeys === 0) {\n' +
+        '        [0, 0];\n' +
+        '    } else {\n' +
+        '        var idx = 0;\n' +
+        '        for (var i = 1; i <= m.numKeys; i++) {\n' +
+        '            if (m.key(i).time <= time) idx = i;\n' +
+        '        }\n' +
+        '        [idx, 0];\n' +
         '    }\n' +
-        '    [idx, 0];\n' +
-        '}';
+        '} catch(e) { [0, 0]; }';
 
     $.writeln("LYRIC CONTROL expression set in " + lyricComp.name);
 }
@@ -359,7 +370,8 @@ function addOnyxMarkersToAudio(lyricComp, markers) {
 
 function injectOnyxSegmentsToLyricText(lyricComp, markers) {
     // Find LYRIC_TEXT layer
-    var lyricText = lyricComp.layer("LYRIC_TEXT");
+    var lyricText = null;
+    try { lyricText = lyricComp.layer("LYRIC_TEXT"); } catch(e) {}
     if (!lyricText) {
         $.writeln("LYRIC_TEXT layer not found in " + lyricComp.name);
         return;
@@ -379,8 +391,11 @@ function injectOnyxSegmentsToLyricText(lyricComp, markers) {
         '// ONYX: Word-by-word reveal (3 words per line)',
         segmentsArray,
         '',
-        'var ctrl = thisComp.layer("LYRIC CONTROL");',
-        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var segIndex = 0;',
+        'try {',
+        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
+        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '} catch(e) {}',
         'var wordsPerLine = 3;  // Onyx uses 3 words per line',
         '',
         'if (segIndex < 1 || segIndex > segments.length) {',
@@ -432,7 +447,7 @@ function buildSegmentsArrayStringWithEnds(markers) {
         var wordStrings = [];
         for (var j = 0; j < words.length; j++) {
             var word = words[j];
-            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029").replace(/\0/g, "");
             var s = Number(word.start) || 0;
             wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
         }
@@ -477,8 +492,11 @@ function addGaussianBlurToLyricText(lyricText, markers) {
         '// Gaussian blur on word reveal',
         segmentsArray,
         '',
-        'var ctrl = thisComp.layer("LYRIC CONTROL");',
-        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var segIndex = 0;',
+        'try {',
+        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
+        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '} catch(e) {}',
         'var wordBlurMax = 15;',
         'var wordFadeTime = 0.12;',
         '',

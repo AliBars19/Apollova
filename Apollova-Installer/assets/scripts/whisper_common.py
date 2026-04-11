@@ -1809,18 +1809,6 @@ def transcribe_word_level(job_folder, song_title, template_name,
               f"avg_prob={score['avg_prob']:.2f}, "
               f"zero_time={score['zero_time_words']}/{score['total_words']}")
 
-        if song_title:
-            try:
-                from scripts.song_database import SongDatabase
-                _score_db = SongDatabase(db_path=os.path.join(
-                    os.path.dirname(os.path.dirname(os.path.abspath(job_folder))),
-                    "database", "songs.db"))
-                _score_db.save_whisper_quality(
-                    song_title, score["coverage_pct"], score["avg_prob"],
-                    score["zero_time_words"], Config.WHISPER_MODEL)
-            except Exception as e:
-                print(f"  Warning: could not save quality score: {e}")
-
         print(f"\u2713 {template_name} transcription complete: {len(markers)} markers")
 
         return {

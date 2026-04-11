@@ -34,12 +34,14 @@ Requirements:
 from __future__ import annotations
 
 import os
+import re
 import sys
 import time
 import uuid
 import logging
 import argparse
 import threading
+import subprocess
 from pathlib import Path
 from datetime import datetime, timedelta
 from logging.handlers import TimedRotatingFileHandler
@@ -378,6 +380,86 @@ class VideoUploader:
             return False
 
 
+# ─── AE Broken-Render Recovery ───────────────────────────────────
+
+def mux_ae_broken_renders(watch_path: Path) -> list[Path]:
+    """Find .aac+.m4v pairs left by a frozen AE render and mux them into .mp4.
+
+    AE renders video (.m4v) and audio (.aac) separately then muxes them.
+    If AE freezes or is killed mid-mux it leaves behind files like:
+        SongName_ONYX.12536.9760.m4v
+        SongName_ONYX.12536.9760.aac
+    This function detects those pairs, muxes via ffmpeg, deletes the
+    originals, and returns the list of newly created .mp4 files.
+    """
+    muxed: list[Path] = []
+
+    aac_files = list(watch_path.glob("*.aac"))
+    if not aac_files:
+        return muxed
+
+    for aac in aac_files:
+        m4v = aac.with_suffix(".m4v")
+        if not m4v.exists():
+            continue
+
+        # Strip AE's numeric temp suffix: "Name.XXXXX.YYYYY" → "Name"
+        clean_stem = re.sub(r"\.\d+\.\d+$", "", aac.stem)
+        output = watch_path / f"{clean_stem}.mp4"
+
+        # Don't overwrite if .mp4 already exists (e.g. from a previous mux)
+        if output.exists():
+            logger.info(f"AE mux recovery: {output.name} already exists, deleting broken files")
+            aac.unlink(missing_ok=True)
+            m4v.unlink(missing_ok=True)
+            continue
+
+        # If either track is empty AE was killed before it finished rendering —
+        # nothing to recover, just delete the debris
+        aac_size = aac.stat().st_size
+        m4v_size = m4v.stat().st_size
+        if aac_size == 0 or m4v_size == 0:
+            logger.warning(
+                f"AE mux recovery: {clean_stem} has empty track "
+                f"(aac={aac_size}B m4v={m4v_size}B) — AE died mid-render, "
+                f"deleting debris. Re-render this job."
+            )
+            aac.unlink(missing_ok=True)
+            m4v.unlink(missing_ok=True)
+            continue
+
+        logger.info(f"AE mux recovery: muxing {m4v.name} + {aac.name} → {output.name}")
+        try:
+            result = subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-i", str(m4v),
+                    "-i", str(aac),
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-movflags", "+faststart",
+                    str(output),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+            if result.returncode == 0 and output.exists() and output.stat().st_size > 0:
+                aac.unlink(missing_ok=True)
+                m4v.unlink(missing_ok=True)
+                logger.info(f"AE mux recovery: created {output.name} ({output.stat().st_size // 1024 // 1024}MB)")
+                muxed.append(output)
+            else:
+                logger.error(f"AE mux recovery failed for {output.name}: {result.stderr[-500:]}")
+        except subprocess.TimeoutExpired:
+            logger.error(f"AE mux recovery timed out for {output.name}")
+        except FileNotFoundError:
+            logger.error("AE mux recovery: ffmpeg not found — install ffmpeg and add to PATH")
+            break
+
+    return muxed
+
+
 # ─── Render Watcher ──────────────────────────────────────────────
 
 class FolderWatcher(FileSystemEventHandler):
@@ -429,6 +511,17 @@ class FolderWatcher(FileSystemEventHandler):
 
     def _enqueue(self, src_path: str) -> None:
         path = Path(src_path)
+        # If AE drops a broken .aac or .m4v, try to mux it immediately.
+        # The mux function is a no-op if the pair isn't complete yet — the
+        # periodic health check will pick it up once both files exist.
+        if path.suffix.lower() in (".aac", ".m4v"):
+            muxed = mux_ae_broken_renders(self.watch_path)
+            for mp4 in muxed:
+                with self._lock:
+                    self._pending.add(str(mp4))
+            if muxed:
+                self._event.set()
+            return
         if path.suffix.lower() not in self.config.video_extensions:
             return
         with self._lock:
@@ -581,7 +674,13 @@ class FolderWatcher(FileSystemEventHandler):
         return False
 
     def scan_unprocessed(self) -> list[Path]:
-        """Find videos in this folder that haven't been uploaded yet."""
+        """Find videos in this folder that haven't been uploaded yet.
+
+        Also rescues any .aac+.m4v pairs left by a frozen AE render before
+        scanning — so stuck renders are automatically recovered and queued.
+        """
+        mux_ae_broken_renders(self.watch_path)
+
         videos = []
         for ext in self.config.video_extensions:
             videos.extend(self.watch_path.glob(f"*{ext}"))
@@ -754,10 +853,19 @@ def watch_mode(
 
     last_health_check = time.monotonic()
     health_check_interval = 3600  # 1 hour
+    last_mux_check = time.monotonic()
+    mux_check_interval = 60  # check for broken AE renders every minute
 
     try:
         while True:
             time.sleep(10)
+            # Periodic mux recovery — catches .aac+.m4v pairs from frozen AE
+            if time.monotonic() - last_mux_check > mux_check_interval:
+                for w in watchers:
+                    muxed = mux_ae_broken_renders(w.watch_path)
+                    for mp4 in muxed:
+                        w._process_video(mp4)
+                last_mux_check = time.monotonic()
             # Periodic health check every hour
             if time.monotonic() - last_health_check > health_check_interval:
                 uploader.check_platform_health(notifications)

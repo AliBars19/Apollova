@@ -182,7 +182,8 @@ def transcribe_audio(job_folder, song_title=None):
 def _wrap_line(text: str, limit: int | None = None) -> str:
     """
     Wrap long lines for After Effects text display.
-    Splits at the nearest space to the midpoint for balanced halves.
+    Recursively splits at the nearest space to the midpoint until
+    every fragment fits within the limit (supports 3+ line output).
     """
     if limit is None:
         limit = Config.MAX_LINE_LENGTH
@@ -193,6 +194,8 @@ def _wrap_line(text: str, limit: int | None = None) -> str:
         return text
 
     first, rest = _split_at_midpoint(text)
+    first = _wrap_line(first, limit)
+    rest = _wrap_line(rest, limit)
     return f"{first} \\r {rest}"
 
 

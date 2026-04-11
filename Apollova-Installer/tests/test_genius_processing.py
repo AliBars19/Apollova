@@ -253,6 +253,21 @@ class TestWrapLine:
         result = self._wrap_line(text, limit=10)
         assert "\\r" in result
 
+    def test_recursive_wrap_three_lines(self):
+        # 60 chars with limit=25 should produce 3+ lines
+        text = "Oh yeah yeah yeah yeah yeah yeah yeah yeah yeah yeah yeah"
+        result = self._wrap_line(text, limit=25)
+        parts = result.split(" \\r ")
+        assert len(parts) >= 3
+        for part in parts:
+            assert len(part.strip()) <= 25
+
+    def test_recursive_wrap_all_fragments_under_limit(self):
+        text = "Malcolm is in his feelings and he cannot get out of it ever"
+        result = self._wrap_line(text, limit=20)
+        for part in result.split(" \\r "):
+            assert len(part.strip()) <= 20
+
     def test_midpoint_split_helper(self):
         first, rest = self._split_at_midpoint("hello beautiful world today")
         # Should split near the middle

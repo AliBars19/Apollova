@@ -364,10 +364,17 @@ function parseLyricsFile(p) {
         // Normalise any remaining line endings: \r\n → \r, bare \n → \r
         cur = cur.replace(/\r\n/g, "\r").replace(/\n/g, "\r");
 
-        // Apply word-wrap only if Python did not already insert a line break.
-        if (cur.indexOf("\r") === -1) {
-            cur = wrapTwoLines(cur, MAX_CHARS_PER_LINE);
+        // Re-validate EVERY line — even if Python already wrapped,
+        // individual fragments might still exceed the char limit.
+        var parts = cur.split("\r");
+        var rewrapped = [];
+        for (var j = 0; j < parts.length; j++) {
+            var part = parts[j].replace(/^\s+|\s+$/g, "");
+            if (part.length > 0) {
+                rewrapped.push(wrapLine(part, MAX_CHARS_PER_LINE));
+            }
         }
+        cur = rewrapped.join("\r");
 
         linesArray.push(cur);
         tAndText.push({ t: t, cur: cur });
@@ -376,20 +383,30 @@ function parseLyricsFile(p) {
 }
 
 
-function wrapTwoLines(s, limit) {
+function wrapLine(s, limit) {
+    // Recursive midpoint-based line wrapper.
+    // Splits at the nearest space to the midpoint, then re-wraps each
+    // half if still over the limit — produces 3+ lines when needed.
     s = String(s);
-
-    // DO NOT wrap if Python already inserted \r
-    if (s.indexOf("\r") !== -1) {
-        return s;
-    }
-
     if (s.length <= limit) return s;
 
-    var cut = s.lastIndexOf(" ", limit);
-    if (cut < 0) cut = limit;
+    var mid = Math.floor(s.length / 2);
+    var left = s.lastIndexOf(" ", mid);
+    var right = s.indexOf(" ", mid);
 
-    return s.substring(0, cut) + "\r" + s.substring(cut + 1).replace(/^\s+/, "");
+    var cut;
+    if (left < 0 && right < 0) cut = mid;
+    else if (left < 0) cut = right;
+    else if (right < 0) cut = left;
+    else cut = (mid - left <= right - mid) ? left : right;
+
+    var first = s.substring(0, cut).replace(/\s+$/, "");
+    var rest  = s.substring(cut).replace(/^\s+/, "");
+
+    first = wrapLine(first, limit);
+    rest  = wrapLine(rest, limit);
+
+    return first + "\r" + rest;
 }
 
 

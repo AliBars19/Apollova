@@ -618,7 +618,7 @@ function addLyricTextOpacity(lyricText, markers) {
         '    0;',
         '} else {',
         '    var seg = segments[segIndex - 1];',
-        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.3;',
+        '    var lastWordTime = seg.words.length > 0 ? seg.words[seg.words.length - 1].s + 0.3 : seg.t + 0.3;',
         '',
         '    // Check if we should be fading out (gap before next segment)',
         '    if (segIndex < segments.length) {',
@@ -714,15 +714,18 @@ function setupTagLayer(lyricComp, markers) {
         '// Tag appears between segments - quick flash',
         segmentsArray,
         '',
-        'var ctrl = thisComp.layer("LYRIC CONTROL");',
-        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var segIndex = 0;',
+        'try {',
+        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
+        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '} catch(e) {}',
         'var fadeDur = 0.1;  // Fast fade',
         '',
-        'if (segIndex < 1 || segIndex >= segments.length) {',
+        'if (segIndex < 1 || segIndex > segments.length) {',
         '    0;',
         '} else {',
         '    var seg = segments[segIndex - 1];',
-        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.3;',
+        '    var lastWordTime = seg.words.length > 0 ? seg.words[seg.words.length - 1].s + 0.3 : seg.t + 0.3;',
         '    var nextSegStart = segments[segIndex].t;',
         '    var gapDuration = nextSegStart - lastWordTime;',
         '    var tagStart = lastWordTime + fadeDur;  // Tag appears after lyrics fade',
@@ -757,16 +760,19 @@ function setupTagLayer(lyricComp, markers) {
         '// Tag blur for smooth appearance',
         segmentsArray,
         '',
-        'var ctrl = thisComp.layer("LYRIC CONTROL");',
-        'var segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        'var segIndex = 0;',
+        'try {',
+        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
+        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
+        '} catch(e) {}',
         'var maxBlur = 15;',
         'var fadeDur = 0.1;',
         '',
-        'if (segIndex < 1 || segIndex >= segments.length) {',
+        'if (segIndex < 1 || segIndex > segments.length) {',
         '    maxBlur;',
         '} else {',
         '    var seg = segments[segIndex - 1];',
-        '    var lastWordTime = seg.words[seg.words.length - 1].s + 0.3;',
+        '    var lastWordTime = seg.words.length > 0 ? seg.words[seg.words.length - 1].s + 0.3 : seg.t + 0.3;',
         '    var nextSegStart = segments[segIndex].t;',
         '    var gapDuration = nextSegStart - lastWordTime;',
         '    var tagStart = lastWordTime + fadeDur;',
@@ -915,16 +921,19 @@ function findCompByName(name) {
 }
 
 function ensureAudioLayer(comp) {
-    var lyr = comp.layer("AUDIO");
+    var lyr = null;
+    try { lyr = comp.layer("AUDIO"); } catch (e) {}
     if (lyr) return lyr;
 
     for (var i = 1; i <= comp.numLayers; i++) {
-        var L = comp.layer(i);
+        var L = null;
+        try { L = comp.layer(i); } catch (e) { continue; }
         if (L instanceof AVLayer && L.hasAudio) {
             try { L.name = "AUDIO"; } catch (_) {}
             return L;
         }
     }
+    $.writeln("WARNING: No audio layer found in comp " + comp.name);
     return null;
 }
 

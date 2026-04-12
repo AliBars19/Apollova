@@ -885,16 +885,19 @@ function findCompByName(name) {
 }
 
 function ensureAudioLayer(comp) {
-    var lyr = comp.layer("AUDIO");
+    var lyr = null;
+    try { lyr = comp.layer("AUDIO"); } catch (e) {}
     if (lyr) return lyr;
 
     for (var i = 1; i <= comp.numLayers; i++) {
-        var L = comp.layer(i);
+        var L = null;
+        try { L = comp.layer(i); } catch (e) { continue; }
         if (L instanceof AVLayer && L.hasAudio) {
             try { L.name = "AUDIO"; } catch (_) {}
             return L;
         }
     }
+    $.writeln("WARNING: No audio layer found in comp " + comp.name);
     return null;
 }
 

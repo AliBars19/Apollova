@@ -319,18 +319,22 @@ function setupLyricControl(lyricComp) {
     if (!ptProp) { $.writeln("Could not find Point property on Lyric Data"); return; }
 
     ptProp.expression =
-        'try {\n' +
-        '    var m = thisComp.layer("AUDIO").marker;\n' +
-        '    if (m.numKeys === 0) {\n' +
-        '        [0, 0];\n' +
-        '    } else {\n' +
-        '        var idx = 0;\n' +
-        '        for (var i = 1; i <= m.numKeys; i++) {\n' +
-        '            if (m.key(i).time <= time) idx = i;\n' +
-        '        }\n' +
-        '        [idx, 0];\n' +
+        'var m = null;\n' +
+        'for (var _li = 1; _li <= thisComp.numLayers; _li++) {\n' +
+        '    if (thisComp.layer(_li).name == "AUDIO") {\n' +
+        '        m = thisComp.layer(_li).marker;\n' +
+        '        break;\n' +
         '    }\n' +
-        '} catch(e) { [0, 0]; }';
+        '}\n' +
+        'if (m != null && m.numKeys > 0) {\n' +
+        '    var idx = 0;\n' +
+        '    for (var i = 1; i <= m.numKeys; i++) {\n' +
+        '        if (m.key(i).time <= time) idx = i;\n' +
+        '    }\n' +
+        '    [idx, 0];\n' +
+        '} else {\n' +
+        '    [0, 0];\n' +
+        '}';
 
     $.writeln("LYRIC CONTROL expression set in " + lyricComp.name);
 }
@@ -460,10 +464,12 @@ function injectMonoSegmentsToLyricText(lyricComp, markers) {
         segmentsArray,
         '',
         'var segIndex = 0;',
-        'try {',
-        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
-        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
-        '} catch(e) {}',
+        'for (var _li = 1; _li <= thisComp.numLayers; _li++) {',
+        '    if (thisComp.layer(_li).name == "LYRIC CONTROL") {',
+        '        segIndex = thisComp.layer(_li).effect("Lyric Data")("Point")[0];',
+        '        break;',
+        '    }',
+        '}',
         'var wordsPerLine = 4;',
         '',
         'if (segIndex < 1 || segIndex > segments.length) {',
@@ -562,10 +568,12 @@ function addGaussianBlurToLyricText(lyricText, markers) {
         segmentsArray,
         '',
         'var segIndex = 0;',
-        'try {',
-        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
-        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
-        '} catch(e) {}',
+        'for (var _li = 1; _li <= thisComp.numLayers; _li++) {',
+        '    if (thisComp.layer(_li).name == "LYRIC CONTROL") {',
+        '        segIndex = thisComp.layer(_li).effect("Lyric Data")("Point")[0];',
+        '        break;',
+        '    }',
+        '}',
         'var wordBlurMax = 15;',
         'var wordFadeTime = 0.12;',
         '',
@@ -608,10 +616,12 @@ function addLyricTextOpacity(lyricText, markers) {
         segmentsArray,
         '',
         'var segIndex = 0;',
-        'try {',
-        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
-        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
-        '} catch(e) {}',
+        'for (var _li = 1; _li <= thisComp.numLayers; _li++) {',
+        '    if (thisComp.layer(_li).name == "LYRIC CONTROL") {',
+        '        segIndex = thisComp.layer(_li).effect("Lyric Data")("Point")[0];',
+        '        break;',
+        '    }',
+        '}',
         'var fadeDur = 0.15;  // Fast fade out',
         '',
         'if (segIndex < 1 || segIndex > segments.length) {',
@@ -715,10 +725,12 @@ function setupTagLayer(lyricComp, markers) {
         segmentsArray,
         '',
         'var segIndex = 0;',
-        'try {',
-        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
-        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
-        '} catch(e) {}',
+        'for (var _li = 1; _li <= thisComp.numLayers; _li++) {',
+        '    if (thisComp.layer(_li).name == "LYRIC CONTROL") {',
+        '        segIndex = thisComp.layer(_li).effect("Lyric Data")("Point")[0];',
+        '        break;',
+        '    }',
+        '}',
         'var fadeDur = 0.1;  // Fast fade',
         '',
         'if (segIndex < 1 || segIndex > segments.length) {',
@@ -761,10 +773,12 @@ function setupTagLayer(lyricComp, markers) {
         segmentsArray,
         '',
         'var segIndex = 0;',
-        'try {',
-        '    var ctrl = thisComp.layer("LYRIC CONTROL");',
-        '    segIndex = ctrl.effect("Lyric Data")("Point")[0];',
-        '} catch(e) {}',
+        'for (var _li = 1; _li <= thisComp.numLayers; _li++) {',
+        '    if (thisComp.layer(_li).name == "LYRIC CONTROL") {',
+        '        segIndex = thisComp.layer(_li).effect("Lyric Data")("Point")[0];',
+        '        break;',
+        '    }',
+        '}',
         'var maxBlur = 15;',
         'var fadeDur = 0.1;',
         '',

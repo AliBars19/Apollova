@@ -453,7 +453,8 @@ function buildSegmentsArrayStringWithEnds(markers) {
         var wordStrings = [];
         for (var j = 0; j < words.length; j++) {
             var word = words[j];
-            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029").replace(/\0/g, "");
+            var w = String(word.word || "").replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\r/g, "\\r").replace(/\n/g, "\\n").replace(/\t/g, "\\t");
+            w = w.split(String.fromCharCode(0x2028)).join("").split(String.fromCharCode(0x2029)).join("");
             var s = Number(word.start) || 0;
             wordStrings.push('{w:"' + w + '",s:' + s.toFixed(3) + '}');
         }

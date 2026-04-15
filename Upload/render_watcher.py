@@ -1008,8 +1008,22 @@ def main() -> None:
             fw._process_video(Path(record.file_path))
         return
 
-    # ── Default: Watch mode ──────────────────────────────────────
-    watch_mode(uploader, state, smart_scheduler, notifications, config)
+    # ── Default: Watch mode (with self-restart) ──────────────────
+    while True:
+        try:
+            watch_mode(uploader, state, smart_scheduler, notifications, config)
+        except (KeyboardInterrupt, SystemExit):
+            logger.info("Watcher exiting cleanly")
+            break
+        except Exception as e:
+            logger.exception(f"watch_mode crashed, restarting in 30s: {e}")
+            time.sleep(30)
+            continue
+        else:
+            # watch_mode returned normally (observer died and broke out of loop)
+            logger.warning("watch_mode exited unexpectedly — restarting in 10s")
+            time.sleep(10)
+            continue
 
 
 if __name__ == "__main__":

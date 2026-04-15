@@ -244,24 +244,44 @@ class VideoUploader:
                 self._authenticated = True
                 self._auth_failures = 0
                 return True
-            try:
-                resp = self.session.post(
-                    f"{self.config.api_base_url}/api/auth/gate",
-                    json={"password": self.config.gate_password},
-                    timeout=self.config.api_timeout,
-                )
-                self._authenticated = resp.status_code == 200
-                if self._authenticated:
-                    logger.info("Authenticated with website")
-                    self._auth_failures = 0
-                else:
-                    self._auth_failures += 1
-                    logger.error(f"Auth failed: HTTP {resp.status_code}")
-                return self._authenticated
-            except requests.RequestException as e:
-                self._auth_failures += 1
-                logger.error(f"Auth error: {e}")
-                return False
+
+            # Try primary URL, then fallback to macbookvisuals.com if DNS fails.
+            urls_to_try = [self.config.api_base_url]
+            fallback = "https://macbookvisuals.com"
+            if fallback != self.config.api_base_url:
+                urls_to_try.append(fallback)
+
+            for url in urls_to_try:
+                try:
+                    resp = self.session.post(
+                        f"{url}/api/auth/gate",
+                        json={"password": self.config.gate_password},
+                        timeout=self.config.api_timeout,
+                    )
+                    self._authenticated = resp.status_code == 200
+                    if self._authenticated:
+                        logger.info(f"Authenticated with website ({url})")
+                        self._auth_failures = 0
+                        # Promote fallback to primary so all requests use it
+                        if url != self.config.api_base_url:
+                            logger.info(f"Switching to fallback URL: {url}")
+                            self.config.api_base_url = url
+                        return True
+                    else:
+                        logger.error(f"Auth failed: HTTP {resp.status_code}")
+                        break  # Wrong password — don't retry on different URL
+                except requests.exceptions.ConnectionError as e:
+                    if "getaddrinfo failed" in str(e) or "NameResolutionError" in str(e):
+                        logger.warning(f"DNS failure for {url}, trying fallback...")
+                        continue  # Try next URL
+                    logger.error(f"Auth connection error: {e}")
+                    break
+                except requests.RequestException as e:
+                    logger.error(f"Auth error: {e}")
+                    break
+
+            self._auth_failures = min(self._auth_failures + 1, 10)  # cap at 10 (max 300s backoff)
+            return False
 
     def _ensure_auth(self) -> bool:
         if not self._authenticated:

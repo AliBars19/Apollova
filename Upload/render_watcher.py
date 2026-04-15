@@ -879,6 +879,13 @@ def watch_mode(
     try:
         while True:
             time.sleep(10)
+
+            # Observer liveness check — watchdog can silently die on Windows
+            # (e.g. ReadDirectoryChangesW error after sleep/resume).
+            if not observer.is_alive():
+                logger.warning("Filesystem observer died — signalling restart")
+                break
+
             # Periodic mux recovery — catches .aac+.m4v pairs from frozen AE
             if time.monotonic() - last_mux_check > mux_check_interval:
                 for w in watchers:
@@ -892,11 +899,14 @@ def watch_mode(
                 last_health_check = time.monotonic()
     except (KeyboardInterrupt, SystemExit):
         logger.info("Watcher stopped")
+        raise  # Let caller know so restart loop doesn't re-enter on clean exit
     except Exception as e:
         logger.exception(f"Watch loop crashed: {e}")
     finally:
         observer.stop()
-        observer.join()
+        observer.join(timeout=10)  # Never hang forever waiting for Observer thread
+        if observer.is_alive():
+            logger.warning("Observer did not stop cleanly within 10s — forcing exit")
 
 
 # ─── Main ────────────────────────────────────────────────────────

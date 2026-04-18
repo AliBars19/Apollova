@@ -625,6 +625,18 @@ function setAllCompDurations(jobId, audioPath) {
     } catch(e) {
         $.writeln("Could not set Assets " + jobId + " duration: " + e.toString());
     }
+
+    // Extend AUDIO layer outPoint to match song duration (prevents silent tail)
+    try {
+        var lfcForAudio = findCompByName("LYRIC FONT " + jobId);
+        var audioLyr = ensureAudioLayer(lfcForAudio);
+        if (audioLyr) {
+            audioLyr.outPoint = dur;
+            $.writeln("Extended AUDIO outPoint for job " + jobId + " to " + dur + "s");
+        }
+    } catch(e) {
+        $.writeln("Could not extend AUDIO outPoint for job " + jobId + ": " + e.toString());
+    }
 }
 
 

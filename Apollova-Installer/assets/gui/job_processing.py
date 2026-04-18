@@ -740,7 +740,9 @@ def process_single_song(app, job_number: int, song_title: str,
                 json.dump(
                     cached_mono, f, indent=4, ensure_ascii=False)
             app.signals.log.emit("  \u2713 Cached mono lyrics")
-        elif not mono_path.exists():
+        elif (not mono_path.exists()
+              or json.loads(mono_path.read_text(encoding='utf-8')).get(
+                  'total_markers', 0) == 0):
             app.signals.log.emit(
                 f"  Transcribing mono ({Config.WHISPER_MODEL})\u2026")
             t0 = time.time()
@@ -777,7 +779,9 @@ def process_single_song(app, job_number: int, song_title: str,
                 json.dump(
                     cached_onyx, f, indent=4, ensure_ascii=False)
             app.signals.log.emit("  \u2713 Cached onyx lyrics")
-        elif not onyx_path.exists():
+        elif (not onyx_path.exists()
+              or json.loads(onyx_path.read_text(encoding='utf-8')).get(
+                  'total_markers', 0) == 0):
             app.signals.log.emit(
                 f"  Transcribing onyx ({Config.WHISPER_MODEL})\u2026")
             t0 = time.time()

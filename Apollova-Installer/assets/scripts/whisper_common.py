@@ -1234,7 +1234,7 @@ def remove_genius_confirmed_duplicates(
         whisper_indices = info["indices"]
         whisper_count = len(whisper_indices)
 
-        if whisper_count > genius_count and genius_count >= 0:
+        if whisper_count > genius_count and genius_count > 0:
             # Keep the first genius_count occurrences, remove the rest
             to_remove = whisper_indices[genius_count:]
             remove_indices.update(to_remove)

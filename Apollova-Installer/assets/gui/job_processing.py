@@ -735,7 +735,7 @@ def process_single_song(app, job_number: int, song_title: str,
     elif template == 'mono':
         mono_path = job_folder / "mono_data.json"
         cached_mono = app.song_db.get_mono_lyrics(song_title)
-        if cached_mono:
+        if cached_mono and cached_mono.get('total_markers', 0) > 0:
             with open(mono_path, 'w', encoding='utf-8') as f:
                 json.dump(
                     cached_mono, f, indent=4, ensure_ascii=False)
@@ -774,7 +774,7 @@ def process_single_song(app, job_number: int, song_title: str,
     elif template == 'onyx':
         onyx_path = job_folder / "onyx_data.json"
         cached_onyx = app.song_db.get_onyx_lyrics(song_title)
-        if cached_onyx:
+        if cached_onyx and cached_onyx.get('total_markers', 0) > 0:
             with open(onyx_path, 'w', encoding='utf-8') as f:
                 json.dump(
                     cached_onyx, f, indent=4, ensure_ascii=False)

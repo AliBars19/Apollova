@@ -209,12 +209,16 @@ function main() {
         injectOnyxSegmentsToLyricText(lyricComp, markers);
 
         // Retarget album art in Assets comp
-        try {
-            var assetsComp = findCompByName("Assets " + jobId);
-            retargetImageLayersToFootage(assetsComp, "COVER");
-            $.writeln("Album art retargeted for job " + jobId);
-        } catch (e) {
-            $.writeln("Assets " + jobId + " not found – skipping album art.");
+        var assetsCompForArt = findAssetsComp(jobId);
+        if (assetsCompForArt) {
+            try {
+                retargetImageLayersToFootage(assetsCompForArt, "COVER");
+                $.writeln("Album art retargeted for job " + jobId + " in " + assetsCompForArt.name);
+            } catch (e) {
+                $.writeln("Album art retarget failed for job " + jobId + ": " + e.toString());
+            }
+        } else {
+            $.writeln("Assets comp not found for job " + jobId + " – skipping album art.");
         }
 
         // Add to render queue
@@ -616,14 +620,16 @@ function setAllCompDurations(jobId, audioPath) {
     }
     
     // Set Assets comp duration
-    try {
-        var assetsComp = findCompByName("Assets " + jobId);
-        assetsComp.duration = dur;
-        assetsComp.workAreaStart = 0;
-        assetsComp.workAreaDuration = dur;
-        $.writeln("Set Assets " + jobId + " duration to " + dur + "s");
-    } catch(e) {
-        $.writeln("Could not set Assets " + jobId + " duration: " + e.toString());
+    var assetsCompForDur = findAssetsComp(jobId);
+    if (assetsCompForDur) {
+        try {
+            assetsCompForDur.duration = dur;
+            assetsCompForDur.workAreaStart = 0;
+            assetsCompForDur.workAreaDuration = dur;
+            $.writeln("Set " + assetsCompForDur.name + " duration to " + dur + "s");
+        } catch(e) {
+            $.writeln("Could not set Assets duration for job " + jobId + ": " + e.toString());
+        }
     }
 
     // Extend AUDIO layer outPoint to match song duration (prevents silent tail)
@@ -752,8 +758,11 @@ function applyBackgroundColors(jobId, colors) {
 function updateSongTitle(jobId, titleText) {
     if (!titleText) return;
     try {
-        var assetsComp = findCompByName("Assets " + jobId);
-        if (!assetsComp) { $.writeln("Assets " + jobId + " not found."); return; }
+        var assetsComp = findAssetsComp(jobId);
+        if (!assetsComp) {
+            $.writeln("Assets comp not found for job " + jobId + " – skipping title update.");
+            return;
+        }
 
         var targetTextLayer = null;
         for (var i = 1; i <= assetsComp.numLayers; i++) {
@@ -772,10 +781,30 @@ function updateSongTitle(jobId, titleText) {
         doc.text = String(titleText);
         txtProp.setValue(doc);
 
-        $.writeln("Set song title for job " + jobId + ": " + titleText);
+        $.writeln("Set song title for job " + jobId + " in " + assetsComp.name + ": " + titleText);
     } catch (e) {
         $.writeln("Could not update title for job " + jobId + ": " + e.toString());
     }
+}
+
+function findAssetsComp(jobId) {
+    // Template naming varies: "Assets N" (top-level) or "Assets OTN" (nested in OUTPUT N folder)
+    var candidates = ["Assets " + jobId, "Assets OT" + jobId, "Assets" + jobId];
+    for (var c = 0; c < candidates.length; c++) {
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var it = app.project.item(i);
+            if (it instanceof CompItem && it.name === candidates[c]) return it;
+        }
+    }
+    // Fallback: walk OUTPUT N folder for any comp starting with "Assets"
+    var outputFolder = findFolderByName("OUTPUT" + jobId);
+    if (outputFolder) {
+        for (var k = 1; k <= outputFolder.numItems; k++) {
+            var sub = outputFolder.item(k);
+            if (sub instanceof CompItem && sub.name.toLowerCase().indexOf("assets") === 0) return sub;
+        }
+    }
+    return null;
 }
 
 

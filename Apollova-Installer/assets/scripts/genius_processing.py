@@ -75,18 +75,75 @@ def _request_with_retry(method, url, retries=2, backoff=1.0, **kwargs):
 # ============================================================================
 # PUBLIC API: fetch_genius_image
 # ============================================================================
+def _collect_image_candidates(hits: list) -> list:
+    """Pull every unique image URL from search hits, in Genius's ranking order."""
+    candidates = []
+    for hit in hits:
+        result = hit.get("result", {})
+        for key in ("song_art_image_url", "header_image_url",
+                    "song_art_image_thumbnail_url"):
+            url = result.get(key)
+            if url and url not in candidates:
+                candidates.append(url)
+    return candidates
+
+
+def _pick_vibrant_candidate(candidates: list, job_folder: str,
+                            skip_url: str = None) -> tuple:
+    """Try each candidate URL in order, return first one that passes the
+    vibrancy gate. Falls back to the highest-scoring candidate if none pass.
+
+    Returns (image_path, chosen_url, info_dict) or (None, None, {}) on failure.
+    """
+    from scripts.image_processing import download_image, is_image_vibrant
+
+    best_path = None
+    best_url = None
+    best_info: dict = {}
+    best_score = -1.0
+
+    for url in candidates:
+        if skip_url and url == skip_url:
+            continue
+        try:
+            path = download_image(job_folder, url)
+        except Exception as e:
+            print(f"  Skipping candidate (download failed): {e}")
+            continue
+
+        ok, info = is_image_vibrant(path)
+        if ok:
+            print(f"  ✓ Vibrant cover accepted: {info.get('reason', '')}")
+            return path, url, info
+
+        # Track the best non-vibrant candidate as a fallback. Score = mean_sat
+        # (higher = closer to passing the gate).
+        score = info.get("mean_saturation", 0.0)
+        print(f"  ✗ Rejected: {info.get('reason', 'unknown')}")
+        if score > best_score:
+            best_score = score
+            best_path = path
+            best_url = url
+            best_info = info
+
+    if best_path:
+        print(f"  ⚠ No vibrant candidate found — falling back to best ({best_info.get('reason')})")
+        return best_path, best_url, best_info
+
+    return None, None, {}
+
+
 def fetch_genius_image(song_title, job_folder):
-    """Fetch album art image from Genius for a given song title"""
-    # Import here to avoid circular imports (only Aurora/Onyx need this)
-    from scripts.image_processing import download_image
-    
+    """Fetch album art from Genius, walking through candidates until one passes
+    the vibrancy gate (saturation, channel spread, chroma spread). Falls back
+    to the most-saturated candidate if none pass."""
     if not Config.GENIUS_API_TOKEN or not song_title:
         return None
-    
+
     headers = {"Authorization": f"Bearer {Config.GENIUS_API_TOKEN}"}
     artist, title = _parse_song_title(song_title)
     query = f"{title} {artist}" if artist else title
-    
+
     try:
         response = _request_with_retry(
             "GET", f"{Config.GENIUS_BASE_URL}/search",
@@ -98,42 +155,35 @@ def fetch_genius_image(song_title, job_folder):
     except Exception as e:
         print(f"  Genius image search failed: {e}")
         return None
-    
+
     hits = data.get("response", {}).get("hits", [])
     if not hits:
         print("  No Genius results found for image")
         return None
-    
+
+    # Order candidates: best-hit's images first, then everything else
     best_hit = _find_best_hit(hits, artist, title)
-    song_info = best_hit["result"]
-    image_url = song_info.get("song_art_image_url") or song_info.get("header_image_url")
-    
-    if not image_url:
-        print("  No image found in Genius result")
+    ordered_hits = [best_hit] + [h for h in hits if h is not best_hit]
+    candidates = _collect_image_candidates(ordered_hits)
+
+    if not candidates:
+        print("  No image candidates found")
         return None
-    
-    try:
-        return download_image(job_folder, image_url)
-    except Exception as e:
-        print(f"  Failed to download Genius image: {e}")
-        return None
+
+    path, _, _ = _pick_vibrant_candidate(candidates, job_folder)
+    return path
 
 
 # ============================================================================
 # PUBLIC API: fetch_genius_image_rotated
 # ============================================================================
 def fetch_genius_image_rotated(song_title, job_folder, current_url=None):
-    """
-    Fetch an alternative cover image from Genius for image rotation.
-
-    Collects all available image URLs from search results (song_art and header)
-    and picks one that differs from *current_url*.  Falls back to the standard
-    fetch if no alternative is found.
+    """Fetch an alternative cover from Genius, walking through candidates until
+    one passes the vibrancy gate. Skips current_url so the result differs from
+    the cached one. Falls back to the most-saturated candidate if none pass.
 
     Returns (image_path, chosen_url) tuple, or (None, None) on failure.
     """
-    from scripts.image_processing import download_image
-
     if not Config.GENIUS_API_TOKEN or not song_title:
         return None, None
 
@@ -158,40 +208,22 @@ def fetch_genius_image_rotated(song_title, job_folder, current_url=None):
         print("  No Genius results found for image rotation")
         return None, None
 
-    # Collect all unique image URLs across all hits
-    candidates = []
-    for hit in hits:
-        result = hit.get("result", {})
-        for key in ("song_art_image_url", "header_image_url",
-                     "song_art_image_thumbnail_url"):
-            url = result.get(key)
-            if url and url not in candidates:
-                candidates.append(url)
-
+    candidates = _collect_image_candidates(hits)
     if not candidates:
         print("  No image candidates found")
         return None, None
 
-    # Filter out the current URL so we get something different
-    if current_url:
-        alternatives = [u for u in candidates if u != current_url]
-    else:
-        alternatives = candidates
-
+    # Shuffle alternatives so we don't always re-pick the same one when
+    # multiple candidates pass the gate
+    alternatives = [u for u in candidates if u != current_url]
     if not alternatives:
-        # All candidates match current — use any candidate (still better than nothing)
-        alternatives = candidates
+        alternatives = candidates  # All match current — accept anything
+    random.shuffle(alternatives)
 
-    # Pick a random alternative for variety
-    chosen = random.choice(alternatives)
-    print(f"  Image rotation: picked {'new' if chosen != current_url else 'same'} image")
-
-    try:
-        img_path = download_image(job_folder, chosen)
-        return img_path, chosen
-    except Exception as e:
-        print(f"  Failed to download rotated image: {e}")
-        return None, None
+    path, chosen, _ = _pick_vibrant_candidate(alternatives, job_folder)
+    if path:
+        return path, chosen
+    return None, None
 
 
 # ============================================================================

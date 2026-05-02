@@ -62,12 +62,7 @@ function main() {
         }
     }
     
-    // Keep AE open after script runs (unless auto-render)
-    if (AUTO_RENDER === "true") {
-        app.exitAfterLaunchAndEval = true;
-    } else {
-        app.exitAfterLaunchAndEval = false;
-    }
+    app.exitAfterLaunchAndEval = true;
     
     app.beginUndoGroup("ONYX Batch Music Video Build");
 
@@ -265,7 +260,10 @@ function main() {
 
         try { app.endSuppressDialogs(false); } catch (e) {}
     } else {
-        $.writeln("ONYX batch processing complete. Review in Render Queue, then click Render.");
+        try { app.project.save(); } catch (e) {
+            $.writeln("Could not save project: " + e.toString());
+        }
+        $.writeln("ONYX jobs queued and project saved. aerender will render next.");
     }
 }
 

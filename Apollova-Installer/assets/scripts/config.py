@@ -32,6 +32,7 @@ class Config:
     
     # Job Settings
     TOTAL_JOBS = int(os.getenv("TOTAL_JOBS", "12"))
+    JOBS_DIR = "jobs"
     
     # Processing Settings
     MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))

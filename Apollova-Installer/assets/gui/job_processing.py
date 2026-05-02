@@ -729,18 +729,20 @@ def process_single_song(app, job_number: int, song_title: str,
                     f"({lyrics_path.stat().st_size} bytes)")
         else:
             app.signals.log.emit("  \u2713 Lyrics exist")
-        lyrics_data = (lyrics_path.read_text()
+        lyrics_data = (lyrics_path.read_text(encoding='utf-8')
                        if lyrics_path.exists() else "")
 
     elif template == 'mono':
         mono_path = job_folder / "mono_data.json"
         cached_mono = app.song_db.get_mono_lyrics(song_title)
-        if cached_mono:
+        if cached_mono and cached_mono.get('total_markers', 0) > 0:
             with open(mono_path, 'w', encoding='utf-8') as f:
                 json.dump(
                     cached_mono, f, indent=4, ensure_ascii=False)
             app.signals.log.emit("  \u2713 Cached mono lyrics")
-        elif not mono_path.exists():
+        elif (not mono_path.exists()
+              or json.loads(mono_path.read_text(encoding='utf-8')).get(
+                  'total_markers', 0) == 0):
             app.signals.log.emit(
                 f"  Transcribing mono ({Config.WHISPER_MODEL})\u2026")
             t0 = time.time()
@@ -766,18 +768,20 @@ def process_single_song(app, job_number: int, song_title: str,
                     f"small ({mono_path.stat().st_size} bytes)")
         else:
             app.signals.log.emit("  \u2713 Mono data exists")
-        lyrics_data = (mono_path.read_text()
+        lyrics_data = (mono_path.read_text(encoding='utf-8')
                        if mono_path.exists() else "{}")
 
     elif template == 'onyx':
         onyx_path = job_folder / "onyx_data.json"
         cached_onyx = app.song_db.get_onyx_lyrics(song_title)
-        if cached_onyx:
+        if cached_onyx and cached_onyx.get('total_markers', 0) > 0:
             with open(onyx_path, 'w', encoding='utf-8') as f:
                 json.dump(
                     cached_onyx, f, indent=4, ensure_ascii=False)
             app.signals.log.emit("  \u2713 Cached onyx lyrics")
-        elif not onyx_path.exists():
+        elif (not onyx_path.exists()
+              or json.loads(onyx_path.read_text(encoding='utf-8')).get(
+                  'total_markers', 0) == 0):
             app.signals.log.emit(
                 f"  Transcribing onyx ({Config.WHISPER_MODEL})\u2026")
             t0 = time.time()
@@ -803,7 +807,7 @@ def process_single_song(app, job_number: int, song_title: str,
                     f"small ({onyx_path.stat().st_size} bytes)")
         else:
             app.signals.log.emit("  \u2713 Onyx data exists")
-        lyrics_data = (onyx_path.read_text()
+        lyrics_data = (onyx_path.read_text(encoding='utf-8')
                        if onyx_path.exists() else "{}")
 
     else:

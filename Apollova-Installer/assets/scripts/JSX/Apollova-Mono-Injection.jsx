@@ -62,12 +62,7 @@ function main() {
         }
     }
     
-    // Keep AE open after script runs (unless auto-render)
-    if (AUTO_RENDER === "true") {
-        app.exitAfterLaunchAndEval = true;
-    } else {
-        app.exitAfterLaunchAndEval = false;
-    }
+    app.exitAfterLaunchAndEval = true;
     
     app.beginUndoGroup("mono Batch Music Video Build");
 
@@ -211,12 +206,16 @@ function main() {
 
         // Album art (optional for Mono)
         if (hasCoverImage) {
-            try {
-                var assetsComp = findCompByName("Assets " + jobId);
-                retargetImageLayersToFootage(assetsComp, "COVER");
-                $.writeln("Album art retargeted for job " + jobId);
-            } catch (e) {
-                $.writeln("Assets " + jobId + " not found – skipping album art.");
+            var assetsCompForArt = findAssetsComp(jobId);
+            if (assetsCompForArt) {
+                try {
+                    retargetImageLayersToFootage(assetsCompForArt, "COVER");
+                    $.writeln("Album art retargeted for job " + jobId + " in " + assetsCompForArt.name);
+                } catch (e) {
+                    $.writeln("Album art retarget failed for job " + jobId + ": " + e.toString());
+                }
+            } else {
+                $.writeln("Assets comp not found for job " + jobId + " – skipping album art.");
             }
         }
 
@@ -268,7 +267,10 @@ function main() {
 
         try { app.endSuppressDialogs(false); } catch (e) {}
     } else {
-        $.writeln("MONO batch processing complete. Review in Render Queue, then click Render.");
+        try { app.project.save(); } catch (e) {
+            $.writeln("Could not save project: " + e.toString());
+        }
+        $.writeln("MONO jobs queued and project saved. aerender will render next.");
     }
 }
 
@@ -1117,13 +1119,28 @@ function setOutputWorkAreaToAudio(jobId, audioPath) {
     } catch(e) {
         $.writeln("Could not set BACKGROUND " + jobId + " duration: " + e.toString());
     }
+
+    // Extend AUDIO layer outPoint to match song duration (prevents silent tail)
+    try {
+        var lfcForAudio = findCompByName("LYRIC FONT " + jobId);
+        var audioLyr = ensureAudioLayer(lfcForAudio);
+        if (audioLyr) {
+            audioLyr.outPoint = dur;
+            $.writeln("Extended AUDIO outPoint for job " + jobId + " to " + dur + "s");
+        }
+    } catch(e) {
+        $.writeln("Could not extend AUDIO outPoint for job " + jobId + ": " + e.toString());
+    }
 }
 
 function updateSongTitle(jobId, titleText) {
     if (!titleText) return;
     try {
-        var assetsComp = findCompByName("Assets " + jobId);
-        if (!assetsComp) return;
+        var assetsComp = findAssetsComp(jobId);
+        if (!assetsComp) {
+            $.writeln("Assets comp not found for job " + jobId + " – skipping title update.");
+            return;
+        }
 
         var targetTextLayer = null;
         for (var i = 1; i <= assetsComp.numLayers; i++) {
@@ -1132,17 +1149,40 @@ function updateSongTitle(jobId, titleText) {
             if (txtProp) { targetTextLayer = lyr; break; }
         }
 
-        if (!targetTextLayer) return;
+        if (!targetTextLayer) {
+            $.writeln("No text layer in " + assetsComp.name + " – skipping title update.");
+            return;
+        }
 
         var txtProp = targetTextLayer.property("Source Text");
         var doc = txtProp.value;
         doc.text = String(titleText);
         txtProp.setValue(doc);
 
-        $.writeln("Set song title for job " + jobId + ": " + titleText);
+        $.writeln("Set song title for job " + jobId + " in " + assetsComp.name + ": " + titleText);
     } catch (e) {
         $.writeln("Could not update title for job " + jobId + ": " + e.toString());
     }
+}
+
+function findAssetsComp(jobId) {
+    // Template naming varies: "Assets N" (top-level) or "Assets OTN" (nested in OUTPUT N folder)
+    var candidates = ["Assets " + jobId, "Assets OT" + jobId, "Assets" + jobId];
+    for (var c = 0; c < candidates.length; c++) {
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var it = app.project.item(i);
+            if (it instanceof CompItem && it.name === candidates[c]) return it;
+        }
+    }
+    // Fallback: walk OUTPUT N folder for any comp starting with "Assets"
+    var outputFolder = findFolderByName("OUTPUT" + jobId);
+    if (outputFolder) {
+        for (var k = 1; k <= outputFolder.numItems; k++) {
+            var sub = outputFolder.item(k);
+            if (sub instanceof CompItem && sub.name.toLowerCase().indexOf("assets") === 0) return sub;
+        }
+    }
+    return null;
 }
 
 function retargetImageLayersToFootage(assetComp, footageName) {

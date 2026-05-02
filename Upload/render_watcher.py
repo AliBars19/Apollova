@@ -186,21 +186,27 @@ class SmartScheduler:
 
     def _find_slot_on_day(self, account: str, date: datetime, is_today: bool) -> Optional[datetime]:
         """Find the next available slot on a specific day."""
+        import random
         start_hour = self.config.schedule_day_start_hour
         end_hour = self.config.schedule_day_end_hour
-        interval = self.config.schedule_interval_minutes
+        min_gap = self.config.schedule_interval_minutes
+        jitter = self.config.schedule_interval_jitter_minutes
 
         # What's the last scheduled time on this day?
         last_time = self.state.get_last_scheduled_time(account, date)
 
         if last_time:
-            # Schedule `interval` minutes after the last one
-            candidate = last_time + timedelta(minutes=interval)
+            # Random gap: min_gap + random(0, jitter) minutes after last slot
+            gap = min_gap + random.randint(0, jitter)
+            candidate = last_time + timedelta(minutes=gap)
+            # Randomise the minutes too (not always on the hour)
+            candidate = candidate.replace(second=0, microsecond=0)
         else:
-            # Nothing scheduled yet — start at the start hour
+            # Nothing scheduled yet — start somewhere in the first 2 hours of window
+            start_offset = random.randint(0, 120)
             candidate = date.replace(
                 hour=start_hour, minute=0, second=0, microsecond=0
-            )
+            ) + timedelta(minutes=start_offset)
 
         # If it's today and the candidate is in the past, bump to near-future
         if is_today:
@@ -400,6 +406,51 @@ class VideoUploader:
             return False
 
 
+# ─── Quality Gate ────────────────────────────────────────────────
+
+def validate_video_decodable(file_path: Path) -> tuple[bool, str]:
+    """Return (ok, reason). Catches AE renders that pass size checks but
+    contain corrupted NAL units / partial frames (machine throttled, GPU
+    starved, etc.). Browsers play these as black screen with correct duration.
+    """
+    if not file_path.exists():
+        return False, "file missing"
+    if file_path.stat().st_size < 1 * 1024 * 1024:
+        return False, f"file too small ({file_path.stat().st_size} bytes)"
+
+    try:
+        # 1. Stream count: must be exactly 1 video + 1 audio
+        probe = subprocess.run(
+            ["ffprobe", "-v", "quiet",
+             "-show_entries", "stream=codec_type",
+             "-of", "csv=p=0", str(file_path)],
+            capture_output=True, text=True, timeout=30,
+        )
+        types = [t.strip() for t in probe.stdout.splitlines() if t.strip()]
+        if types.count("video") != 1 or types.count("audio") != 1 or len(types) != 2:
+            return False, f"bad stream layout: {types}"
+
+        # 2. Decode test: scan for NAL/decode errors on stderr
+        decode = subprocess.run(
+            ["ffmpeg", "-v", "error", "-xerror",
+             "-i", str(file_path), "-f", "null", "-"],
+            capture_output=True, text=True, timeout=120,
+        )
+        err = decode.stderr.strip()
+        if decode.returncode != 0 or err:
+            short = err[:300] if err else f"returncode={decode.returncode}"
+            return False, f"decode failed: {short}"
+
+    except subprocess.TimeoutExpired:
+        return False, "ffprobe/ffmpeg timeout"
+    except FileNotFoundError:
+        # ffmpeg/ffprobe missing — fail open with warning so uploads don't halt
+        logger.warning("ffmpeg/ffprobe not on PATH — skipping decode validation")
+        return True, "validation skipped (ffmpeg missing)"
+
+    return True, "ok"
+
+
 # ─── AE Broken-Render Recovery ───────────────────────────────────
 
 def mux_ae_broken_renders(watch_path: Path) -> list[Path]:
@@ -434,6 +485,19 @@ def mux_ae_broken_renders(watch_path: Path) -> list[Path]:
             m4v.unlink(missing_ok=True)
             continue
 
+        # Skip if either file is locked (AE still writing)
+        locked = False
+        for f in (aac, m4v):
+            try:
+                with open(f, "r+b"):
+                    pass
+            except (PermissionError, OSError):
+                logger.debug(f"AE mux recovery: {f.name} still locked by AE, skipping")
+                locked = True
+                break
+        if locked:
+            continue
+
         # If either track is empty AE was killed before it finished rendering —
         # nothing to recover, just delete the debris
         aac_size = aac.stat().st_size
@@ -455,6 +519,8 @@ def mux_ae_broken_renders(watch_path: Path) -> list[Path]:
                     "ffmpeg", "-y",
                     "-i", str(m4v),
                     "-i", str(aac),
+                    "-map", "0:v:0",   # only first video stream from m4v
+                    "-map", "1:a:0",   # only audio from aac (ignore any audio in m4v)
                     "-c:v", "copy",
                     "-c:a", "aac",
                     "-movflags", "+faststart",
@@ -464,13 +530,20 @@ def mux_ae_broken_renders(watch_path: Path) -> list[Path]:
                 text=True,
                 timeout=300,
             )
-            if result.returncode == 0 and output.exists() and output.stat().st_size > 0:
+            min_size = 1 * 1024 * 1024  # expect at least 1MB; audio-only files are ~200KB
+            if result.returncode == 0 and output.exists() and output.stat().st_size >= min_size:
                 aac.unlink(missing_ok=True)
                 m4v.unlink(missing_ok=True)
                 logger.info(f"AE mux recovery: created {output.name} ({output.stat().st_size // 1024 // 1024}MB)")
                 muxed.append(output)
             else:
-                logger.error(f"AE mux recovery failed for {output.name}: {result.stderr[-500:]}")
+                size = output.stat().st_size if output.exists() else 0
+                logger.error(
+                    f"AE mux recovery failed for {output.name}: "
+                    f"returncode={result.returncode} size={size}B stderr={result.stderr[-300:]}"
+                )
+                if output.exists() and size < min_size:
+                    output.unlink()  # delete suspiciously small output rather than queue it
         except subprocess.TimeoutExpired:
             logger.error(f"AE mux recovery timed out for {output.name}")
         except FileNotFoundError:
@@ -612,6 +685,17 @@ class FolderWatcher(FileSystemEventHandler):
 
         console.print(f"[cyan]📹 {file_path.name}[/cyan] [dim]({self.template} → {self.account})[/dim]")
         logger.info(f"New video: {file_path.name} ({self.template} → {self.account})")
+
+        # ── Quality gate ─────────────────────────────────────────
+        ok, reason = validate_video_decodable(file_path)
+        if not ok:
+            error = f"corrupted render: {reason}"
+            self.state.mark_upload_failed(record_id, error)
+            console.print(f"  [red]✗ Quality gate failed: {reason}[/red]")
+            console.print(f"  [yellow]Local file kept for re-render: {file_path}[/yellow]")
+            logger.error(f"Quality gate FAIL {file_path.name}: {reason}")
+            self.notifications.video_failed(file_path.name, error)
+            return
 
         # ── Upload ───────────────────────────────────────────────
         result, upload_error = self.uploader.upload_video(str(file_path), self.account)

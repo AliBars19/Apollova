@@ -105,9 +105,14 @@ def build(app) -> None:
     app.batch_status_label = QLabel("Status: Idle")
     app.batch_progress_bar = QProgressBar()
     app.batch_progress_bar.setRange(0, 100)
+    app.batch_render_progress_bar = QProgressBar()
+    app.batch_render_progress_bar.setRange(0, 100)
+    app.batch_render_progress_bar.setFormat("Render: %p%")
+    app.batch_render_progress_bar.setValue(0)
     app.batch_current_label = _label("", "muted")
     batch_lay.addWidget(app.batch_status_label)
     batch_lay.addWidget(app.batch_progress_bar)
+    batch_lay.addWidget(app.batch_render_progress_bar)
     batch_lay.addWidget(app.batch_current_label)
 
     bb_row = QHBoxLayout()
@@ -370,28 +375,44 @@ def batch_render_thread(app, templates: list) -> None:
     app.signals.batch_finished.emit(dict(app.batch_results))
 
 
+def _find_aerender(ae_exe: str) -> Path | None:
+    candidate = Path(ae_exe).parent / "aerender.exe"
+    return candidate if candidate.exists() else None
+
+
 def run_batch_template(app, t: str) -> tuple:
     ae = app.settings.get('after_effects_path')
     tp = TEMPLATE_PATHS.get(t)
     d = JOBS_DIRS.get(t)
     jsx = JSX_SCRIPTS.get(t)
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+    aerender = _find_aerender(ae)
+    if not aerender:
+        return False, f"aerender.exe not found next to {ae}"
+
     try:
         src = BUNDLED_JSX_DIR / jsx
         if not src.exists():
             src = ASSETS_DIR / "scripts" / "JSX" / jsx
         if not src.exists():
             return False, f"JSX not found: {jsx}"
+
         tmp = Path(tempfile.gettempdir()) / "Apollova"
         tmp.mkdir(exist_ok=True)
         dst = tmp / f"batch_{jsx}"
         shutil.copy(src, dst)
-        prepare_jsx_with_path(dst, d, tp, auto_render=True)
+        # Inject only — no AUTO_RENDER; JSX saves the project then AE exits
+        prepare_jsx_with_path(dst, d, tp, auto_render=False)
+
         err_log = d / "batch_error.txt"
         if err_log.exists():
             err_log.unlink()
 
-        flags = (subprocess.CREATE_NO_WINDOW
-                 if sys.platform == "win32" else 0)
+        # ── Phase 1: Inject ───────────────────────────────────────────────────
+        app.signals.batch_progress.emit(
+            f"Status: Injecting {t.capitalize()}…",
+            0, f"Opening After Effects for {t.capitalize()}…")
         p = subprocess.Popen([ae, "-r", str(dst)], creationflags=flags)
         while p.poll() is None:
             if app.batch_render_cancelled:
@@ -405,6 +426,37 @@ def run_batch_template(app, t: str) -> tuple:
             pass
         if err_log.exists():
             return False, err_log.read_text().strip()
+
+        # ── Phase 2: Render via aerender.exe ─────────────────────────────────
+        app.signals.batch_progress.emit(
+            f"Status: Rendering {t.capitalize()}…",
+            0, f"aerender.exe rendering {t.capitalize()}…")
+        app.signals.batch_render_progress.emit(0.0)
+
+        proc = subprocess.Popen(
+            [str(aerender), "-project", str(tp), "-continueOnMissingFootage"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            creationflags=flags,
+        )
+        for line in proc.stdout:
+            line = line.rstrip()
+            if "PROGRESS:" in line:
+                try:
+                    pct = float(line.split("PROGRESS:")[-1].strip())
+                    app.signals.batch_render_progress.emit(pct)
+                except ValueError:
+                    pass
+            if app.batch_render_cancelled:
+                proc.terminate()
+                proc.wait(timeout=10)
+                return False, "Cancelled by user"
+        proc.wait()
+        if proc.returncode != 0:
+            return False, f"aerender exited with code {proc.returncode}"
+
+        app.signals.batch_render_progress.emit(100.0)
         return True, None
     except Exception as e:
         return False, str(e)
@@ -415,6 +467,12 @@ def batch_update_progress(app, status: str, progress: float,
     app.batch_status_label.setText(status)
     app.batch_progress_bar.setValue(int(progress))
     app.batch_current_label.setText(current)
+    # Reset render sub-bar on new template
+    app.batch_render_progress_bar.setValue(0)
+
+
+def batch_update_render_progress(app, pct: float) -> None:
+    app.batch_render_progress_bar.setValue(int(pct))
 
 
 def batch_update_template_status_slot(app, template: str,

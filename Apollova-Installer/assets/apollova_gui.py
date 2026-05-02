@@ -141,7 +141,7 @@ _import_scripts()
 
 # ── Tab + handler modules ────────────────────────────────────────────────────
 from assets.gui import job_creation_tab, jsx_injection_tab, settings_tab
-from assets.gui import mobile_server, job_processing
+from assets.gui import mobile_server, job_processing, database_manager_tab
 from pathlib import Path
 
 
@@ -295,6 +295,7 @@ class AppolovaApp(QMainWindow):
 
         job_creation_tab.build(self)
         jsx_injection_tab.build(self)
+        database_manager_tab.build(self)
         settings_tab.build(self)
 
         self.tabs.currentChanged.connect(self._on_tab_changed)
@@ -512,6 +513,7 @@ class AppolovaApp(QMainWindow):
 
     def _refresh_stats_label(self):
         job_processing.refresh_stats_label(self)
+        database_manager_tab.refresh(self)
 
     def _run_with_ticker(self, fn, *args, **kwargs):
         return job_processing.run_with_ticker(self, fn, *args, **kwargs)

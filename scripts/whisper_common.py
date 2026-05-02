@@ -955,6 +955,24 @@ def rebuild_words_after_alignment(markers):
 
 
 # ============================================================================
+# GENIUS TEXT CLEANUP
+# ============================================================================
+
+_GENIUS_SECTION_TAG_RE = re.compile(
+    r'^\s*\[[^\]]{0,60}\]\s*$',
+    re.MULTILINE
+)
+_GENIUS_READ_MORE_RE = re.compile(r'\bRead\s+More\b', re.IGNORECASE)
+
+
+def _strip_genius_section_tags(text: str) -> str:
+    text = _GENIUS_SECTION_TAG_RE.sub('', text)
+    text = _GENIUS_READ_MORE_RE.sub('', text)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+
+# ============================================================================
 # FORCED ALIGNMENT (#28: Genius text → audio via model.align)
 # ============================================================================
 
@@ -1772,9 +1790,16 @@ def transcribe_word_level(job_folder, song_title, template_name,
                     print(f"  \u26a0 Low match ratio ({match_ratio:.2f}) \u2014 reverting to Whisper text")
                     markers = markers_backup
                 elif match_ratio >= 0.5:
-                    aligned = align_genius_to_audio(audio_path, genius_text, language)
+                    clean_genius = _strip_genius_section_tags(genius_text)
+                    aligned = align_genius_to_audio(audio_path, clean_genius, language)
                     if aligned and aligned.segments:
-                        markers = build_markers_from_segments(aligned.segments)
+                        aligned_markers = build_markers_from_segments(aligned.segments)
+                        if len(aligned_markers) >= len(markers_backup):
+                            markers = aligned_markers
+                        else:
+                            print(f"  ⚠ align_genius_to_audio downgraded markers "
+                                  f"({len(aligned_markers)} < {len(markers_backup)}) — reverting")
+                            markers = rebuild_words_after_alignment(markers)
                     else:
                         markers = rebuild_words_after_alignment(markers)
                 else:

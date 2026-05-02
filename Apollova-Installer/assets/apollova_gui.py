@@ -191,6 +191,7 @@ class AppolovaApp(QMainWindow):
         self.signals.batch_progress.connect(self._batch_update_progress)
         self.signals.batch_template_status.connect(self._batch_update_template_status_slot)
         self.signals.batch_finished.connect(self._batch_render_complete)
+        self.signals.batch_render_progress.connect(self._batch_update_render_progress)
         self.signals.discovery_progress.connect(self._on_discovery_progress)
         self.signals.discovery_results.connect(self._on_discovery_results)
         self.signals.discovery_error.connect(self._on_discovery_error)
@@ -249,7 +250,7 @@ class AppolovaApp(QMainWindow):
 
     def _auto_detect_after_effects(self):
         versions = [
-            "Adobe After Effects 2025", "Adobe After Effects 2024",
+            "Adobe After Effects 2026", "Adobe After Effects 2025", "Adobe After Effects 2024",
             "Adobe After Effects 2023", "Adobe After Effects CC 2024",
             "Adobe After Effects CC 2023", "Adobe After Effects CC 2022",
             "Adobe After Effects CC 2021", "Adobe After Effects CC 2020",
@@ -435,6 +436,9 @@ class AppolovaApp(QMainWindow):
 
     def _batch_render_complete(self, results):
         jsx_injection_tab.batch_render_complete(self, results)
+
+    def _batch_update_render_progress(self, pct):
+        jsx_injection_tab.batch_update_render_progress(self, pct)
 
     # ── Delegated handlers: Settings tab ──────────────────────────────────────
 

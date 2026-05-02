@@ -19,6 +19,7 @@ class WorkerSignals(QObject):
     batch_progress = pyqtSignal(str, float, str)
     batch_template_status = pyqtSignal(str, str)
     batch_finished = pyqtSignal(dict)
+    batch_render_progress = pyqtSignal(float)
     discovery_progress = pyqtSignal(str, int, int, str)
     discovery_results = pyqtSignal(list)
     discovery_error = pyqtSignal(str)

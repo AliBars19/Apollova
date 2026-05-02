@@ -729,7 +729,7 @@ def process_single_song(app, job_number: int, song_title: str,
                     f"({lyrics_path.stat().st_size} bytes)")
         else:
             app.signals.log.emit("  \u2713 Lyrics exist")
-        lyrics_data = (lyrics_path.read_text()
+        lyrics_data = (lyrics_path.read_text(encoding='utf-8')
                        if lyrics_path.exists() else "")
 
     elif template == 'mono':
@@ -768,7 +768,7 @@ def process_single_song(app, job_number: int, song_title: str,
                     f"small ({mono_path.stat().st_size} bytes)")
         else:
             app.signals.log.emit("  \u2713 Mono data exists")
-        lyrics_data = (mono_path.read_text()
+        lyrics_data = (mono_path.read_text(encoding='utf-8')
                        if mono_path.exists() else "{}")
 
     elif template == 'onyx':
@@ -807,7 +807,7 @@ def process_single_song(app, job_number: int, song_title: str,
                     f"small ({onyx_path.stat().st_size} bytes)")
         else:
             app.signals.log.emit("  \u2713 Onyx data exists")
-        lyrics_data = (onyx_path.read_text()
+        lyrics_data = (onyx_path.read_text(encoding='utf-8')
                        if onyx_path.exists() else "{}")
 
     else:

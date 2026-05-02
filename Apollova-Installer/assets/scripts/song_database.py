@@ -50,14 +50,19 @@ class SongDatabase:
             """)
 
             # Add columns if they don't exist (for existing databases)
-            _valid_new_columns = {"mono_lyrics", "onyx_lyrics", "genius_text"}
-            for col in ["mono_lyrics", "onyx_lyrics", "genius_text"]:
-                if col not in _valid_new_columns:
-                    continue
+            _text_columns = ["mono_lyrics", "onyx_lyrics", "genius_text"]
+            for col in _text_columns:
                 try:
                     cursor.execute(f"ALTER TABLE songs ADD COLUMN {col} TEXT")
                 except sqlite3.OperationalError:
-                    pass  # Column already exists
+                    pass
+
+            try:
+                cursor.execute(
+                    "ALTER TABLE songs ADD COLUMN toggled INTEGER NOT NULL DEFAULT 1"
+                )
+            except sqlite3.OperationalError:
+                pass  # already exists
 
             conn.commit()
 
@@ -273,20 +278,33 @@ class SongDatabase:
     # ========================================================================
 
     def list_all_songs(self):
-        """Get list of all songs ordered by last used"""
+        """Return all songs ordered by title. Each row: (song_title, use_count, last_used, toggled)."""
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-
             cursor.execute("""
-                SELECT song_title, use_count, last_used
+                SELECT song_title, use_count, last_used, toggled
                 FROM songs
-                ORDER BY last_used DESC
+                ORDER BY song_title COLLATE NOCASE ASC
             """)
-
             return cursor.fetchall()
         finally:
             conn.close()
+
+    def set_song_toggled(self, song_title: str, enabled: bool) -> None:
+        """Enable or disable a song for SmartPicker selection."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE songs SET toggled = ? WHERE LOWER(song_title) = LOWER(?)",
+                (1 if enabled else 0, song_title),
+            )
+            conn.commit()
+
+    def set_all_toggled(self, enabled: bool) -> None:
+        """Bulk enable or disable all songs."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("UPDATE songs SET toggled = ?", (1 if enabled else 0,))
+            conn.commit()
 
     def search_songs(self, query):
         """Search for songs by partial title match"""
@@ -346,20 +364,19 @@ class SongDatabase:
         conn = sqlite3.connect(self.db_path)
         try:
             cursor = conn.cursor()
-
             cursor.execute("SELECT COUNT(*) FROM songs")
             total_songs = cursor.fetchone()[0]
-
             cursor.execute("SELECT COUNT(*) FROM songs WHERE transcribed_lyrics IS NOT NULL")
             cached_lyrics = cursor.fetchone()[0]
-
             cursor.execute("SELECT SUM(use_count) FROM songs")
             total_uses = cursor.fetchone()[0] or 0
-
+            cursor.execute("SELECT COUNT(*) FROM songs WHERE toggled = 1")
+            toggled_on = cursor.fetchone()[0]
             return {
                 "total_songs": total_songs,
                 "cached_lyrics": cached_lyrics,
-                "total_uses": total_uses
+                "total_uses": total_uses,
+                "toggled_on": toggled_on,
             }
         finally:
             conn.close()

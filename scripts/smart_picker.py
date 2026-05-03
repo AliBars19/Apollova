@@ -36,21 +36,21 @@ class SmartSongPicker:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM songs")
+        cursor.execute("SELECT COUNT(*) FROM songs WHERE toggled = 1")
         total_songs = cursor.fetchone()[0]
 
         if total_songs == 0:
             conn.close()
             return []
 
-        cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1")
+        cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1 AND toggled = 1")
         unused_count = cursor.fetchone()[0]
 
         if unused_count >= num_songs:
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
                 FROM songs
-                WHERE use_count = 1
+                WHERE use_count = 1 AND toggled = 1
                 ORDER BY RANDOM()
                 LIMIT ?
             """, (num_songs,))
@@ -59,6 +59,7 @@ class SmartSongPicker:
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
                 FROM songs
+                WHERE toggled = 1
                 ORDER BY
                     CASE WHEN use_count = 1 THEN 0 ELSE 1 END,
                     use_count ASC
@@ -74,6 +75,7 @@ class SmartSongPicker:
             cursor.execute("""
                 SELECT id, song_title, youtube_url, start_time, end_time, use_count
                 FROM songs
+                WHERE toggled = 1
                 ORDER BY
                     CASE WHEN use_count = 1 THEN 0 ELSE 1 END,
                     use_count ASC,
@@ -95,27 +97,24 @@ class SmartSongPicker:
         } for row in rows]
     
     def get_database_stats(self):
-        """Get statistics about song usage"""
+        """Get statistics about song usage (toggled-on songs only)"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) FROM songs")
+        cursor.execute("SELECT COUNT(*) FROM songs WHERE toggled = 1")
         total = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1")
+        cursor.execute("SELECT COUNT(*) FROM songs WHERE use_count = 1 AND toggled = 1")
         unused = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT MIN(use_count), MAX(use_count), AVG(use_count) FROM songs")
+        cursor.execute(
+            "SELECT MIN(use_count), MAX(use_count), AVG(use_count) FROM songs WHERE toggled = 1"
+        )
         min_uses, max_uses, avg_uses = cursor.fetchone()
-        
         conn.close()
-        
         return {
             "total_songs": total,
             "unused_songs": unused,
             "min_uses": min_uses or 0,
             "max_uses": max_uses or 0,
-            "avg_uses": round(avg_uses, 2) if avg_uses else 0
+            "avg_uses": round(avg_uses, 2) if avg_uses else 0,
         }
     
     def mark_song_used(self, song_title):

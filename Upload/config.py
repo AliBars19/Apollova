@@ -60,7 +60,7 @@ class Config:
     log_dir: str = "./logs"
 
     # ── Scheduling ────────────────────────────────────────────────
-    videos_per_day_per_account: int = 3
+    videos_per_day_per_account: int = 8
     schedule_interval_minutes: int = 60       # minimum gap between videos (jitter added on top)
     schedule_interval_jitter_minutes: int = 90  # random extra minutes added to each slot
     schedule_day_start_hour: int = 9          # First video from 9 AM

@@ -1013,7 +1013,8 @@ function applyBackgroundColors(jobId, colors) {
     }
 
     // Apply colors (Color 1, Color 2, Color 3, Color 4)
-    // Python gives us 2 colors, so: Color1=colors[0], Color2=colors[1], Color3=colors[0], Color4=colors[0]
+    // Python now sends 4 explicit slots (hero_dark mode: hero/black/black/hero).
+    // Length-2 input still works as a fallback for legacy cached jobs.
     try {
         var color1Prop = gradient4Color.property("Color 1");
         var color2Prop = gradient4Color.property("Color 2");
@@ -1021,9 +1022,9 @@ function applyBackgroundColors(jobId, colors) {
         var color4Prop = gradient4Color.property("Color 4");
 
         if (color1Prop) color1Prop.setValue(hexToRGB(colors[0]));
-        if (color2Prop) color2Prop.setValue(hexToRGB(colors[1]));
-        if (color3Prop) color3Prop.setValue(hexToRGB(colors.length > 2 ? colors[2] : colors[0]));
-        if (color4Prop) color4Prop.setValue(hexToRGB(colors[0])); // Repeat dominant color
+        if (color2Prop) color2Prop.setValue(hexToRGB(colors.length > 1 ? colors[1] : colors[0]));
+        if (color3Prop) color3Prop.setValue(hexToRGB(colors.length > 2 ? colors[2] : colors[1] || colors[0]));
+        if (color4Prop) color4Prop.setValue(hexToRGB(colors.length > 3 ? colors[3] : colors[0]));
 
         $.writeln(" 4-Color Gradient updated for job " + jobId);
     } catch (e) {

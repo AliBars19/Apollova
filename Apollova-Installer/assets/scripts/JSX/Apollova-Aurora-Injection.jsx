@@ -680,11 +680,15 @@ function setWorkAreaToAudioDuration(jobId) {
     if (!audio || !audio.source || !audio.source.duration) return;
 
     var dur = audio.source.duration;
-    
+
     comp.duration = dur;
     comp.workAreaStart = 0;
     comp.workAreaDuration = dur;
-    
+
+    // Extend every layer to fill the full comp so lyrics don't vanish before audio ends
+    for (var i = 1; i <= comp.numLayers; i++) {
+        try { comp.layer(i).outPoint = dur; } catch (e) {}
+    }
 }
 
 
@@ -816,6 +820,11 @@ function setOutputWorkAreaToAudio(jobId, audioPath) {
         comp.duration = dur;
         comp.workAreaStart = 0;
         comp.workAreaDuration = dur;
+
+        // Extend every layer to fill the full comp so visuals don't cut out before audio ends
+        for (var i = 1; i <= comp.numLayers; i++) {
+            try { comp.layer(i).outPoint = dur; } catch (e) {}
+        }
     } catch (e) {
         $.writeln(" Could not set OUTPUT " + jobId + " duration: " + e.toString());
     }

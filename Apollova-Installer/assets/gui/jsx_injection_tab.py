@@ -427,34 +427,55 @@ def run_batch_template(app, t: str) -> tuple:
         if err_log.exists():
             return False, err_log.read_text().strip()
 
-        # ── Phase 2: Render via aerender.exe ─────────────────────────────────
-        app.signals.batch_progress.emit(
-            f"Status: Rendering {t.capitalize()}…",
-            0, f"aerender.exe rendering {t.capitalize()}…")
-        app.signals.batch_render_progress.emit(0.0)
-
-        proc = subprocess.Popen(
-            [str(aerender), "-project", str(tp), "-continueOnMissingFootage"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            creationflags=flags,
+        # ── Phase 2: Render via aerender.exe (one job at a time to avoid OOM) ──
+        # Running all items in one aerender process exhausts RAM after the first
+        # render when Multi-Frame Rendering is enabled. Separate processes give
+        # each job a fresh memory budget.
+        job_dirs = sorted(
+            x for x in d.iterdir()
+            if x.is_dir() and x.name.startswith("job_")
         )
-        for line in proc.stdout:
-            line = line.rstrip()
-            if "PROGRESS:" in line:
-                try:
-                    pct = float(line.split("PROGRESS:")[-1].strip())
-                    app.signals.batch_render_progress.emit(pct)
-                except ValueError:
-                    pass
+        n_jobs = len(job_dirs)
+        if n_jobs == 0:
+            return False, "No job directories found after injection"
+
+        app.signals.batch_render_progress.emit(0.0)
+        for job_idx in range(1, n_jobs + 1):
             if app.batch_render_cancelled:
-                proc.terminate()
-                proc.wait(timeout=10)
                 return False, "Cancelled by user"
-        proc.wait()
-        if proc.returncode != 0:
-            return False, f"aerender exited with code {proc.returncode}"
+
+            app.signals.batch_progress.emit(
+                f"Status: Rendering {t.capitalize()} ({job_idx}/{n_jobs})…",
+                (job_idx - 1) / n_jobs * 100,
+                f"aerender.exe rendering {t.capitalize()} {job_idx}/{n_jobs}…",
+            )
+
+            proc = subprocess.Popen(
+                [
+                    str(aerender), "-project", str(tp),
+                    "-rqindex", str(job_idx),
+                    "-continueOnMissingFootage",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                creationflags=flags,
+            )
+            for line in proc.stdout:
+                line = line.rstrip()
+                if "PROGRESS:" in line:
+                    try:
+                        raw = float(line.split("PROGRESS:")[-1].strip())
+                        overall = ((job_idx - 1) + raw / 100.0) / n_jobs * 100
+                        app.signals.batch_render_progress.emit(overall)
+                    except ValueError:
+                        pass
+                if app.batch_render_cancelled:
+                    proc.terminate()
+                    proc.wait(timeout=10)
+                    return False, "Cancelled by user"
+            proc.wait()
+            # Non-zero return on one job is logged but doesn't abort remaining jobs
 
         app.signals.batch_render_progress.emit(100.0)
         return True, None

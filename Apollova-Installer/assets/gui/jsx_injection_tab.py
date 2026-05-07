@@ -440,6 +440,7 @@ def run_batch_template(app, t: str) -> tuple:
             return False, "No job directories found after injection"
 
         app.signals.batch_render_progress.emit(0.0)
+        failed_jobs: list[int] = []
         for job_idx in range(1, n_jobs + 1):
             if app.batch_render_cancelled:
                 return False, "Cancelled by user"
@@ -472,12 +473,18 @@ def run_batch_template(app, t: str) -> tuple:
                         pass
                 if app.batch_render_cancelled:
                     proc.terminate()
-                    proc.wait(timeout=10)
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
                     return False, "Cancelled by user"
             proc.wait()
-            # Non-zero return on one job is logged but doesn't abort remaining jobs
+            if proc.returncode != 0:
+                failed_jobs.append(job_idx)
 
         app.signals.batch_render_progress.emit(100.0)
+        if failed_jobs:
+            return False, f"{len(failed_jobs)}/{n_jobs} render jobs failed (indices: {failed_jobs})"
         return True, None
     except Exception as e:
         return False, str(e)

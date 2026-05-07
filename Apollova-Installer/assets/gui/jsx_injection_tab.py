@@ -77,16 +77,35 @@ def build(app) -> None:
     status_lay.addWidget(install_lbl)
     layout.addWidget(status_grp)
 
-    app.inject_btn = QPushButton("Launch After Effects & Inject")
+    btn_row = QHBoxLayout()
+    app.inject_btn = QPushButton("Inject Only")
     app.inject_btn.setObjectName("primary")
+    app.inject_btn.setToolTip("Open After Effects, inject jobs, save project, and exit")
     app.inject_btn.clicked.connect(app._run_injection)
-    layout.addWidget(app.inject_btn)
+    btn_row.addWidget(app.inject_btn)
 
-    info = _label(
-        "This will launch AE, open the template, and inject job data.\n"
-        "After injection, review the comps and manually add to render queue.",
-        "muted")
-    layout.addWidget(info)
+    app.single_render_btn = QPushButton("Inject & Render")
+    app.single_render_btn.setObjectName("primary")
+    app.single_render_btn.setToolTip(
+        "Inject jobs then render all via aerender.exe (one job at a time)")
+    app.single_render_btn.clicked.connect(app._start_single_render)
+    btn_row.addWidget(app.single_render_btn)
+
+    app.single_render_cancel_btn = QPushButton("✕  Cancel Render")
+    app.single_render_cancel_btn.setObjectName("muted")
+    app.single_render_cancel_btn.setEnabled(False)
+    app.single_render_cancel_btn.clicked.connect(app._cancel_single_render)
+    btn_row.addWidget(app.single_render_cancel_btn)
+    btn_row.addStretch()
+    layout.addLayout(btn_row)
+
+    app.single_render_status_label = QLabel("Render: Idle")
+    layout.addWidget(app.single_render_status_label)
+    app.single_render_progress_bar = QProgressBar()
+    app.single_render_progress_bar.setRange(0, 100)
+    app.single_render_progress_bar.setFormat("Render: %p%")
+    app.single_render_progress_bar.setValue(0)
+    layout.addWidget(app.single_render_progress_bar)
 
     # Batch render
     batch_grp = QGroupBox("Batch Render All Templates")
@@ -191,7 +210,9 @@ def update_inject_status(app) -> None:
             "\u2717 Not configured \u2014 go to Settings")
         _set_label_style(app.inject_ae_label, "error")
 
-    app.inject_btn.setEnabled(jobs_ok and template_ok and ae_ok)
+    can_act = jobs_ok and template_ok and ae_ok
+    app.inject_btn.setEnabled(can_act and not app.single_render_active)
+    app.single_render_btn.setEnabled(can_act and not app.single_render_active)
 
 
 def run_injection(app) -> None:
@@ -253,6 +274,154 @@ def run_injection(app) -> None:
                 f"After Effects launch failed: {type(e).__name__}: {e}\n{tb}")
         QMessageBox.critical(app, "Error",
                              f"Failed to launch After Effects:\n{e}")
+
+
+# ── Single template render ────────────────────────────────────────────────────
+
+def start_single_render(app) -> None:
+    t = app._inject_template()
+    d = JOBS_DIRS.get(t)
+    jf = list(d.glob("job_*")) if d and d.exists() else []
+    if not jf:
+        QMessageBox.warning(app, "No Jobs",
+            f"No job directories found for {t.capitalize()}.\nRun batch generation first.")
+        return
+    reply = QMessageBox.question(
+        app, "Confirm Render",
+        f"Inject and render {len(jf)} {t.capitalize()} job(s) via aerender.exe?\n\n"
+        "This will take several minutes per job.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+    if reply != QMessageBox.StandardButton.Yes:
+        return
+    app.single_render_active = True
+    app.single_render_cancelled = False
+    app.single_render_btn.setEnabled(False)
+    app.single_render_cancel_btn.setEnabled(True)
+    app.inject_btn.setEnabled(False)
+    app.render_all_btn.setEnabled(False)
+    app.single_render_status_label.setText("Status: Starting…")
+    app.single_render_progress_bar.setValue(0)
+    threading.Thread(target=_single_render_worker, args=(app, t), daemon=True).start()
+
+
+def _single_render_worker(app, t: str) -> None:
+    ok, err = run_single_template(app, t)
+    app.signals.single_render_finished.emit(ok, err or "")
+
+
+def cancel_single_render(app) -> None:
+    app.single_render_cancelled = True
+    app.single_render_status_label.setText("Status: Cancelling…")
+
+
+def run_single_template(app, t: str) -> tuple:
+    ae = app.settings.get('after_effects_path')
+    tp = TEMPLATE_PATHS.get(t)
+    d = JOBS_DIRS.get(t)
+    jsx = JSX_SCRIPTS.get(t)
+    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+
+    aerender = _find_aerender(ae)
+    if not aerender:
+        return False, f"aerender.exe not found next to {ae}"
+
+    try:
+        src = BUNDLED_JSX_DIR / jsx
+        if not src.exists():
+            src = ASSETS_DIR / "scripts" / "JSX" / jsx
+        if not src.exists():
+            return False, f"JSX not found: {jsx}"
+
+        tmp = Path(tempfile.gettempdir()) / "Apollova"
+        tmp.mkdir(exist_ok=True)
+        dst = tmp / f"single_{jsx}"
+        shutil.copy(src, dst)
+        prepare_jsx_with_path(dst, d, tp, auto_render=False)
+
+        err_log = d / "batch_error.txt"
+        if err_log.exists():
+            err_log.unlink()
+
+        # Phase 1: inject
+        app.signals.single_render_progress.emit("Status: Injecting…", 0.0)
+        p = subprocess.Popen([ae, "-r", str(dst)], creationflags=flags)
+        while p.poll() is None:
+            if app.single_render_cancelled:
+                p.terminate()
+                p.wait(timeout=10)
+                return False, "Cancelled by user"
+            time.sleep(1)
+        try:
+            dst.unlink(missing_ok=True)
+        except Exception:
+            pass
+        if err_log.exists():
+            return False, err_log.read_text().strip()
+
+        # Phase 2: render one job at a time
+        job_dirs = sorted(x for x in d.iterdir() if x.is_dir() and x.name.startswith("job_"))
+        n_jobs = len(job_dirs)
+        if n_jobs == 0:
+            return False, "No job directories found after injection"
+
+        failed_jobs: list[int] = []
+        for job_idx in range(1, n_jobs + 1):
+            if app.single_render_cancelled:
+                return False, "Cancelled by user"
+            pct = (job_idx - 1) / n_jobs * 100
+            app.signals.single_render_progress.emit(
+                f"Status: Rendering {t.capitalize()} ({job_idx}/{n_jobs})…", pct)
+            proc = subprocess.Popen(
+                [str(aerender), "-project", str(tp),
+                 "-rqindex", str(job_idx), "-continueOnMissingFootage"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, creationflags=flags,
+            )
+            for line in proc.stdout:
+                if "PROGRESS:" in line:
+                    try:
+                        raw = float(line.split("PROGRESS:")[-1].strip())
+                        overall = ((job_idx - 1) + raw / 100.0) / n_jobs * 100
+                        app.signals.single_render_progress.emit(
+                            f"Status: Rendering {t.capitalize()} ({job_idx}/{n_jobs})…", overall)
+                    except ValueError:
+                        pass
+                if app.single_render_cancelled:
+                    proc.terminate()
+                    try:
+                        proc.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                    return False, "Cancelled by user"
+            proc.wait()
+            if proc.returncode != 0:
+                failed_jobs.append(job_idx)
+
+        app.signals.single_render_progress.emit(
+            f"Status: Done ({n_jobs - len(failed_jobs)}/{n_jobs} succeeded)", 100.0)
+        if failed_jobs:
+            return False, f"{len(failed_jobs)}/{n_jobs} render jobs failed (indices: {failed_jobs})"
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+def single_render_update_progress(app, status: str, pct: float) -> None:
+    app.single_render_status_label.setText(status)
+    app.single_render_progress_bar.setValue(int(pct))
+
+
+def single_render_complete(app, ok: bool, err: str) -> None:
+    app.single_render_active = False
+    app.single_render_cancel_btn.setEnabled(False)
+    app._update_inject_status()
+    app._update_batch_status()
+    if not ok:
+        app.single_render_status_label.setText(f"Status: Failed — {err}")
+        app.single_render_progress_bar.setValue(0)
+        QMessageBox.critical(app, "Render Failed", err)
+    else:
+        QMessageBox.information(app, "Render Complete", "All jobs rendered successfully.")
 
 
 def _escape_jsx_path(path_str: str) -> str:

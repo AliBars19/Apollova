@@ -177,6 +177,8 @@ class AppolovaApp(QMainWindow):
         self.batch_render_active = False
         self.batch_render_cancelled = False
         self.batch_results = {}
+        self.single_render_active = False
+        self.single_render_cancelled = False
         self._discover_cancel_event = threading.Event()
         self._discovery_in_progress = False
         self._discovery_results = []
@@ -192,6 +194,8 @@ class AppolovaApp(QMainWindow):
         self.signals.batch_template_status.connect(self._batch_update_template_status_slot)
         self.signals.batch_finished.connect(self._batch_render_complete)
         self.signals.batch_render_progress.connect(self._batch_update_render_progress)
+        self.signals.single_render_progress.connect(self._single_render_update_progress)
+        self.signals.single_render_finished.connect(self._single_render_complete)
         self.signals.discovery_progress.connect(self._on_discovery_progress)
         self.signals.discovery_results.connect(self._on_discovery_results)
         self.signals.discovery_error.connect(self._on_discovery_error)
@@ -440,6 +444,18 @@ class AppolovaApp(QMainWindow):
 
     def _batch_update_render_progress(self, pct):
         jsx_injection_tab.batch_update_render_progress(self, pct)
+
+    def _start_single_render(self):
+        jsx_injection_tab.start_single_render(self)
+
+    def _cancel_single_render(self):
+        jsx_injection_tab.cancel_single_render(self)
+
+    def _single_render_update_progress(self, status, pct):
+        jsx_injection_tab.single_render_update_progress(self, status, pct)
+
+    def _single_render_complete(self, ok, err):
+        jsx_injection_tab.single_render_complete(self, ok, err)
 
     # ── Delegated handlers: Settings tab ──────────────────────────────────────
 

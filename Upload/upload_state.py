@@ -146,15 +146,27 @@ class StateManager:
         file_hash: str = "",
         file_size: int = 0,
     ) -> int:
-        """Add a new upload record. Returns existing ID if file already tracked."""
+        """Add a new upload record. Returns existing ID if file already tracked.
+        Returns -1 if the same filename was already successfully uploaded to this account."""
         with self._lock:
             conn = self._get_conn()
             try:
+                # Dedup by file_path first (same run, same file)
                 existing = conn.execute(
                     "SELECT id FROM uploads WHERE file_path = ?", (file_path,)
                 ).fetchone()
                 if existing:
                     return existing["id"]
+
+                # Dedup by file_name + account (re-rendered song, path changed between runs)
+                already_uploaded = conn.execute(
+                    """SELECT id FROM uploads
+                       WHERE file_name = ? AND account = ? AND upload_status = 'uploaded'
+                       LIMIT 1""",
+                    (Path(file_path).name, account),
+                ).fetchone()
+                if already_uploaded:
+                    return -1
 
                 cursor = conn.execute(
                     """INSERT INTO uploads

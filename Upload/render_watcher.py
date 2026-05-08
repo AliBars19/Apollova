@@ -672,6 +672,10 @@ class FolderWatcher(FileSystemEventHandler):
             file_size=file_size,
         )
 
+        if record_id == -1:
+            logger.info(f"Skipping duplicate: {file_path.name} already uploaded to {self.account}")
+            return
+
         if not self.state.try_claim(record_id):
             # Record exists but may be stuck in 'failed' — reset and retry
             record = self.state.get_record(record_id)

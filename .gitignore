@@ -26,6 +26,9 @@ cookies.txt
 upload/data/
 data/
 
+# TikTok scraper runtime output
+tiktok-scraper/*.csv
+
 # Logs
 *.log
 *.stackdump

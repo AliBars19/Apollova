@@ -190,10 +190,6 @@ class AppolovaApp(QMainWindow):
         self.signals.finished.connect(self._on_generation_finished)
         self.signals.error.connect(self._on_generation_error)
         self.signals.stats_refresh.connect(self._refresh_stats_label)
-        self.signals.batch_progress.connect(self._batch_update_progress)
-        self.signals.batch_template_status.connect(self._batch_update_template_status_slot)
-        self.signals.batch_finished.connect(self._batch_render_complete)
-        self.signals.batch_render_progress.connect(self._batch_update_render_progress)
         self.signals.single_render_progress.connect(self._single_render_update_progress)
         self.signals.single_render_finished.connect(self._single_render_complete)
         self.signals.discovery_progress.connect(self._on_discovery_progress)
@@ -309,7 +305,6 @@ class AppolovaApp(QMainWindow):
     def _on_tab_changed(self, index):
         if index == 1:
             self._update_inject_status()
-            self._update_batch_status()
 
     def _on_template_change(self):
         job_creation_tab.on_template_change(self)
@@ -410,9 +405,6 @@ class AppolovaApp(QMainWindow):
 
     # ── Delegated handlers: JSX Injection tab ─────────────────────────────────
 
-    def _inject_template(self):
-        return jsx_injection_tab.inject_template(self)
-
     def _update_inject_status(self):
         jsx_injection_tab.update_inject_status(self)
 
@@ -420,30 +412,10 @@ class AppolovaApp(QMainWindow):
         jsx_injection_tab.run_injection(self)
 
     def _prepare_jsx_with_path(self, jsx_path, jobs_dir, template_path,
-                               auto_render=False):
+                               auto_render=False, jobs_dirs=None):
         jsx_injection_tab.prepare_jsx_with_path(
-            jsx_path, jobs_dir, template_path, auto_render)
-
-    def _update_batch_status(self):
-        return jsx_injection_tab.update_batch_status(self)
-
-    def _start_batch_render(self):
-        jsx_injection_tab.start_batch_render(self)
-
-    def _cancel_batch_render(self):
-        jsx_injection_tab.cancel_batch_render(self)
-
-    def _batch_update_progress(self, status, progress, current):
-        jsx_injection_tab.batch_update_progress(self, status, progress, current)
-
-    def _batch_update_template_status_slot(self, template, text):
-        jsx_injection_tab.batch_update_template_status_slot(self, template, text)
-
-    def _batch_render_complete(self, results):
-        jsx_injection_tab.batch_render_complete(self, results)
-
-    def _batch_update_render_progress(self, pct):
-        jsx_injection_tab.batch_update_render_progress(self, pct)
+            jsx_path, jobs_dir, template_path, auto_render,
+            jobs_dirs=jobs_dirs)
 
     def _start_single_render(self):
         jsx_injection_tab.start_single_render(self)

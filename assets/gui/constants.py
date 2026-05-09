@@ -43,6 +43,10 @@ JSX_SCRIPTS = {
     "onyx": "Apollova-Onyx-Injection.jsx",
 }
 
+# ── Unified project (Phase 3 / Phase 4) ──────────────────────────────────────
+UNIFIED_TEMPLATE_PATH = TEMPLATES_DIR / "Apollova-Unified.aep"
+UNIFIED_JSX_SCRIPT = "Apollova-Unified-Injection.jsx"
+
 # ── Validation patterns ───────────────────────────────────────────────────────
 _VALID_YT = re.compile(
     r'(?:youtube\.com/watch\?.*v=|youtu\.be/)([A-Za-z0-9_-]{11})')

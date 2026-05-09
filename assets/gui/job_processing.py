@@ -3,6 +3,7 @@
 import io
 import json
 import os
+import random
 import shutil
 import sys
 import time
@@ -15,6 +16,24 @@ from PyQt6.QtWidgets import QMessageBox, QSystemTrayIcon
 
 from assets.gui.constants import JOBS_DIRS
 from assets.gui.helpers import _set_label_style  # noqa: F401 — used in delegating methods
+
+
+def assign_templates(num_jobs: int = 4) -> list:
+    """Randomly assign templates to jobs. Max 2 of same template per batch.
+
+    Supports up to 6 jobs (3 templates × 2 each). For num_jobs > 6 the cap
+    is lifted proportionally so the function never raises IndexError.
+    """
+    templates = ["aurora", "mono", "onyx"]
+    max_per_template = max(2, -(-num_jobs // len(templates)))  # ceiling div
+    assignments = []
+    counts = {t: 0 for t in templates}
+    for _ in range(num_jobs):
+        available = [t for t in templates if counts[t] < max_per_template]
+        chosen = random.choice(available)
+        assignments.append(chosen)
+        counts[chosen] += 1
+    return assignments
 
 
 def validate_inputs(app) -> bool:
@@ -76,8 +95,14 @@ def start_generation(app) -> None:
     if not app._validate_inputs():
         return
     t = app._job_template()
-    d = JOBS_DIRS.get(t)
-    existing = list(d.glob("job_*")) if d.exists() else []
+    if t == "auto":
+        existing = []
+        for d in JOBS_DIRS.values():
+            if d.exists():
+                existing.extend(d.glob("job_*"))
+    else:
+        d = JOBS_DIRS.get(t)
+        existing = list(d.glob("job_*")) if d and d.exists() else []
 
     if app.use_smart_picker:
         songs = app._smart_songs
@@ -90,9 +115,10 @@ def start_generation(app) -> None:
              for i, s in enumerate(songs[:12])])
         if len(songs) > 12:
             sl += f"\n  \u2026 and {len(songs)-12} more"
+        tpl_label = "AUTO (Aurora / Mono / Onyx)" if t == "auto" else t.upper()
         reply = QMessageBox.question(
             app, "Smart Picker Confirmation",
-            f"Generate {len(songs)} jobs for {t.upper()}?\n\n"
+            f"Generate {len(songs)} jobs for {tpl_label}?\n\n"
             f"Songs:\n{sl}\n\nContinue?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply != QMessageBox.StandardButton.Yes:
@@ -181,17 +207,21 @@ def process_jobs(app) -> None:
         batch_t0 = time.time()
         num = int(app.jobs_combo.currentText())
         t = app._job_template()
-        outd = JOBS_DIRS.get(t)
+        # For single-template modes resolve a single output dir; for auto it
+        # is None at batch level \u2014 per-song dirs are resolved in the loop.
+        outd = JOBS_DIRS.get(t) if t != "auto" else None
         Config.WHISPER_MODEL = app.whisper_combo.currentText()
         Config.GENIUS_API_TOKEN = app.settings.get('genius_api_token', '')
 
         if app._log:
             mode = "SmartPicker" if app.use_smart_picker else "Manual"
+            tpl_log = "AUTO" if t == "auto" else t.upper()
             app._log.section(
-                f"Job batch started \u2014 {num} job(s) | {t.upper()} | "
+                f"Job batch started \u2014 {num} job(s) | {tpl_log} | "
                 f"{mode} | Whisper: {Config.WHISPER_MODEL}")
             try:
-                disk = shutil.disk_usage(str(outd or "."))
+                disk_path = str(outd) if outd else "."
+                disk = shutil.disk_usage(disk_path)
                 app._log.info(
                     f"System: disk_free={disk.free/(1024**3):.1f}GB  "
                     f"python={sys.version.split()[0]}  pid={os.getpid()}")
@@ -200,14 +230,30 @@ def process_jobs(app) -> None:
 
         if app.use_smart_picker:
             songs = list(app._smart_songs)
+            tpl_label = "AUTO (Aurora/Mono/Onyx)" if t == "auto" else t.upper()
             app.signals.log.emit(
-                f"\U0001f916 Smart Picker: {len(songs)} songs | {t.upper()}")
+                f"\U0001f916 Smart Picker: {len(songs)} songs | {tpl_label}")
             picker = app.smart_picker
-            outd.mkdir(parents=True, exist_ok=True)
+
+            # Pre-assign templates and create output dirs
+            if t == "auto":
+                templates_for_jobs = assign_templates(len(songs))
+                for ti in set(templates_for_jobs):
+                    JOBS_DIRS[ti].mkdir(parents=True, exist_ok=True)
+            else:
+                templates_for_jobs = [t] * len(songs)
+                outd.mkdir(parents=True, exist_ok=True)
 
             start_idx = 1
             if app._resume_mode:
-                all_existing = list(outd.glob("job_*"))
+                if t == "auto":
+                    # Aggregate job numbers across all three dirs
+                    all_existing = []
+                    for d in JOBS_DIRS.values():
+                        if d.exists():
+                            all_existing.extend(d.glob("job_*"))
+                else:
+                    all_existing = list(outd.glob("job_*"))
                 done = [j for j in all_existing
                         if (j / "job_data.json").exists()]
                 failed = [j for j in all_existing
@@ -228,19 +274,23 @@ def process_jobs(app) -> None:
                     f"({len(done)} complete, {len(failed)} failed/skipped, "
                     f"{remaining} remaining)")
                 songs = songs[:remaining]
+                templates_for_jobs = templates_for_jobs[:remaining]
 
             skipped = []
             for i, s in enumerate(songs):
                 idx = start_idx + i
+                t_i = templates_for_jobs[i]
+                outd_i = JOBS_DIRS[t_i]
                 if app.cancel_requested:
                     raise Exception("Cancelled by user")
                 app.signals.log.emit(
                     f"\n{'='*40}\n\U0001f4c0 Job {idx}/{num}: "
-                    f"{s['song_title'][:40]}")
+                    f"{s['song_title'][:40]}"
+                    + (f" [{t_i.upper()}]" if t == "auto" else ""))
                 try:
                     process_single_song(
                         app, idx, s['song_title'], s['youtube_url'],
-                        s['start_time'], s['end_time'], t, outd)
+                        s['start_time'], s['end_time'], t_i, outd_i)
                     picker.mark_song_used(s['song_title'])
                 except Exception as song_err:
                     if str(song_err) == "Cancelled by user":
@@ -253,23 +303,38 @@ def process_jobs(app) -> None:
             skip_note = (
                 f"\n\u26a0 {len(skipped)} song(s) skipped: "
                 + ", ".join(skipped)) if skipped else ""
+            dest_label = (
+                "Aurora / Mono / Onyx job folders" if t == "auto"
+                else str(outd))
             app.signals.log.emit(
                 f"\n{'='*40}\n\U0001f389 Done! {completed}/{num} "
-                f"job(s) created!{skip_note}\n\U0001f4c2 {outd}\n"
+                f"job(s) created!{skip_note}\n\U0001f4c2 {dest_label}\n"
                 "Next: Go to JSX Injection tab")
         else:
             total = len(app._job_queue)
+            tpl_label = "AUTO (Aurora/Mono/Onyx)" if t == "auto" else t.upper()
             app.signals.log.emit(
-                f"Starting {total} queued job(s) | {t.upper()}")
-            outd.mkdir(parents=True, exist_ok=True)
+                f"Starting {total} queued job(s) | {tpl_label}")
+
+            # Pre-assign templates and create output dirs
+            if t == "auto":
+                templates_for_jobs = assign_templates(total)
+                for ti in set(templates_for_jobs):
+                    JOBS_DIRS[ti].mkdir(parents=True, exist_ok=True)
+            else:
+                templates_for_jobs = [t] * total
+                outd.mkdir(parents=True, exist_ok=True)
+
             skipped = []
             for idx, job in enumerate(app._job_queue, 1):
+                t_i = templates_for_jobs[idx - 1]
+                outd_i = JOBS_DIRS[t_i]
                 if app.cancel_requested:
                     raise Exception("Cancelled by user")
-                if app._resume_mode and (outd / f"job_{idx:03}").exists():
+                if app._resume_mode and (outd_i / f"job_{idx:03}").exists():
                     job_folder_status = (
                         "complete"
-                        if (outd / f"job_{idx:03}" / "job_data.json").exists()
+                        if (outd_i / f"job_{idx:03}" / "job_data.json").exists()
                         else "previously failed \u2014 skipping"
                     )
                     app.signals.log.emit(
@@ -279,11 +344,12 @@ def process_jobs(app) -> None:
                     continue
                 app.signals.log.emit(
                     f"\n{'='*40}\n\U0001f4c0 Job {idx}/{total}: "
-                    f"{job['title'][:40]}")
+                    f"{job['title'][:40]}"
+                    + (f" [{t_i.upper()}]" if t == "auto" else ""))
                 try:
                     process_single_song(
                         app, idx, job['title'], job['url'],
-                        job['start'], job['end'], t, outd)
+                        job['start'], job['end'], t_i, outd_i)
                 except Exception as song_err:
                     if str(song_err) == "Cancelled by user":
                         raise
@@ -293,8 +359,8 @@ def process_jobs(app) -> None:
                 app.signals.progress.emit(idx / total * 100)
                 elapsed = time.time() - batch_t0
                 avg_per_job = elapsed / idx
-                remaining = avg_per_job * (total - idx)
-                rem_min, rem_sec = divmod(int(remaining), 60)
+                remaining_time = avg_per_job * (total - idx)
+                rem_min, rem_sec = divmod(int(remaining_time), 60)
                 if idx < total:
                     app.signals.log.emit(
                         f"  \u23f1 ETA: ~{rem_min}m {rem_sec}s remaining "
@@ -303,9 +369,12 @@ def process_jobs(app) -> None:
             skip_note = (
                 f"\n\u26a0 {len(skipped)} song(s) skipped: "
                 + ", ".join(skipped)) if skipped else ""
+            dest_label = (
+                "Aurora / Mono / Onyx job folders" if t == "auto"
+                else str(outd))
             app.signals.log.emit(
                 f"\n{'='*40}\n\U0001f389 Done! {completed}/{total} "
-                f"job(s) created!{skip_note}\n\U0001f4c2 {outd}\n"
+                f"job(s) created!{skip_note}\n\U0001f4c2 {dest_label}\n"
                 "Next: Go to JSX Injection tab")
 
         # Batch completion summary
@@ -369,8 +438,10 @@ def on_generation_finished(app) -> None:
     app._check_existing_jobs()
     if app.use_smart_picker:
         app._refresh_smart_picker_stats()
+    t = app._job_template()
+    tpl_label = "Aurora / Mono / Onyx (Auto)" if t == "auto" else t.upper()
     QMessageBox.information(app, "Complete!",
-        f"Jobs created for {app._job_template().upper()}!\n\n"
+        f"Jobs created for {tpl_label}!\n\n"
         "Go to JSX Injection tab to inject into After Effects.")
 
 

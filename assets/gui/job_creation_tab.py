@@ -30,20 +30,21 @@ def build(app) -> None:
     tpl_lay = QVBoxLayout(tpl_grp)
     app.job_tpl_group = QButtonGroup(app)
     for name, val, desc in [
+        ("Auto", "auto", "Rotate Aurora / Mono / Onyx — max 2 each per batch (recommended)"),
         ("Aurora", "aurora", "Full visual with gradients, spectrum, beat-sync"),
         ("Mono", "mono", "Minimal text-only, black/white alternating"),
         ("Onyx", "onyx", "Hybrid — word-by-word lyrics + spinning vinyl disc"),
     ]:
         rb = QRadioButton(f"{name}  —  {desc}")
         rb.setProperty("tval", val)
-        if val == "aurora":
+        if val == "auto":
             rb.setChecked(True)
         app.job_tpl_group.addButton(rb)
         tpl_lay.addWidget(rb)
 
     path_row = QHBoxLayout()
     path_row.addWidget(_label("Output:", "muted"))
-    app.output_path_label = _label(str(AURORA_JOBS_DIR), "muted")
+    app.output_path_label = _label("Auto: jobs spread across Aurora / Mono / Onyx", "muted")
     path_row.addWidget(app.output_path_label)
     path_row.addStretch()
     tpl_lay.addLayout(path_row)
@@ -378,7 +379,11 @@ def _build_discover(app) -> None:
 
 def on_template_change(app) -> None:
     t = app._job_template()
-    app.output_path_label.setText(str(JOBS_DIRS.get(t, AURORA_JOBS_DIR)))
+    if t == "auto":
+        app.output_path_label.setText(
+            "Auto: jobs spread across Aurora / Mono / Onyx")
+    else:
+        app.output_path_label.setText(str(JOBS_DIRS.get(t, AURORA_JOBS_DIR)))
     app._check_existing_jobs()
 
 
@@ -1043,6 +1048,19 @@ def check_database(app) -> None:
 
 def check_existing_jobs(app) -> None:
     t = app._job_template()
+    if t == "auto":
+        existing = []
+        for d in JOBS_DIRS.values():
+            if d.exists():
+                existing.extend(d.glob("job_*"))
+        if existing:
+            app.job_warning_label.setText(
+                f"\u26a0\ufe0f {len(existing)} existing job(s) detected across templates")
+            app.delete_jobs_btn.setVisible(True)
+        else:
+            app.job_warning_label.setText("")
+            app.delete_jobs_btn.setVisible(False)
+        return
     d = JOBS_DIRS.get(t)
     if not d or not d.exists():
         app.job_warning_label.setText("")
@@ -1065,6 +1083,26 @@ def delete_existing_jobs(app) -> None:
                             "Cannot delete jobs while processing.")
         return
     t = app._job_template()
+    if t == "auto":
+        existing = []
+        for d in JOBS_DIRS.values():
+            if d.exists():
+                existing.extend(d.glob("job_*"))
+        if not existing:
+            return
+        reply = QMessageBox.question(
+            app, "Confirm Deletion",
+            f"Delete {len(existing)} job folder(s) from ALL templates?"
+            "\n\nCannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        for j in existing:
+            shutil.rmtree(j)
+        QMessageBox.information(app, "Deleted",
+                                f"Deleted {len(existing)} job folder(s).")
+        app._check_existing_jobs()
+        return
     d = JOBS_DIRS.get(t)
     existing = list(d.glob("job_*"))
     if not existing:
@@ -1085,7 +1123,11 @@ def delete_existing_jobs(app) -> None:
 
 def open_jobs_folder(app) -> None:
     t = app._job_template()
-    d = JOBS_DIRS.get(t)
+    if t == "auto":
+        # Open the Aurora jobs folder as a representative entry point
+        d = JOBS_DIRS["aurora"]
+    else:
+        d = JOBS_DIRS.get(t)
     d.mkdir(parents=True, exist_ok=True)
     os.startfile(str(d))
 

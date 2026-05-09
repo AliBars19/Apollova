@@ -31,7 +31,7 @@ class Config:
     WHISPER_CACHE_DIR = str(_BASE_DIR / "whisper_models")
     
     # Job Settings
-    TOTAL_JOBS = int(os.getenv("TOTAL_JOBS", "12"))
+    TOTAL_JOBS = int(os.getenv("TOTAL_JOBS", "4"))
     JOBS_DIR = "jobs"
     
     # Processing Settings

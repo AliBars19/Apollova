@@ -301,6 +301,24 @@ class StateManager:
             finally:
                 conn.close()
 
+    def count_scheduled_in_window(self, account: str, date: datetime, start_hour: int, end_hour: int) -> int:
+        """Count videos scheduled for account in the given hour window on a date."""
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                date_str = date.strftime("%Y-%m-%d")
+                start_str = f"{date_str} {start_hour:02d}:00:00"
+                end_str   = f"{date_str} {end_hour:02d}:00:00"
+                row = conn.execute(
+                    """SELECT COUNT(*) as cnt FROM uploads
+                       WHERE account = ? AND schedule_status = 'scheduled'
+                       AND scheduled_at >= ? AND scheduled_at < ?""",
+                    (account, start_str, end_str),
+                ).fetchone()
+                return row["cnt"] if row else 0
+            finally:
+                conn.close()
+
     # ── Queries ──────────────────────────────────────────────────
 
     def get_record(self, record_id: int) -> Optional[UploadRecord]:
@@ -394,7 +412,7 @@ class StateManager:
 
                 # Per-account scheduled today
                 today = datetime.now()
-                for account in ["aurora", "nova"]:
+                for account in ["aurora"]:
                     cnt = self.count_scheduled_for_date(account, today)
                     if cnt > 0:
                         stats[f"{account}_today"] = cnt

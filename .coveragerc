@@ -1,9 +1,0 @@
-[run]
-omit =
-    upload/test_render_watcher.py
-    tests/*
-
-[report]
-omit =
-    upload/test_render_watcher.py
-    tests/*

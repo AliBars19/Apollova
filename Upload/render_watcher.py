@@ -10,7 +10,7 @@ Key behaviours:
   - Watches: Apollova-Aurora/jobs/renders/
              Apollova-Mono/jobs/renders/
              Apollova-Onyx/jobs/renders/
-  - Folder determines account: Aurora→aurora, Mono/Onyx→nova
+  - Folder determines account: Aurora→aurora, Mono→aurora, Onyx→aurora
   - Each video uploads the instant AE finishes it (no batch waiting)
   - Auto-schedules with 1hr intervals, 11AM–11PM window
   - 12 videos/day/account limit — overflow rolls to next day automatically
@@ -139,15 +139,22 @@ def setup_logging(config: Config) -> None:
 
 # ─── Smart Scheduler ─────────────────────────────────────────────
 
+# Explicit posting windows: list of (start_hour_utc, end_hour_utc) pairs
+POSTING_WINDOWS = [
+    (7, 9),    # 7–9 AM UTC
+    (15, 17),  # 3–5 PM UTC
+]
+POSTS_PER_WINDOW = 2
+
+
 class SmartScheduler:
     """Finds the next available schedule slot for an account.
-    
+
     Rules:
-      - Max 12 videos/day/account
-      - 1-hour intervals between videos
-      - Publishing window: 11AM – 11PM
-      - If today is full, rolls to tomorrow (then day after, etc.)
-      - Avoids double-booking a time slot
+      - Max 4 videos/day/account (2 per posting window)
+      - Two windows per day: 7–9 AM UTC and 3–5 PM UTC
+      - If today's windows are full, rolls to tomorrow (then day after, etc.)
+      - Avoids double-booking: enforces ≥30 min gap between any two slots
     """
 
     def __init__(self, config: Config, state: StateManager):
@@ -185,47 +192,45 @@ class SmartScheduler:
         return fallback
 
     def _find_slot_on_day(self, account: str, date: datetime, is_today: bool) -> Optional[datetime]:
-        """Find the next available slot on a specific day."""
+        """Find the next available slot on a specific day using explicit posting windows."""
         import random
-        start_hour = self.config.schedule_day_start_hour
-        end_hour = self.config.schedule_day_end_hour
-        min_gap = self.config.schedule_interval_minutes
-        jitter = self.config.schedule_interval_jitter_minutes
 
-        # What's the last scheduled time on this day?
-        last_time = self.state.get_last_scheduled_time(account, date)
-
-        if last_time:
-            # Random gap: min_gap + random(0, jitter) minutes after last slot
-            gap = min_gap + random.randint(0, jitter)
-            candidate = last_time + timedelta(minutes=gap)
-            # Randomise the minutes too (not always on the hour)
-            candidate = candidate.replace(second=0, microsecond=0)
-        else:
-            # Nothing scheduled yet — start somewhere in the first 2 hours of window
-            start_offset = random.randint(0, 120)
-            candidate = date.replace(
-                hour=start_hour, minute=0, second=0, microsecond=0
-            ) + timedelta(minutes=start_offset)
-
-        # If it's today and the candidate is in the past, bump to near-future
-        if is_today:
-            now = datetime.now()
-            min_time = now + timedelta(minutes=10)  # At least 10 min from now
-            if candidate < min_time:
-                candidate = min_time
-
-        # Check it's within the day's publishing window
-        if candidate.hour >= end_hour:
-            return None  # Day's window is over, caller will try next day
-
-        # Avoid dead hours
-        if self.config.dead_hours_start <= candidate.hour < self.config.dead_hours_end:
-            candidate = candidate.replace(
-                hour=self.config.dead_hours_end, minute=0, second=0, microsecond=0
+        for window_start, window_end in POSTING_WINDOWS:
+            # Count how many posts are already scheduled in this window today
+            window_count = self.state.count_scheduled_in_window(
+                account, date, window_start, window_end
             )
+            if window_count >= POSTS_PER_WINDOW:
+                continue  # This window is full, try the next one
 
-        return candidate
+            # Pick a random time within this window
+            window_start_dt = date.replace(hour=window_start, minute=0, second=0, microsecond=0)
+            window_end_dt   = date.replace(hour=window_end,   minute=0, second=0, microsecond=0)
+
+            window_minutes = (window_end - window_start) * 60
+            offset_minutes = random.randint(0, window_minutes - 1)
+            candidate = window_start_dt + timedelta(minutes=offset_minutes)
+
+            # Ensure at least 10 min from now if scheduling for today
+            if is_today:
+                min_time = datetime.now() + timedelta(minutes=10)
+                if candidate < min_time:
+                    candidate = min_time
+                    if candidate >= window_end_dt:
+                        continue  # This window is already past — try next
+
+            # Enforce minimum 30-min gap from any existing slot on this day
+            last_time = self.state.get_last_scheduled_time(account, date)
+            if last_time:
+                min_gap_dt = last_time + timedelta(minutes=30)
+                if candidate < min_gap_dt:
+                    candidate = min_gap_dt
+                    if candidate >= window_end_dt:
+                        continue  # Gap pushes us past window end — try next
+
+            return candidate
+
+        return None  # All windows are full for this day
 
 
 # ─── Video Uploader ──────────────────────────────────────────────
@@ -672,6 +677,10 @@ class FolderWatcher(FileSystemEventHandler):
             file_size=file_size,
         )
 
+        if record_id == -1:
+            logger.info(f"Skipping duplicate: {file_path.name} already uploaded to {self.account}")
+            return
+
         if not self.state.try_claim(record_id):
             # Record exists but may be stuck in 'failed' — reset and retry
             record = self.state.get_record(record_id)
@@ -815,7 +824,7 @@ def show_status(config: Config) -> None:
     table.add_column("Account", style="cyan")
     table.add_column("YouTube", style="green")
     table.add_column("TikTok", style="magenta")
-    for acct in ["aurora", "nova"]:
+    for acct in ["aurora"]:
         if acct in status:
             a = status[acct]
             yt = ("✓ " + a.get("youtubeName", "OK")) if a.get("youtube") else "✗ Not connected"

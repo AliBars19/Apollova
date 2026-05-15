@@ -146,15 +146,27 @@ class StateManager:
         file_hash: str = "",
         file_size: int = 0,
     ) -> int:
-        """Add a new upload record. Returns existing ID if file already tracked."""
+        """Add a new upload record. Returns existing ID if file already tracked.
+        Returns -1 if the same filename was already successfully uploaded to this account."""
         with self._lock:
             conn = self._get_conn()
             try:
+                # Dedup by file_path first (same run, same file)
                 existing = conn.execute(
                     "SELECT id FROM uploads WHERE file_path = ?", (file_path,)
                 ).fetchone()
                 if existing:
                     return existing["id"]
+
+                # Dedup by file_name + account (re-rendered song, path changed between runs)
+                already_uploaded = conn.execute(
+                    """SELECT id FROM uploads
+                       WHERE file_name = ? AND account = ? AND upload_status = 'uploaded'
+                       LIMIT 1""",
+                    (Path(file_path).name, account),
+                ).fetchone()
+                if already_uploaded:
+                    return -1
 
                 cursor = conn.execute(
                     """INSERT INTO uploads
@@ -289,6 +301,24 @@ class StateManager:
             finally:
                 conn.close()
 
+    def count_scheduled_in_window(self, account: str, date: datetime, start_hour: int, end_hour: int) -> int:
+        """Count videos scheduled for account in the given hour window on a date."""
+        with self._lock:
+            conn = self._get_conn()
+            try:
+                date_str = date.strftime("%Y-%m-%d")
+                start_str = f"{date_str} {start_hour:02d}:00:00"
+                end_str   = f"{date_str} {end_hour:02d}:00:00"
+                row = conn.execute(
+                    """SELECT COUNT(*) as cnt FROM uploads
+                       WHERE account = ? AND schedule_status = 'scheduled'
+                       AND scheduled_at >= ? AND scheduled_at < ?""",
+                    (account, start_str, end_str),
+                ).fetchone()
+                return row["cnt"] if row else 0
+            finally:
+                conn.close()
+
     # ── Queries ──────────────────────────────────────────────────
 
     def get_record(self, record_id: int) -> Optional[UploadRecord]:
@@ -382,7 +412,7 @@ class StateManager:
 
                 # Per-account scheduled today
                 today = datetime.now()
-                for account in ["aurora", "nova"]:
+                for account in ["aurora"]:
                     cnt = self.count_scheduled_for_date(account, today)
                     if cnt > 0:
                         stats[f"{account}_today"] = cnt

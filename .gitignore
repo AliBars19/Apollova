@@ -1,122 +1,50 @@
-# ============================================================================
-# APOLLOVA PROJECT - GITIGNORE
-# ============================================================================
-# Configuration: Remove files before making repo public!
-# Sensitive data, runtime files, and large/temporary files should be ignored
+# Binaries
+*.exe
+*.dll
 
-# ─────────────────────────────────────────────────────────────────────────
-# CRITICAL: ENVIRONMENT & SECRETS (NEVER COMMIT THESE)
-# ─────────────────────────────────────────────────────────────────────────
-.env
-.env.local
-.env.*.local
-*.key
-*.pem
-credentials.json
-.gitignore
+# After Effects templates (large binary files, tracked separately)
+templates/
+*.aep
+*.aep Logs/
 
-# Apollova exe signing secret — never commit, see apollova_secrets.example.py
-apollova_secrets.py
-
-# ─────────────────────────────────────────────────────────────────────────
-# PYTHON
-# ─────────────────────────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-ENV/
-build/
-dist/
-eggs/
-.eggs/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-pip-log.txt
-pip-delete-this-directory.txt
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coveragerc
 
-# ─────────────────────────────────────────────────────────────────────────
-# RUNTIME DATA & LARGE FILES
-# ─────────────────────────────────────────────────────────────────────────
+# Secrets & credentials
+.env
+assets/apollova_secrets.py
+cookies.txt
 
-# Job folders (temporary working directories)
-Apollova-Aurora/jobs/
-Apollova-Mono/jobs/
-Apollova-Onyx/jobs/
-Apollova-Installer/jobs/
-
-# Large Whisper model files - download on first run
-whisper_models/**/*.pt
-whisper_models/**/*.pth
-
-# Upload module runtime files
+# Databases & state
+*.db
 upload/data/
+data/
+
+# TikTok scraper runtime output
+tiktok-scraper/*.csv
+
+# Logs
+*.log
+*.stackdump
+logs/
 upload/logs/
-upload/*.log
 
-# AE auto-saves and logs
-AE-Templates/Adobe\ After\ Effects\ Auto-Save/
-**/Logs/
+# Render output & cache
+*/jobs/
+*/cache/
+whisper_models/
 
-# Runtime databases
-upload_state.db
-*.sqlite
-*.sqlite3
-database
-settings.json
+# Build artifacts
+build_temp/
+dist/
+*.spec
 
-# ─────────────────────────────────────────────────────────────────────────
-# IDE & EDITOR
-# ─────────────────────────────────────────────────────────────────────────
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-*.sublime-project
-
-# ─────────────────────────────────────────────────────────────────────────
-# OS
-# ─────────────────────────────────────────────────────────────────────────
-.DS_Store
+# Windows
 Thumbs.db
-Desktop.ini
-
-# ─────────────────────────────────────────────────────────────────────────
-# OTHER
-# ─────────────────────────────────────────────────────────────────────────
-.cache
-.cache/
-.tmp/
-*.tmp
-*.bak
-
-*.aep
-# AE-Templates directory itself is NOT ignored — Activator.jsx should be committed.
-# .aep binary files inside it are ignored by the *.aep rule above.
-
-Apollova-Installer/Apollova-Aurora
-Apollova-Installer/Apollova-Mono
-Apollova-Installer/Apollova-Onyx
-
-Apollova-Installer/templates
-
-Apollova-Installer/whisper_models
-
-Apollova-Installer-Archive
-
-Apollova-Installer/.claude
-
-AE-Templates
-
-*.exe
+desktop.ini
